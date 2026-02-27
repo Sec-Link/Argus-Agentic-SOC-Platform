@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: siem-ingress
+  namespace: siem-dev
+  annotations:
+    # 指定使用的 Ingress 控制器（Colima/AKS 通常使用 nginx）
+    kubernetes.io/ingress.class: nginx
+    # 允许上传大文件（与你的 Nginx config 保持一致）
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    # 强制跳转 HTTPS (如果你配置了证书，可以开启)
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  rules:
+  - host: siem.local  # 浏览器访问的域名
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend  # 👈 指向你的前端 Service 名字
+            port:
+              number: 80    # 前端 Service 暴露的端

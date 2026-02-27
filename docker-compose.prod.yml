@@ -1,0 +1,49 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:16
+    container_name: postgres
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+
+  backend:
+    build:
+      context: backend
+    container_name: backend
+    env_file:
+      - .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=siem_project.settings
+    depends_on:
+      - db
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    command: ["gunicorn","siem_project.wsgi:application","--bind","0.0.0.0:8000","--workers","4","--log-level","info","--access-logfile","-"]
+
+  frontend:
+    build:
+      context: frontend
+    container_name: frontend
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    env_file:
+      - .env
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: always
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:

@@ -1,0 +1,107 @@
+name: Image Security Scan
+
+on:
+  workflow_run:
+    workflows: ["Build Image"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  scan-images:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [siem-backend, siem-frontend]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Aliyun ACR
+        uses: aliyun/acr-login@v1
+        with:
+          login-server: ${{ secrets.ALIYUN_REGISTRY }}
+          username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
+          password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
+
+      - name: Run Trivy scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.ALIYUN_REGISTRY }}/siem/${{ matrix.service }}:latest
+          format: 'json'
+          output: 'report.json'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Process Report for Feishu
+        id: process_report
+        if: always()
+        run: |
+          if [ ! -f report.json ]; then
+            echo "status_color=red" >> $GITHUB_OUTPUT
+            echo "title=扫描失败: ${{ matrix.service }}" >> $GITHUB_OUTPUT
+            echo "content=❌ 未找到扫描报告文件" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 提取漏洞关键信息并限制长度，防止消息体过大
+          # 使用 jq 提取 CVE ID、等级和包名，并截断单行内容
+          VULNS=$(jq -r '.Results[]?.Vulnerabilities[]? | "- **\(.VulnerabilityID)** | \(.Severity) | \(.PkgName)"' report.json | head -n 30 | cut -c1-200)
+
+          if [ -z "$VULNS" ]; then
+            echo "status_color=green" >> $GITHUB_OUTPUT
+            echo "title=扫描通过: ${{ matrix.service }}" >> $GITHUB_OUTPUT
+            echo "content=✅ 未发现高危漏洞" >> $GITHUB_OUTPUT
+          else
+            echo "status_color=red" >> $GITHUB_OUTPUT
+            echo "title=发现漏洞: ${{ matrix.service }}" >> $GITHUB_OUTPUT
+            # 使用环境变量写入多行内容
+            echo "content<<EOF" >> $GITHUB_OUTPUT
+            echo "$VULNS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Feishu
+        if: always()
+        env:
+          VULN_CONTENT: ${{ steps.process_report.outputs.content }}
+          TITLE: ${{ steps.process_report.outputs.title }}
+          COLOR: ${{ steps.process_report.outputs.status_color }}
+        run: |
+          # 核心修复点：使用 jq 的 --arg 自动处理转义字符，这是解决 9499 错误的关键
+          PAYLOAD=$(jq -n \
+            --arg title "$TITLE" \
+            --arg color "$COLOR" \
+            --arg content "$VULN_CONTENT" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg footer "Tag: ${{ github.event.workflow_run.head_sha || github.sha }}" \
+            '{
+              "msg_type": "interactive",
+              "card": {
+                "header": { "template": $color, "title": { "tag": "plain_text", "content": $title } },
+                "elements": [
+                  {
+                    "tag": "div",
+                    "text": {
+                      "tag": "lark_md",
+                      "content": ("**服务:** `${{ matrix.service }}`\n**漏洞预览 (Top 30):**\n" + $content + "\n\n[点击查看 Github Action 完整报告](" + $url + ")")
+                    }
+                  },
+                  { "tag": "hr" },
+                  { "tag": "note", "elements": [{ "tag": "plain_text", "content": $footer }] }
+                ]
+              }
+            }')
+
+          curl -X POST '${{ secrets.FEISHU_WEBHOOK_URL }}' \
+          -H 'Content-Type: application/json' \
+          -d "$PAYLOAD"
+
+      - name: Upload Scan Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ matrix.service }}
+          path: report.json
+          retention-days: 7

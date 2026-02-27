@@ -1,0 +1,69 @@
+name: Build Image
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write # 统一提升权限，方便更新清单
+  packages: write
+
+jobs:
+  build-django:
+    uses: ./.github/workflows/_build-template.yml
+    with:
+      image_name: siem-backend
+      dockerfile: backend/Dockerfile
+      context: backend
+    secrets: inherit # 👈 必须加这一行，模板才能访问 ACR 的 Secrets
+
+  build-node:
+    uses: ./.github/workflows/_build-template.yml
+    with:
+      image_name: siem-frontend
+      dockerfile: frontend/Dockerfile
+      context: frontend
+    secrets: inherit # 👈 同上
+
+  update-k8s-manifests:
+    needs: [build-django, build-node]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }} # 默认即可，用于回推代码
+
+      - name: Update Image Tags in YAML
+        run: |
+          VERSION=${{ github.event.release.tag_name }}
+          # 建议将 ACR 地址和命名空间定义为变量，方便维护
+          # 注意：这里的 'siem' 应替换为你阿里云 ACR 真实的命名空间
+          REGISTRY=${{ secrets.ALIYUN_REGISTRY }}
+          NAMESPACE="siem" 
+          
+          echo "Updating manifests to version: $VERSION"
+          
+          # 更加稳健的 sed 匹配逻辑：
+          # 匹配 'image:' 后面直到行尾的内容并替换，这样不依赖旧的路径长什么样
+          sed -i "s|image: .*/siem-backend:.*|image: $REGISTRY/$NAMESPACE/siem-backend:$VERSION|g" k8s/backend-deploy.yaml
+          sed -i "s|image: .*/siem-frontend:.*|image: $REGISTRY/$NAMESPACE/siem-frontend:$VERSION|g" k8s/frontend-deploy.yaml
+          
+          # 打印结果以便排查
+          echo "Check updated tags:"
+          grep "image:" k8s/backend-deploy.yaml
+          grep "image:" k8s/frontend-deploy.yaml
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 检查是否有实际变动，防止空提交导致报错
+          if git diff --quiet k8s/*.yaml; then
+            echo "No changes in manifests, skipping commit."
+          else
+            git add k8s/*.yaml
+            git commit -m "chore(cd): update image tags to ${{ github.event.release.tag_name }} [skip ci]"
+            git push origin main
+          fi

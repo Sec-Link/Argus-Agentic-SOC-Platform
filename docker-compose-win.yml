@@ -1,0 +1,36 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    container_name: siem_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: siem_user
+      POSTGRES_PASSWORD: siem_password
+      POSTGRES_DB: siem_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # Windows 路径配置（选择一种方式）
+      
+      # 方式1：使用命名卷（推荐）
+      - postgres_data:/var/lib/postgresql/data
+      
+      # 方式2：挂载到 Windows 绝对路径
+      # - E:/docker/volumes/siem/postgres:/var/lib/postgresql/data
+      
+      # 方式3：挂载到当前目录下的 data 文件夹
+      # - ./data/postgres:/var/lib/postgresql/data
+      
+      # 如果需要初始化 SQL 脚本
+      # - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  postgres_data:
+    # Windows 上可以指定驱动（可选）
+    driver: local
+    # 指定 Windows 路径
+    driver_opts:
+      type: none
+      device: "D:/docker/volumes/siem/postgres"
+      o: bind

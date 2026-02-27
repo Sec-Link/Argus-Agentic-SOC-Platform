@@ -1,0 +1,51 @@
+name: Build Image Template
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+      dockerfile:
+        required: false
+        default: Dockerfile
+        type: string
+      context:
+        required: false
+        default: .
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+  
+      - name: Login to ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ALIYUN_REGISTRY }}
+          username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
+          password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          # 修改为仅构建 amd64 (x86)
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.ALIYUN_REGISTRY }}/siem/${{ inputs.image_name }}:${{ github.event.release.tag_name }}
+            ${{ secrets.ALIYUN_REGISTRY }}/siem/${{ inputs.image_name }}:latest
+          # 开启缓存，加速后续构建
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

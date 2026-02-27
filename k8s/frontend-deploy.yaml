@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: siem-frontend
+  namespace: siem-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: siem-frontend
+  template:
+    metadata:
+      labels:
+        app: siem-frontend
+    spec:
+      imagePullSecrets:
+      - name: aliyun-acr-secret
+      containers:
+      - name: react
+        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-frontend:v0.2
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: siem-dev
+spec:
+  selector:
+    app: siem-frontend
+  ports:
+  - port: 80
+    targetPort: 80

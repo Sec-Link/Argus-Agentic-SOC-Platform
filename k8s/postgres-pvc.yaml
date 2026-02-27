@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: siem-dev  # 必须确保与 DB pod 在同一个命名空间
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi  # 建议根据你的磁盘大小调整
+  # storageClassName: hostpath # 如果是 Colima/Docker Desktop 通常不需要指定，会自动使用 default

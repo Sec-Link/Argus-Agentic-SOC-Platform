@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: backend
+    container_name: backend
+    ports:
+      - "8000:8000"          # 生产可删
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app       # 开发热更新，生产可删
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+    container_name: frontend
+    ports:
+      - "3000:80"            # 浏览器访问
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    container_name: postgres
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"          # 生产建议删除
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
