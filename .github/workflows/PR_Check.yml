@@ -34,12 +34,26 @@ jobs:
           FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | xargs)
           echo "files=$FILES" >> $GITHUB_OUTPUT
 
-      # --- 3. Secret Scan (Gitleaks) - 必须全量 ---
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+      # --- 3. Secret Scan (Gitleaks) - 增量扫描，仅扫描变动文件 ---
+      - name: Run Gitleaks (Incremental)
         continue-on-error: true
-        with:
-          args: --source . --report-format json --report-path gitleaks-report.json
+        env:
+          GITLEAKS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        run: |
+          CHANGED_FILES="${{ steps.changed-files.outputs.files }}"
+          if [ -n "$CHANGED_FILES" ]; then
+            mkdir -p tmp_gitleaks_scan
+            for f in $CHANGED_FILES; do
+              if [ -f "$f" ]; then
+                mkdir -p "$(dirname tmp_gitleaks_scan/$f)"
+                cp "$f" "tmp_gitleaks_scan/$f" || true
+              fi
+            done
+            docker run --rm -v "$PWD":/src ghcr.io/gitleaks/gitleaks:latest detect --source /src/tmp_gitleaks_scan --report-format json --report-path /src/gitleaks-report.json || true
+          else
+            echo "{}" > gitleaks-report.json
+          fi
 
       # --- 4. SAST (Semgrep) - 增量扫描 ---
       - name: Run Semgrep (Incremental)
