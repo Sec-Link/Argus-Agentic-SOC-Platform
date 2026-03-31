@@ -4,7 +4,7 @@ metadata:
   name: siem-frontend
   namespace: siem-dev
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: siem-frontend
@@ -14,21 +14,31 @@ spec:
         app: siem-frontend
     spec:
       imagePullSecrets:
-      - name: aliyun-acr-secret
+        - name: aliyun-acr-secret
       containers:
-      - name: react
-        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-frontend:v0.2
+      - name: nextjs
+        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-frontend:latest
         ports:
-        - containerPort: 80
+        - containerPort: 3000
+        env:
+        - name: BACKEND_ORIGIN
+          value: "http://siem-backend:80"
+        - name: NODE_ENV
+          value: "production"
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: frontend
+  name: siem-frontend
   namespace: siem-dev
+  annotations:
+    # 阿里云 CLB 自动创建公网负载均衡
+    service.beta.kubernetes.io/alicloud-loadbalancer-address-type: "internet"
+    service.beta.kubernetes.io/alicloud-loadbalancer-spec: "slb.s1.small"
 spec:
+  type: LoadBalancer
   selector:
     app: siem-frontend
   ports:
   - port: 80
-    targetPort: 80
+    targetPort: 3000
