@@ -7,7 +7,6 @@ echo "Starting docker-entrypoint..."
 echo "Running migrations..."
 python manage.py makemigrations --noinput
 python manage.py migrate --noinput
-python manage.py seed_tenants
 
 # Collect static files unless explicitly disabled
 if [ "${DJANGO_COLLECTSTATIC:-1}" != "0" ]; then
