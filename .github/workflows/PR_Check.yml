@@ -2,7 +2,7 @@ name: PR Security Scan (Incremental)
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened]
 
 jobs:
   security-check:
