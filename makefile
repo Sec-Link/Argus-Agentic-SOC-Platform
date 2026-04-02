@@ -1,24 +1,6 @@
 # Makefile
 .PHONY: rebuild redeploy clean
 
-rebuild:
-	docker-compose up --build -d
-
-redeploy:
-	docker-compose down && docker-compose up --build -d
-
-clean:
-	docker-compose down --volumes --rmi all
-
-clean-rebuild:
-	docker-compose down --volumes --rmi all && docker-compose up --build -d
-
-logs:
-	docker-compose logs -f
-
-restart:
-	docker-compose restart
-
 build-dev:
 	docker-compose -f docker-compose.dev.yml up --build -d
 
