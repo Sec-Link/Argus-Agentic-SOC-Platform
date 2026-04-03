@@ -3,7 +3,6 @@ import { Card, Form, InputNumber, Select, Switch, Button, Space, message, Table,
 import { Line } from '@ant-design/plots'
 import { getCorrelationPolicy, saveCorrelationPolicy, getCorrelationEvents } from 'services/correlation'
 import { listIntegrations, integrationsPreviewEsMapping } from 'services/integrations'
-import TicketPolicyPage from './TicketPolicy'
 
 const { Title, Text } = Typography
 
@@ -284,11 +283,6 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
                 />
               </Card>
             ),
-          },
-          {
-            key: 'ticket-policy',
-            label: 'Ticket Policy',
-            children: <TicketPolicyPage embedded />,
           },
         ]}
       />

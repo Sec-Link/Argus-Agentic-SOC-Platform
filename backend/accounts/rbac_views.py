@@ -16,7 +16,6 @@ COMMON_APP_LABELS = {
     "orchestrator",
     "users",
     "correlation",
-    "ticket_policies",
 }
 
 
