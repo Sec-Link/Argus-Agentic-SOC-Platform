@@ -5,7 +5,10 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  security-check:
+  security-checks:
+    strategy:
+      matrix:
+        check: [gitleaks, semgrep, bandit, npm-audit]
     name: Security Scan & Report
     runs-on: ubuntu-latest
     permissions:
@@ -91,17 +94,30 @@ jobs:
         run: |
           # --- Gitleaks 部分 ---
           echo "## 🔑 密钥安全" >> $GITHUB_STEP_SUMMARY
-          if [ -f gitleaks-report.json ] && [ "$(jq '. | length' gitleaks-report.json)" -gt 0 ]; then
-            echo "❌ 发现密钥泄露，请立即处理！" >> $GITHUB_STEP_SUMMARY
+          if [ -f gitleaks-report.json ]; then
+            # 验证 JSON 有效性，获取数组长度（gitleaks 返回数组）
+            GITLEAKS_COUNT=$(jq -r 'if type == "array" then length elif type == "object" then .[] | length else 0 end' gitleaks-report.json 2>/dev/null || echo 0)
+            if [ "$GITLEAKS_COUNT" -gt 0 ]; then
+              echo "❌ 发现密钥泄露（$GITLEAKS_COUNT 处），请立即处理！" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ 未发现新密钥泄露。" >> $GITHUB_STEP_SUMMARY
+            fi
           else
-            echo "✅ 未发现新密钥泄露。" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Gitleaks 报告未生成。" >> $GITHUB_STEP_SUMMARY
           fi
 
           # --- Semgrep 部分 ---
           echo "## 🔍 代码安全 (增量)" >> $GITHUB_STEP_SUMMARY
           if [ -f semgrep-full.json ]; then
-            COUNT=$(jq '.results | length' semgrep-full.json)
-            [ "$COUNT" -gt 0 ] && echo "⚠️ 本次变动引入了 **$COUNT** 个潜在风险。" >> $GITHUB_STEP_SUMMARY || echo "✅ 本次变动未引入新风险。" >> $GITHUB_STEP_SUMMARY
+            # 安全检查 results 字段存在且为数组
+            COUNT=$(jq -r '.results // [] | if type == "array" then length else 0 end' semgrep-full.json 2>/dev/null || echo 0)
+            if [ "$COUNT" -gt 0 ]; then
+              echo "⚠️ 本次变动引入了 **$COUNT** 个潜在风险。" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ 本次变动未引入新风险。" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ Semgrep 报告未生成。" >> $GITHUB_STEP_SUMMARY
           fi
 
           # --- 模块跳过提醒 ---
@@ -190,3 +206,9 @@ jobs:
           curl -X POST -H "Content-Type: application/json" \
                -d "$MESSAGE_JSON" \
                ${{ secrets.FEISHU_WEBHOOK_URL }}
+
+      # --- 10. Setup Python ---
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+          cache: 'pip'
