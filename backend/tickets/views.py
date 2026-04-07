@@ -18,10 +18,12 @@ from .serializers import (
     EventTicketAttachmentSerializer,
     TicketHandleLogSerializer,
 )
-from ai_assistant.assistant import AIAssistantError, generate_ai_assistant_output
-from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
-from ai_assistant.skill_config import get_enabled_skill_configs
-from ai_assistant.serializers import AIAssistantRequestSerializer
+
+
+#from ai_assistant.assistant import AIAssistantError, generate_ai_assistant_output
+#from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
+#from ai_assistant.skill_config import get_enabled_skill_configs
+#from ai_assistant.serializers import AIAssistantRequestSerializer
 
 
 class EventTicketViewSet(viewsets.ModelViewSet):
