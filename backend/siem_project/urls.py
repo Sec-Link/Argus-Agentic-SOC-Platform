@@ -45,5 +45,7 @@ urlpatterns = [
     path('api/v1/integrations/create_table', integrations_create_table),
     path('api/v1/integrations/create_table_from_es', integrations_create_table_from_es),
     path('api/v1/integrations/preview_es_mapping', integrations_preview_es_mapping),
+    # Tickets API (v1, versioned like alerts)
+    path('api/v1/tickets/', include('tickets.urls')),
 ]
 
