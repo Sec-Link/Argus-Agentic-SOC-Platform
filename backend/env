@@ -1,0 +1,32 @@
+# Django Core Configuration
+SECRET_KEY=your-secret-key-here-change-in-production
+DEBUG=False
+ALLOWED_HOSTS=localhost,127.0.0.1,192.168.31.210,0.0.0.0,your-domain.com
+
+# PostgreSQL Database Configuration
+POSTGRES_DB=testdb
+POSTGRES_USER=testuser
+POSTGRES_PASSWORD=testpass
+POSTGRES_HOST=192.168.31.33
+POSTGRES_PORT=5432
+
+# CSRF Trusted Origins (comma-separated, no spaces)
+CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173
+
+# Elasticsearch Configuration (optional, for ES integration)
+ES_HOST=http://localhost:9200
+ES_USERNAME=elastic
+ES_PASSWORD=your-es-password
+
+TICKETS_API_BASE=http://localhost:8000/api/v1/tickets/
+TICKETS_API_TOKEN=b5159e0ff13a279ce5c96baaf19502a410372fc7
+
+# MCP Gateway (obot)
+MCP_GATEWAY_ENABLED=true
+MCP_GATEWAY_BASE_URL=http://192.168.31.33:8080/mcp-connect/default-ir-2c1e7c5avr4xz
+MCP_GATEWAY_TOKEN=
+MCP_GATEWAY_TIMEOUT_SECONDS=8
+MCP_TICKET_CONTEXT_PATH=/ticket-context/{ticket_number}
+MCP_TICKET_SEARCH_PATH=/ticket-search/similar-cases
+MCP_CMDB_LOOKUP_PATH=/cmdb/asset-lookup
+MCP_OBSERVABLES_EXTRACT_PATH=/observables/extract

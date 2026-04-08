@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     'alerts',
     'dashboards',
     'tickets',
+    'ai_assistant',
+    'django.contrib.postgres',
 ]
 
 MIDDLEWARE = [
