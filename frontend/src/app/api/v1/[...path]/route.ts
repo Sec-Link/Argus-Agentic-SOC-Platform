@@ -51,7 +51,7 @@ async function proxy(request: Request, ctx: any) {
     });
   }
 
-  let res: Response;
+  let res: Response | undefined;
   for (const origin of targetOrigins) {
     const url = new URL(origin + targetPath);
     url.search = incomingUrl.search;
