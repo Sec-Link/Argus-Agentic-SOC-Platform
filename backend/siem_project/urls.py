@@ -53,6 +53,7 @@ urlpatterns = [
     path('api/v1/auth/register/', RegisterAPIView.as_view(), name='register'),
     path('api/v1/auth/register', RegisterAPIView.as_view()),
     path('api/v1/alerts/', include('alerts.urls')),
+    path('api/v1/correlation/', include('correlation.urls')),
     path('api/v1/accounts/', include('accounts.urls')),
     path('api/v1/permissions/', include('accounts.urls_permissions')),  
     path('api/v1/', include(router.urls)),  
@@ -101,4 +102,3 @@ urlpatterns = [
     path('api/v1/mcp/cmdb/asset-lookup', mcp_cmdb_asset_lookup),
     path('api/v1/mcp/observables/extract', mcp_observables_extract),
 ]
-
