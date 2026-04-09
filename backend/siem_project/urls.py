@@ -39,10 +39,16 @@ from ai_assistant.views import (
     skill_config_detail as ai_skill_config_detail,
     skill_content_detail as ai_skill_content_detail,
 )
+from correlation import urls as correlation_urls
+from orchestrator.views import TaskViewSet, TaskRunViewSet, TaskRequestLogViewSet
 
 router = routers.DefaultRouter()
 router.register(r'integrations', IntegrationViewSet, basename='integration')
 router.register(r'dashboards', DashboardViewSet, basename='dashboard')
+router.register(r'tasks', TaskViewSet, basename='task')
+router.register(r'task_runs', TaskRunViewSet, basename='taskrun')
+router.register(r'task_request_logs', TaskRequestLogViewSet, basename='taskrequestlog')
+#router.register(r'ticket-policies', TicketPolicyViewSet, basename='ticket-policy')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -101,4 +107,5 @@ urlpatterns = [
     path('api/v1/mcp/ticket-search/similar-cases', mcp_ticket_search_similar_cases),
     path('api/v1/mcp/cmdb/asset-lookup', mcp_cmdb_asset_lookup),
     path('api/v1/mcp/observables/extract', mcp_observables_extract),
+    path('api/v1/correlation/', include(correlation_urls)),
 ]

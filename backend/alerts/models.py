@@ -28,6 +28,7 @@ class Alert(models.Model):
     description = models.TextField(null=True, blank=True)
     category = models.CharField(max_length=100, null=True, blank=True)
     source_data = models.JSONField(null=True, blank=True)
+    ticket_number = models.CharField(max_length=64, null=True, blank=True)
 
     created_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(null=True, blank=True)

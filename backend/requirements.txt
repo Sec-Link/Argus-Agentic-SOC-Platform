@@ -12,6 +12,7 @@ redis
 pymysql
 requests
 croniter
+django-scheduled-tasks>=0.2.18
 gunicorn>=20.1.0
 whitenoise==6.0.0
 pandas

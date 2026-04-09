@@ -49,7 +49,8 @@ INSTALLED_APPS = [
     'dashboards',
     'tickets',
     'ai_assistant',
-    'django.contrib.postgres',
+    'orchestrator',
+    'django_scheduled_tasks',
 ]
 
 MIDDLEWARE = [
@@ -146,3 +147,14 @@ REST_FRAMEWORK = {
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
+
+# Django tasks backend (immediate execution by default).
+# TASKS must be a dict of backends keyed by alias (default required).
+TASKS = {
+    'default': {
+        'BACKEND': 'django.tasks.backends.immediate.ImmediateBackend',
+    },
+}
+
+# Orchestrator schedule polling window (seconds).
+ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS = int(os.getenv('ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS', '30'))
