@@ -36,6 +36,7 @@ urlpatterns = [
     path('api/v1/auth/register/', RegisterAPIView.as_view(), name='register'),
     path('api/v1/auth/register', RegisterAPIView.as_view()),
     path('api/v1/alerts/', include('alerts.urls')),
+    path('api/v1/correlation/', include('correlation.urls')),
     path('api/v1/accounts/', include('accounts.urls')),
     path('api/v1/permissions/', include('accounts.urls_permissions')),  
     path('api/v1/', include(router.urls)),  
@@ -46,4 +47,3 @@ urlpatterns = [
     path('api/v1/integrations/create_table_from_es', integrations_create_table_from_es),
     path('api/v1/integrations/preview_es_mapping', integrations_preview_es_mapping),
 ]
-
