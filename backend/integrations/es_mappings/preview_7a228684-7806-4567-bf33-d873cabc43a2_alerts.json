@@ -1,0 +1,175 @@
+{
+  "index": "alerts",
+  "columns": [
+    {
+      "orig_name": "alert_id",
+      "colname": "alert_id",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "body",
+      "colname": "body",
+      "es_type": null,
+      "sql_type": "jsonb",
+      "sample": {
+        "@timestamp": "2026-04-09T08:19:59.523Z",
+        "title": "Potential PowerShell Obfuscation via Character Array Reconstruction [Duplicate]",
+        "description": "# Reference char keyword \n$a = ([char]119)+([char]104)+([char]111)+([char]97)+([char]109)+([char]105); iex $a",
+        "severity": "high",
+        "rule_id": "af86ea90-f9f0-483e-bd0b-a288535aaffe",
+        "alert_id": "af86ea90-f9f0-483e-bd0b-a288535aaffe",
+        "host_name": "SEC-FINAL-VERIFY",
+        "source_ip": ""
+      }
+    },
+    {
+      "orig_name": "category",
+      "colname": "category",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "date",
+      "colname": "date",
+      "es_type": "date",
+      "sql_type": "timestamptz",
+      "sample": "2026-04-09T08:20:02.462Z"
+    },
+    {
+      "orig_name": "description",
+      "colname": "description",
+      "es_type": "text",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "destination",
+      "colname": "destination",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "doc_id",
+      "colname": "doc_id",
+      "es_type": "text",
+      "sql_type": "text",
+      "sample": "af86ea90-f9f0-483e-bd0b-a288535aaffe-af86ea90-f9f0-483e-bd0b-a288535aaffe"
+    },
+    {
+      "orig_name": "firstactivitytime",
+      "colname": "firstactivitytime",
+      "es_type": "date",
+      "sql_type": "timestamptz",
+      "sample": null
+    },
+    {
+      "orig_name": "index",
+      "colname": "index",
+      "es_type": "text",
+      "sql_type": "text",
+      "sample": "alerts"
+    },
+    {
+      "orig_name": "observer_ip",
+      "colname": "observer_ip",
+      "es_type": "ip",
+      "sql_type": "jsonb",
+      "sample": null
+    },
+    {
+      "orig_name": "raw",
+      "colname": "raw",
+      "es_type": "object",
+      "sql_type": "jsonb",
+      "sample": null
+    },
+    {
+      "orig_name": "references",
+      "colname": "references",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "risk_object",
+      "colname": "risk_object",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "risk_score",
+      "colname": "risk_score",
+      "es_type": "integer",
+      "sql_type": "integer",
+      "sample": null
+    },
+    {
+      "orig_name": "rule_id",
+      "colname": "rule_id",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "severity",
+      "colname": "severity",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "source_ip",
+      "colname": "source_ip",
+      "es_type": "ip",
+      "sql_type": "jsonb",
+      "sample": null
+    },
+    {
+      "orig_name": "tactic_id",
+      "colname": "tactic_id",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "tactic_name",
+      "colname": "tactic_name",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "tags",
+      "colname": "tags",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "technique_id",
+      "colname": "technique_id",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "technique_name",
+      "colname": "technique_name",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    },
+    {
+      "orig_name": "title",
+      "colname": "title",
+      "es_type": "keyword",
+      "sql_type": "text",
+      "sample": null
+    }
+  ]
+}

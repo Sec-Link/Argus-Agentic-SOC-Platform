@@ -3,8 +3,6 @@ import dayjs from 'dayjs'
 import { Card, Button, List, Modal, Form, Input, Select, message, InputNumber, DatePicker, Table } from 'antd'
 import client from 'services/client'
 import { previewEsIntegration, integrationsDbTables, integrationsCreateTable, integrationsCreateTableFromEs, integrationsPreviewEsMapping } from 'services/integrations'
-import { fetchTicketPolicies } from 'services/ticketPolicies'
-import type { TicketPolicy } from '../../types'
 
 // Orchestrator page for scheduled tasks (Task) management.
 // - Create/edit/list tasks (schedule, source/dest integration, index, limit, query)
@@ -23,16 +21,18 @@ export default function Orchestrator(){
   const [editingTask, setEditingTask] = useState<any | null>(null)
   const [form] = Form.useForm()
   const [runsModalTask, setRunsModalTask] = useState<any | null>(null)
-  const [ticketPolicies, setTicketPolicies] = useState<TicketPolicy[]>([])
   const [availableTables, setAvailableTables] = useState<string[]>([])
   const [showCreateTableModal, setShowCreateTableModal] = useState(false)
   const [creatingTableName, setCreatingTableName] = useState('es_imports')
   const [previewColumns, setPreviewColumns] = useState<any[] | null>(null)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
   const [editedColumns, setEditedColumns] = useState<any[] | null>(null)
+  const [showPreviewDataModal, setShowPreviewDataModal] = useState(false)
+  const [previewData, setPreviewData] = useState<any[] | null>(null)
   const [chartTaskId, setChartTaskId] = useState<string | number | null>(null)
   const PG_TYPE_OPTIONS = ['text','integer','bigint','smallint','real','double precision','numeric','boolean','timestamptz','timestamp','date','jsonb','json']
   const MYSQL_TYPE_OPTIONS = ['TEXT','INT','BIGINT','SMALLINT','DOUBLE','TINYINT(1)','DATETIME','JSON','VARCHAR(255)']
+  const DJANGO_DEFAULT_DEST = '__django_default__'
 
   // compute ISO timestamps for lower and upper bounds based on absolute or relative selectors
   // Input may include: timestamp_from, timestamp_to, timestamp_relative, timestamp_relative_custom_value/unit
@@ -102,19 +102,10 @@ export default function Orchestrator(){
     try{ const r = await client.get('/integrations/'); setIntegrations(r.data) }catch(e){ setIntegrations([]) }
   }
 
-  const fetchPolicies = async () => {
-    try {
-      const res = await fetchTicketPolicies()
-      setTicketPolicies(Array.isArray(res) ? res : (res?.results ?? []))
-    } catch (e) {
-      setTicketPolicies([])
-    }
-  }
 
   useEffect(()=>{ fetch() }, [])
 
   useEffect(()=>{ fetchIntegrations() }, [])
-  useEffect(()=>{ fetchPolicies() }, [])
   useEffect(()=>{ fetchRuns() }, [])
   useEffect(()=>{
     if(!chartTaskId && items.length){
@@ -184,10 +175,12 @@ export default function Orchestrator(){
     payload.config.sync = 'es_to_db'
     payload.config.source_integration = v.source_integration
     payload.config.dest_integration = v.dest_integration
+    if(v.dest_integration === DJANGO_DEFAULT_DEST){
+      payload.config.django_db = 'default'
+    }
     if(v.table) payload.config.table = v.table
     payload.config.index = v.index
     payload.config.limit = Number(v.limit) || 1000
-    if(v.ticket_policy_id) payload.config.ticket_policy_id = v.ticket_policy_id
     // if user supplied a JSON query in config textarea, try parse it
     if(v.config){
       if(typeof v.config === 'string'){
@@ -243,7 +236,9 @@ export default function Orchestrator(){
     try{
       const v = form.getFieldsValue()
       if(!v.dest_integration) return
-      const payload: any = { integration: v.dest_integration }
+      const payload: any = v.dest_integration === DJANGO_DEFAULT_DEST
+        ? { django_db: 'default' }
+        : { integration: v.dest_integration }
       const res = await integrationsDbTables(payload)
       if(res && res.tables) setAvailableTables(res.tables)
       else setAvailableTables([])
@@ -254,7 +249,11 @@ export default function Orchestrator(){
     try{
       const v = form.getFieldsValue()
       const payload: any = { table: creatingTableName }
-      if(v.dest_integration) payload.integration = v.dest_integration
+      if(v.dest_integration === DJANGO_DEFAULT_DEST){
+        payload.django_db = 'default'
+      }else if(v.dest_integration){
+        payload.integration = v.dest_integration
+      }
       const res = await integrationsCreateTable(payload)
       if(res && res.ok){
         message.success('Table created: ' + res.table)
@@ -276,7 +275,11 @@ export default function Orchestrator(){
       const payload: any = { table: creatingTableName }
       if(esIntegrationId) payload.alerts = esIntegrationId
       if(indexName) payload.index = indexName
-      if(v.dest_integration) payload.dest_integration = v.dest_integration
+      if(v.dest_integration === DJANGO_DEFAULT_DEST){
+        payload.django_db = 'default'
+      }else if(v.dest_integration){
+        payload.dest_integration = v.dest_integration
+      }
       payload.save_to_file = true
       if(editedColumns && editedColumns.length > 0){ payload.columns = editedColumns.map((c:any)=>({ orig_name: c.orig_name, colname: c.colname, sql_type: c.sql_type })) }
       const res = await integrationsCreateTableFromEs(payload)
@@ -409,7 +412,6 @@ export default function Orchestrator(){
                   if (lte && typeof lte === 'string' && lte !== 'now') initial.timestamp_to = dayjs(lte)
                 }
               }
-              if(cfg.ticket_policy_id) initial.ticket_policy_id = cfg.ticket_policy_id
               form.setFieldsValue(initial)
               setShowModal(true)
             }}>{it.name}</a>} description={<div>Type: {it.task_type} Schedule: {it.schedule}</div>} />
@@ -417,7 +419,7 @@ export default function Orchestrator(){
         )} />
       </Card>
 
-      <Card title="Ticket Policy Runs" style={{ marginTop: 16 }} extra={
+      <Card title="Task Runs" style={{ marginTop: 16 }} extra={
         <Select
           style={{ minWidth: 220 }}
           placeholder="Select task"
@@ -558,8 +560,20 @@ export default function Orchestrator(){
         </div>
       </Modal>
 
+      <Modal
+        open={showPreviewDataModal}
+        title="Data preview"
+        onCancel={()=>{ setShowPreviewDataModal(false); setPreviewData(null) }}
+        footer={<Button onClick={()=>{ setShowPreviewDataModal(false); setPreviewData(null) }}>Close</Button>}
+        width={800}
+      >
+        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>
+{JSON.stringify(previewData, null, 2)}
+        </pre>
+      </Modal>
+
       <Modal open={showModal} onCancel={()=>setShowModal(false)} onOk={save} title="New Task">
-        <Form form={form} layout="vertical" initialValues={{ schedule: '0 0 * * *' }}>
+        <Form form={form} layout="vertical" initialValues={{ schedule: '0 0 * * *', dest_integration: DJANGO_DEFAULT_DEST }}>
           <Form.Item name="name" label="Name" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="schedule" label="Cron (e.g. 0 0 * * *)" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="source_integration" label="Source Integration (Elasticsearch)">
@@ -603,20 +617,13 @@ export default function Orchestrator(){
                   }
                   const res = await previewEsIntegration({ integration_id: vals.source_integration, index: vals.index, size: Number(vals.limit) || 10, query: q })
                   if(res.error) throw new Error(res.error)
-                  Modal.info({ title: 'Data preview', width: 800, content: (<pre style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>{JSON.stringify(res.rows, null, 2)}</pre>) })
+                  setPreviewData(res.rows || [])
+                  setShowPreviewDataModal(true)
                 }catch(e:any){ message.error(String(e)) }
               }} style={{ marginLeft: 8 }}>Preview Data</Button>
             </Input.Group>
           </Form.Item>
           <Form.Item name="timestamp_field" label="Timestamp field (optional)"><Input placeholder="@timestamp or ts_field" /></Form.Item>
-          <Form.Item name="ticket_policy_id" label="Ticket Policy (optional)">
-            <Select allowClear placeholder="Select a ticket policy">
-              {ticketPolicies.map(p => (
-                <Select.Option key={p.id} value={String(p.id)}>{p.name}</Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
-
           <Form.Item name="time_selector" label="Time range">
             <Select
               onChange={(val:any)=>{
@@ -673,6 +680,7 @@ export default function Orchestrator(){
           </Form.Item>
           <Form.Item name="dest_integration" label="Destination Integration (Database)">
             <Select allowClear>
+              <Select.Option value={DJANGO_DEFAULT_DEST}>Current DB (Django default)</Select.Option>
               {
                 integrations
                   .filter(i=>{
