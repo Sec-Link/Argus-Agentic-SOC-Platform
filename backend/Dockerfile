@@ -24,7 +24,9 @@ RUN python -m pip install --upgrade pip \
 # Create a non-root user and set permissions
 RUN groupadd -r app && useradd -r -g app -d /home/app -s /sbin/nologin app \
     && mkdir -p /home/app \
-    && chown -R app:app /home/app /app
+    && chown -R app:app /home/app /app \
+    && mkdir -p /app/staticfiles \
+    && chown -R app:app /app/staticfiles
 
 # Copy application code and set ownership in one step
 COPY --chown=app:app . /app
