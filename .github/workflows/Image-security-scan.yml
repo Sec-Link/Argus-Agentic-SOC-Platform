@@ -1,4 +1,4 @@
-name: Image Security Scan (Private & Integrated)
+name: Image Security Scan
 
 on:
   workflow_run:
@@ -16,7 +16,7 @@ jobs:
     
     permissions:
       contents: read
-      security-events: write # 必须：用于上传镜像扫描结果到 Security 标签页
+      security-events: write
 
     steps:
       - name: Checkout code
@@ -55,7 +55,7 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
-          category: ${{ matrix.service }} # 区分不同的服务镜像
+          category: ${{ matrix.service }}
 
       # --- 4. 处理数据发送飞书 (不留附件，不留摘要) ---
       - name: Notify Feishu
