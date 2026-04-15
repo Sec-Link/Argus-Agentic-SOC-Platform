@@ -22,8 +22,11 @@ jobs:
       - name: Get Changed Files
         id: changed-files
         run: |
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | xargs)
+          FILES=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }} HEAD | xargs)
           echo "files=$FILES" >> $GITHUB_OUTPUT
+
+          BACKEND_FILES=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }} HEAD | grep "^backend/" | xargs || true)
+          echo "backend_files=$BACKEND_FILES" >> $GITHUB_OUTPUT
 
       # --- 2. Gitleaks (增量扫描) ---
       - name: Run Gitleaks
@@ -37,22 +40,23 @@ jobs:
         with:
           format: sarif
           report_path: gitleaks.sarif
+          args: detect --log-opts="origin/${{ github.base_ref }}..HEAD" --source .
 
       # --- 3. Semgrep ---
       - name: Run Semgrep (Incremental)
         run: |
           pip install semgrep
-          CHANGED_FILES="${{ steps.changed-files.outputs.files }}"
-          if [ -n "$CHANGED_FILES" ]; then
-            semgrep --config auto $CHANGED_FILES --sarif -o semgrep.sarif || true
+          if [ -n "${{ steps.changed-files.outputs.files }}" ]; then
+            semgrep --config auto ${{ steps.changed-files.outputs.files }} --sarif -o semgrep.sarif || true
           fi
 
       # --- 4. Bandit (按需扫描) ---
       - name: Run Bandit
         run: |
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^backend/"; then
+          B_FILES="${{ steps.changed-files.outputs.backend_files }}"
+          if [ -n "$B_FILES" ]; then
             pip install bandit bandit_sarif_formatter
-            bandit -r ./backend -ll -f sarif -o bandit.sarif || true
+            bandit $B_FILES -ll -f sarif -o bandit.sarif || true
           fi
 
       # --- 6.Security Tab ---
