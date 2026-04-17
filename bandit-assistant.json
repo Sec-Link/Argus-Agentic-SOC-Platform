@@ -1,0 +1,79 @@
+{
+  "errors": [],
+  "generated_at": "2026-04-17T14:57:44Z",
+  "metrics": {
+    ".\\backend/ai_assistant/assistant.py": {
+      "CONFIDENCE.HIGH": 1,
+      "CONFIDENCE.LOW": 1,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 1,
+      "SEVERITY.MEDIUM": 1,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 530,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "_totals": {
+      "CONFIDENCE.HIGH": 1,
+      "CONFIDENCE.LOW": 1,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 1,
+      "SEVERITY.MEDIUM": 1,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 530,
+      "nosec": 0,
+      "skipped_tests": 0
+    }
+  },
+  "results": [
+    {
+      "code": "218             payload = json.loads(line)\n219         except Exception:\n220             continue\n221         if isinstance(payload, dict):\n",
+      "col_offset": 8,
+      "end_col_offset": 20,
+      "filename": ".\\backend/ai_assistant/assistant.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {
+        "id": 703,
+        "link": "https://cwe.mitre.org/data/definitions/703.html"
+      },
+      "issue_severity": "LOW",
+      "issue_text": "Try, Except, Continue detected.",
+      "line_number": 219,
+      "line_range": [
+        219,
+        220
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html",
+      "test_id": "B112",
+      "test_name": "try_except_continue"
+    },
+    {
+      "code": "331     route_prompt = (\n332         \"You are an MCP router. Select ONE best MCP target for the user request.\\n\"\n333         \"Return STRICT JSON only with keys: target_mcp (string), confidence (0..1), reason (string).\\n\"\n334         f\"User request: {user_prompt}\\n\"\n335         f\"Available MCP targets: {_json_dumps_safe(options)}\\n\"\n336         \"target_mcp must be a substring from title or endpoint.\"\n337     )\n",
+      "col_offset": 8,
+      "end_col_offset": 24,
+      "filename": ".\\backend/ai_assistant/assistant.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 332,
+      "line_range": [
+        332,
+        333,
+        334,
+        335,
+        336
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    }
+  ]
+}

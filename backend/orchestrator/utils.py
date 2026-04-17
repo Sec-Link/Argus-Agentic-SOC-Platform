@@ -1,7 +1,7 @@
 import json
 import os
 import requests
-import random
+import secrets
 from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone, dateparse
@@ -477,9 +477,9 @@ def seed_correlation_events(max_tickets=20, min_events=2, max_events=5, hours=6)
     now = timezone.now()
     created = 0
     for ticket in tickets:
-        count = random.randint(min_events, max_events)
+        count = secrets.choice(range(min_events, max_events + 1))
         for idx in range(count):
-            occurred_at = now - timedelta(minutes=random.randint(0, hours * 60))
+            occurred_at = now - timedelta(minutes=secrets.choice(range(0, hours * 60 + 1)))
             alert_id = f"seed-{ticket.ticket_number}-{idx + 1}"
             CorrelationEvent.objects.create(
                 ticket_id=ticket.ticket_number,

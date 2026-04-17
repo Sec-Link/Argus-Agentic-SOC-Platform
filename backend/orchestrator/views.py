@@ -146,11 +146,6 @@ class TaskViewSet(viewsets.ModelViewSet):
             if getattr(_dj_settings, 'WRITE_CONFIG_TO_DISK', False):
                 with open(runner_sh, 'w', encoding='utf-8') as fr:
                     fr.write(runner_content)
-                # make executable if possible
-                try:
-                    os.chmod(runner_sh, 0o755)
-                except Exception:
-                    pass
         except Exception:
             pass
 

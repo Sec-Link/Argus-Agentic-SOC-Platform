@@ -6,7 +6,6 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from .models import Integration
 from .serializers import IntegrationSerializer
-from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view
 from requests.auth import HTTPBasicAuth
 from rest_framework.permissions import IsAuthenticated
@@ -273,7 +272,6 @@ def sync_es_to_db(alerts: Integration, index: str, dest_integration: Integration
         return res
 
 
-@csrf_exempt
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def preview_es_index(request):
@@ -344,7 +342,6 @@ def preview_es_index(request):
         return Response(info, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@csrf_exempt   
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def test_es_connection(request):
@@ -398,7 +395,6 @@ def test_es_connection(request):
 
     return Response({'ok': True, 'status': resp.status_code, 'body': body, 'headers': headers})
 
-@csrf_exempt
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def integrations_preview_es_mapping(request):
