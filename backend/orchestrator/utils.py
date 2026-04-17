@@ -11,6 +11,8 @@ from alerts.models import Alert
 from correlation.models import CorrelationPolicy, CorrelationEvent
 from tickets.models import EventTicket, TicketWorkLog
 
+DEST_TABLE = "alerts_alert"
+
 # -----------------------------
 # 中文注释：
 # 本模块提供任务执行的工具函数，当前仅包含 `execute_task`：
@@ -66,16 +68,15 @@ def execute_task(task: Task) -> TaskRun:
                 except Integration.DoesNotExist as nde:
                     raise Exception(f"Integration not found: {nde}")
 
-            # If task provides a table override, inject it into a copy of the dest integration config
-            if cfg.get('table'):
-                try:
-                    import copy
-                    dest_it = copy.deepcopy(dest_it)
-                    dest_cfg = dest_it.config or {}
-                    dest_cfg['table'] = cfg.get('table')
-                    dest_it.config = dest_cfg
-                except Exception:
-                    pass
+            # Force fixed destination table for orchestrator sync.
+            try:
+                import copy
+                dest_it = copy.deepcopy(dest_it)
+                dest_cfg = dest_it.config or {}
+                dest_cfg['table'] = DEST_TABLE
+                dest_it.config = dest_cfg
+            except Exception:
+                pass
 
             log_lines.append(f"Starting ES->DB sync from index={index} limit={limit}")
             query = cfg.get('query')
@@ -84,7 +85,7 @@ def execute_task(task: Task) -> TaskRun:
                 query = { 'query': { 'range': { cfg.get('timestamp_field'): { 'gte': cfg.get('timestamp_from'), 'lte': cfg.get('timestamp_to', 'now') } } } }
 
             use_alerts_sync = (
-                str(cfg.get('table') or '').lower() == 'alerts_alert'
+                DEST_TABLE == 'alerts_alert'
                 or bool(cfg.get('use_alerts_sync'))
                 or str(cfg.get('sync_mode') or '').lower() == 'alerts'
             )
