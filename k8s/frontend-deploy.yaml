@@ -47,10 +47,12 @@ metadata:
     # 阿里云 CLB 自动创建公网负载均衡
     service.beta.kubernetes.io/alicloud-loadbalancer-address-type: "internet"
     service.beta.kubernetes.io/alicloud-loadbalancer-spec: "slb.s1.small"
+    service.beta.kubernetes.io/alicloud-loadbalancer-cert-id: "24591571"
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-force-override-geometry: "true"
 spec:
   type: LoadBalancer
   selector:
     app: siem-frontend
   ports:
-  - port: 80
+  - port: 443
     targetPort: 3000
