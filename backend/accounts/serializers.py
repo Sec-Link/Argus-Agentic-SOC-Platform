@@ -12,7 +12,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password_confirm']:
-            raise serializers.ValidationError({"password": "Password fields didn't match."})
+            raise serializers.ValidationError("The two credential fields did not match.")
         return attrs
 
     def create(self, validated_data):
@@ -50,13 +50,15 @@ class PasswordChangeSerializer(serializers.Serializer):
 
     def validate(self, data):
         if data['new_password'] != data['confirm_password']:
-            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+            raise serializers.ValidationError("The two credential fields do not match.")
         if data['old_password'] == data['new_password']:
-            raise serializers.ValidationError({"new_password": "New password cannot be the same as old password."})
+            raise serializers.ValidationError("The new credential must differ from the current credential.")
         return data
 
     def save(self):
         user = self.context['request'].user
-        user.set_password(self.validated_data['new_password'])
+        new_password = self.validated_data['new_password']
+        validate_password(new_password, user=user)
+        user.set_password(new_password)
         user.save()
         return user
