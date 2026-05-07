@@ -1,5 +1,10 @@
 export {
   login,
+  register,
+  registerEmail,
+  getGuestEmailStatus,
+  requestOtp,
+  verifyOtp,
   clearAccessToken,
   getRbacMe,
   changePassword,
@@ -20,4 +25,10 @@ export {
   updateUserGroups,
   getGroupPermissions,
   updateGroupPermissions,
+  listRegistrationRequests,
+  approveRegistrationRequest,
+  rejectRegistrationRequest,
+  getSystemSettings,
+  updateSystemSettings,
+  listAuditLogs,
 } from '../../api';
