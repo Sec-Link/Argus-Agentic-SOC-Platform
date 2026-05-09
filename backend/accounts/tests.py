@@ -22,7 +22,7 @@ class OTPRegistrationFlowTests(TestCase):
         self.admin = User.objects.create_superuser("admin", "admin@example.com", "Password123!")
 
     def test_register_email_creates_pending_request(self):
-        resp = self.client.post("/api/v1/auth/register-email/", {"email": "new.user@example.com"}, format="json")
+        resp = self.client.post("/api/v1/accounts/auth/register-email/", {"email": "new.user@example.com"}, format="json")
         self.assertEqual(resp.status_code, 202)
         req = RegistrationRequest.objects.get(email="new.user@example.com")
         self.assertEqual(req.status, RegistrationRequest.Status.PENDING)
@@ -36,12 +36,12 @@ class OTPRegistrationFlowTests(TestCase):
         )
 
     def test_admin_approve_creates_readonly_otp_user(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "approved@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "approved@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="approved@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -63,12 +63,12 @@ class OTPRegistrationFlowTests(TestCase):
         )
 
     def test_otp_login_for_approved_user(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "otp.user@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "otp.user@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="otp.user@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -76,7 +76,7 @@ class OTPRegistrationFlowTests(TestCase):
         approve_resp = admin_client.post(f"/api/v1/accounts/registration-requests/{req.id}/approve/", {}, format="json")
         self.assertEqual(approve_resp.status_code, 200)
 
-        request_resp = self.client.post("/api/v1/auth/otp/request/", {"email": "otp.user@example.com"}, format="json")
+        request_resp = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "otp.user@example.com"}, format="json")
         self.assertEqual(request_resp.status_code, 200)
         self.assertGreaterEqual(len(mail.outbox), 1)
         otp_mail = mail.outbox[-1]
@@ -84,7 +84,7 @@ class OTPRegistrationFlowTests(TestCase):
         code = otp_mail.body.split("code is:")[1].splitlines()[0].strip()
 
         verify_resp = self.client.post(
-            "/api/v1/auth/otp/verify/",
+            "/api/v1/accounts/auth/otp/verify/",
             {"email": "otp.user@example.com", "otp": code},
             format="json",
         )
@@ -107,12 +107,12 @@ class OTPRegistrationFlowTests(TestCase):
         )
 
     def test_admin_audit_log_list_endpoint(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "log.list@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "log.list@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="log.list@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -131,12 +131,12 @@ class OTPRegistrationFlowTests(TestCase):
 
     @patch("accounts.services.NotificationService.send_user_otp", return_value=False)
     def test_admin_approve_returns_otp_send_failure_when_email_fails(self, _mock_send):
-        self.client.post("/api/v1/auth/register-email/", {"email": "fail.mail@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "fail.mail@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="fail.mail@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -156,12 +156,12 @@ class OTPRegistrationFlowTests(TestCase):
         OTP_IP_LIMIT_WINDOW_SECONDS=300,
     )
     def test_otp_request_rate_limited_by_email_window(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "window.limit@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "window.limit@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="window.limit@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -172,10 +172,10 @@ class OTPRegistrationFlowTests(TestCase):
         with patch("accounts.rate_limit.get_otp_cooldown_remaining_seconds", return_value=0), patch(
             "accounts.rate_limit.set_otp_cooldown", return_value=None
         ):
-            r1 = self.client.post("/api/v1/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
-            r2 = self.client.post("/api/v1/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
-            r3 = self.client.post("/api/v1/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
-            r4 = self.client.post("/api/v1/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
+            r1 = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
+            r2 = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
+            r3 = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
+            r4 = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "window.limit@example.com"}, format="json")
 
         self.assertEqual(r1.status_code, 200)
         self.assertEqual(r2.status_code, 200)
@@ -191,12 +191,12 @@ class OTPRegistrationFlowTests(TestCase):
         OTP_IP_LIMIT_WINDOW_SECONDS=300,
     )
     def test_otp_request_rate_limited_by_email_cooldown(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "cooldown.limit@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "cooldown.limit@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="cooldown.limit@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -204,8 +204,8 @@ class OTPRegistrationFlowTests(TestCase):
         approve_resp = admin_client.post(f"/api/v1/accounts/registration-requests/{req.id}/approve/", {}, format="json")
         self.assertEqual(approve_resp.status_code, 200)
 
-        r1 = self.client.post("/api/v1/auth/otp/request/", {"email": "cooldown.limit@example.com"}, format="json")
-        r2 = self.client.post("/api/v1/auth/otp/request/", {"email": "cooldown.limit@example.com"}, format="json")
+        r1 = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "cooldown.limit@example.com"}, format="json")
+        r2 = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "cooldown.limit@example.com"}, format="json")
 
         self.assertEqual(r1.status_code, 200)
         self.assertEqual(r2.status_code, 429)
@@ -218,12 +218,12 @@ class OTPRegistrationFlowTests(TestCase):
         REJECT_IP_LIMIT_WINDOW_SECONDS=3600,
     )
     def test_reject_same_request_twice_returns_400(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "double.reject@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "double.reject@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="double.reject@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -237,12 +237,12 @@ class OTPRegistrationFlowTests(TestCase):
         self.assertEqual(second.data.get("error"), "invalid_state")
 
     def test_admin_approve_sends_approval_email(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "approved.mail@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "approved.mail@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="approved.mail@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -257,7 +257,7 @@ class OTPRegistrationFlowTests(TestCase):
         settings_row.auto_approve_enabled = True
         settings_row.save(update_fields=["auto_approve_enabled"])
 
-        resp = self.client.post("/api/v1/auth/register-email/", {"email": "auto.user@example.com"}, format="json")
+        resp = self.client.post("/api/v1/accounts/auth/register-email/", {"email": "auto.user@example.com"}, format="json")
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.data.get("status"), "active")
 
@@ -272,7 +272,7 @@ class OTPRegistrationFlowTests(TestCase):
         self.assertEqual(profile.auth_method, UserAuthProfile.AuthMethod.OTP_ONLY)
         self.assertTrue(profile.is_readonly)
 
-        otp_resp = self.client.post("/api/v1/auth/otp/request/", {"email": "auto.user@example.com"}, format="json")
+        otp_resp = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "auto.user@example.com"}, format="json")
         self.assertEqual(otp_resp.status_code, 200)
         self.assertTrue(any("activation code" in m.subject.lower() or "login code" in m.subject.lower() for m in mail.outbox))
 
@@ -287,7 +287,7 @@ class OTPRegistrationFlowTests(TestCase):
         )
         RegistrationRequest.objects.filter(email="otp.no.req@example.com").delete()
 
-        resp = self.client.post("/api/v1/auth/otp/request/", {"email": "otp.no.req@example.com"}, format="json")
+        resp = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "otp.no.req@example.com"}, format="json")
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(any("login code" in m.subject.lower() for m in mail.outbox))
 
@@ -297,12 +297,12 @@ class OTPRegistrationFlowTests(TestCase):
         EMAIL_USE_TLS=True,
     )
     def test_otp_request_with_missing_smtp_host_fails_gracefully(self):
-        self.client.post("/api/v1/auth/register-email/", {"email": "smtp.missing@example.com"}, format="json")
+        self.client.post("/api/v1/accounts/auth/register-email/", {"email": "smtp.missing@example.com"}, format="json")
         req = RegistrationRequest.objects.get(email="smtp.missing@example.com")
 
         admin_client = APIClient()
         admin_login = admin_client.post(
-            "/api/v1/auth/login/",
+            "/api/v1/accounts/auth/login/",
             {"username": "admin", "password": "Password123!"},
             format="json",
         )
@@ -310,7 +310,7 @@ class OTPRegistrationFlowTests(TestCase):
         approve_resp = admin_client.post(f"/api/v1/accounts/registration-requests/{req.id}/approve/", {}, format="json")
         self.assertEqual(approve_resp.status_code, 200)
 
-        resp = self.client.post("/api/v1/auth/otp/request/", {"email": "smtp.missing@example.com"}, format="json")
+        resp = self.client.post("/api/v1/accounts/auth/otp/request/", {"email": "smtp.missing@example.com"}, format="json")
         self.assertEqual(resp.status_code, 503)
         self.assertEqual(resp.data.get("error"), "otp_send_failed")
         self.assertTrue(

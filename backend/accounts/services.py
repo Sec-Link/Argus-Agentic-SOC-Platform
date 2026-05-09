@@ -681,11 +681,11 @@ def should_deny_write_for_readonly_user(user: User, path: str, method: str) -> b
 
     # Allow OTP authentication endpoints for readonly users.
     allowed = {
-        "/api/v1/auth/otp/request/",
-        "/api/v1/auth/otp/request",
-        "/api/v1/auth/otp/verify/",
-        "/api/v1/auth/otp/verify",
-        "/api/v1/auth/logout/",
-        "/api/v1/auth/logout",
+        "/api/v1/accounts/auth/otp/request/",
+        "/api/v1/accounts/auth/otp/request",
+        "/api/v1/accounts/auth/otp/verify/",
+        "/api/v1/accounts/auth/otp/verify",
+        "/api/v1/accounts/auth/logout/",
+        "/api/v1/accounts/auth/logout",
     }
     return path not in allowed

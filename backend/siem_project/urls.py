@@ -1,121 +1,28 @@
-﻿"""
-URL configuration for siem_project project.
+"""URL configuration for siem_project.
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+Root URLs delegate to per-module urls.py via include(). Direct view imports
+and DRF router registrations live in the relevant module, not here.
 """
 from django.contrib import admin
 from django.urls import include, path
-from accounts.views import LoginAPIView, LogoutAPIView, RegisterAPIView, RegisterEmailAPIView, OTPRequestAPIView, OTPVerifyAPIView
-from accounts.views import GuestEmailStatusAPIView
-from dashboards.views import DashboardViewSet
-from integrations.views import test_es_connection
-from integrations.views import IntegrationViewSet, preview_es_index
-from integrations.views import integrations_preview_es_mapping
-from rest_framework import routers
-from ai_assistant.mcp_views import mcp_ticket_context, mcp_ticket_search_similar_cases, mcp_cmdb_asset_lookup, mcp_observables_extract
-from ai_assistant.mcp_protocol_views import mcp_rpc, mcp_tools_manifest
-from ai_assistant.views import test_connectivity as ai_test_connectivity
-from ai_assistant.views import mcp_monitor as ai_mcp_monitor
-from ai_assistant.views import mcp_registry_servers as ai_mcp_registry_servers
-from ai_assistant.views import ai_chat as ai_chat
-from ai_assistant.views import skill_monitor as ai_skill_monitor
-from ai_assistant.views import (
-    external_mcp_servers,
-    external_mcp_detail,
-    external_mcp_start,
-    external_mcp_stop,
-    skill_catalog as ai_skill_catalog,
-    skill_configs as ai_skill_configs,
-    skill_config_detail as ai_skill_config_detail,
-    skill_content_detail as ai_skill_content_detail,
-)
-from correlation import urls as correlation_urls
-from orchestrator.views import TaskViewSet, TaskRunViewSet, TaskRequestLogViewSet
-
-router = routers.DefaultRouter()
-router.register(r'integrations', IntegrationViewSet, basename='integration')
-router.register(r'dashboards', DashboardViewSet, basename='dashboard')
-router.register(r'tasks', TaskViewSet, basename='task')
-router.register(r'task_runs', TaskRunViewSet, basename='taskrun')
-router.register(r'task_request_logs', TaskRequestLogViewSet, basename='taskrequestlog')
-#router.register(r'ticket-policies', TicketPolicyViewSet, basename='ticket-policy')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/v1/auth/login/', LoginAPIView.as_view(), name='login'),
-    path('api/v1/auth/login', LoginAPIView.as_view()),
-    path('api/v1/auth/logout/', LogoutAPIView.as_view(), name='logout'),
-    path('api/v1/auth/logout', LogoutAPIView.as_view()),
-    path('api/v1/auth/register/', RegisterAPIView.as_view(), name='register'),
-    path('api/v1/auth/register', RegisterAPIView.as_view()),
-    path('api/v1/auth/register-email/', RegisterEmailAPIView.as_view(), name='register-email'),
-    path('api/v1/auth/register-email', RegisterEmailAPIView.as_view()),
-    path('api/v1/auth/guest-email-status/', GuestEmailStatusAPIView.as_view(), name='guest-email-status'),
-    path('api/v1/auth/guest-email-status', GuestEmailStatusAPIView.as_view()),
-    path('api/v1/auth/otp/request/', OTPRequestAPIView.as_view(), name='otp-request'),
-    path('api/v1/auth/otp/request', OTPRequestAPIView.as_view()),
-    path('api/v1/auth/otp/verify/', OTPVerifyAPIView.as_view(), name='otp-verify'),
-    path('api/v1/auth/otp/verify', OTPVerifyAPIView.as_view()),
+
+    # accounts (auth lives under /api/v1/accounts/auth/)
+    path('api/v1/accounts/', include('accounts.urls')),
+    path('api/v1/permissions/', include('accounts.urls_permissions')),
+    path('api/v1/rbac/', include('accounts.urls_rbac')),
+
+    # domain modules
     path('api/v1/alerts/', include('alerts.urls')),
     path('api/v1/correlation/', include('correlation.urls')),
-    path('api/v1/accounts/', include('accounts.urls')),
-    path('api/v1/permissions/', include('accounts.urls_permissions')),  
-    path('api/v1/rbac/', include('accounts.urls_rbac')),
-    path('api/v1/', include(router.urls)),  
-    path('api/v1/integrations/test_es', test_es_connection),
-    path('api/v1/integrations/preview_es', preview_es_index),
-    path('api/v1/integrations/preview_es_mapping', integrations_preview_es_mapping),
-    # Tickets API (v1, versioned like alerts)
     path('api/v1/tickets/', include('tickets.urls')),
     path('api/v1/workflows/', include('workflows.urls')),
     path('api/v1/interfaces/', include('workflow_interfaces.urls')),
     path('api/v1/cmdb/', include('cmdb.urls')),
-    path('api/v1/ai-assistant/test-connectivity', ai_test_connectivity),
-    path('api/v1/ai-assistant/test-connectivity/', ai_test_connectivity),
-    path('api/v1/ai-assistant/mcp-monitor', ai_mcp_monitor),
-    path('api/v1/ai-assistant/mcp-monitor/', ai_mcp_monitor),
-    path('api/v1/ai-assistant/mcp-registry/servers', ai_mcp_registry_servers),
-    path('api/v1/ai-assistant/mcp-registry/servers/', ai_mcp_registry_servers),
-    path('api/v1/ai-assistant/skill-monitor', ai_skill_monitor),
-    path('api/v1/ai-assistant/skill-monitor/', ai_skill_monitor),
-    path('api/v1/ai-assistant/skills/catalog', ai_skill_catalog),
-    path('api/v1/ai-assistant/skills/catalog/', ai_skill_catalog),
-    path('api/v1/ai-assistant/skills/config', ai_skill_configs),
-    path('api/v1/ai-assistant/skills/config/', ai_skill_configs),
-    path('api/v1/ai-assistant/skills/config/<str:name>', ai_skill_config_detail),
-    path('api/v1/ai-assistant/skills/config/<str:name>/', ai_skill_config_detail),
-    path('api/v1/ai-assistant/skills/content/<str:name>', ai_skill_content_detail),
-    path('api/v1/ai-assistant/skills/content/<str:name>/', ai_skill_content_detail),
-    path('api/v1/ai-assistant/chat', ai_chat),
-    path('api/v1/ai-assistant/chat/', ai_chat),
-    path('api/v1/ai-assistant/external-mcp', external_mcp_servers),
-    path('api/v1/ai-assistant/external-mcp/', external_mcp_servers),
-    path('api/v1/ai-assistant/external-mcp/<str:name>', external_mcp_detail),
-    path('api/v1/ai-assistant/external-mcp/<str:name>/', external_mcp_detail),
-    path('api/v1/ai-assistant/external-mcp/<str:name>/start', external_mcp_start),
-    path('api/v1/ai-assistant/external-mcp/<str:name>/start/', external_mcp_start),
-    path('api/v1/ai-assistant/external-mcp/<str:name>/stop', external_mcp_stop),
-    path('api/v1/ai-assistant/external-mcp/<str:name>/stop/', external_mcp_stop),
-    # Standard MCP JSON-RPC endpoint (for remote MCP clients)
-    path('api/v1/mcp', mcp_rpc),
-    path('api/v1/mcp/', mcp_rpc),
-    path('api/v1/mcp/tools', mcp_tools_manifest),
-    path('api/v1/mcp/tools/', mcp_tools_manifest),
-    # Built-in MCP endpoints (same backend port)
-    path('api/v1/mcp/ticket-context/<str:ticket_number>', mcp_ticket_context),
-    path('api/v1/mcp/ticket-search/similar-cases', mcp_ticket_search_similar_cases),
-    path('api/v1/mcp/cmdb/asset-lookup', mcp_cmdb_asset_lookup),
-    path('api/v1/mcp/observables/extract', mcp_observables_extract),
-    path('api/v1/correlation/', include(correlation_urls)),
+    path('api/v1/integrations/', include('integrations.urls')),
+    path('api/v1/dashboards/', include('dashboards.urls')),
+    path('api/v1/ai-assistant/', include('ai_assistant.urls')),
+    path('api/v1/orchestrator/', include('orchestrator.urls')),
 ]

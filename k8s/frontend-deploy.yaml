@@ -32,6 +32,11 @@ spec:
           capabilities:
             drop: ["ALL"]
           readOnlyRootFilesystem: false
+        envFrom:
+        - configMapRef:
+            name: siem-config
+        - secretRef:
+            name: siem-backend-secret
         env:
         - name: BACKEND_ORIGIN
           value: "http://siem-backend:80"

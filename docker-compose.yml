@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    container_name: siem_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: siem_user
+      POSTGRES_PASSWORD: siem_password
+      POSTGRES_DB: siem_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # 直接挂载当前项目目录下的 data 文件夹，Docker 会自动创建它
+      - ../data/postgres:/var/lib/postgresql/data
+
+# 移除下方的 volumes 声明，除非你一定要用命名卷
