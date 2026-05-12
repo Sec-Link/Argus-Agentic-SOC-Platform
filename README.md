@@ -1,6 +1,6 @@
 # ECHO-SOC-Platform
 
-This repository contains the ECHO-SOC-Platform — an AI-native Security Operations Center (SOC) platform focused on unifying alerts ingestion, incident investigation, ticket collaboration, asset correlation, workflow orchestration, and AI-assisted analysis.
+This repository contains the ECHO-SOC-Platform — an AI-native Agentic Security Operations Center (SOC) platform focused on unifying alerts ingestion, incident investigation, ticket collaboration, asset correlation, workflow orchestration, and AI-assisted analysis.
 
 The project uses a separated frontend/backend architecture: the frontend is built with Next.js + React to provide the operator console, the backend uses Django + Django REST Framework to provide APIs and orchestration, and PostgreSQL is the primary data store. Elasticsearch is optionally supported as an external alert source.
 
@@ -114,26 +114,15 @@ flowchart LR
 - Next.js 15
 - React 18
 - Ant Design 5
-- Axios
-- React Flow
-- ECharts / Ant Design Charts
 
 ### Backend
 - Django 6
 - Django REST Framework
 - DRF Token Authentication
-- django-scheduled-tasks
-- croniter
-- gunicorn
-- WhiteNoise
 
 ### Data / Infrastructure
-- PostgreSQL 16
-- Elasticsearch (optional)
-- Docker / Docker Compose
-- Kubernetes
-- GitHub Actions
-
+PostgreSQL 16 (optional)
+Elasticsearch (optional)
 ---
 
 ## 5. Main Modules
@@ -342,3 +331,12 @@ Use cases include enterprise SOC platforms, automation & orchestration projects,
 ## 15. License
 
 Please review `LICENSE.md` before using this project for production, distribution, or hosted services.
+
+## 16. Star History
+<a href="https://www.star-history.com/?repos=Sec-Link%2FECHO-SOC-Platform&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&legend=top-left" />
+ </picture>
+</a>
