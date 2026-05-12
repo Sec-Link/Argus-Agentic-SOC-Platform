@@ -218,7 +218,7 @@ def ai_chat(request):
     if isinstance(mcp_overrides, dict):
         if mcp_overrides.get("enabled") is not False:
             mcp_overrides["enabled"] = True
-            mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/mcp").rstrip("/")
+            mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
             mcp_overrides["force_internal"] = True
         if not mcp_overrides.get("token"):
             auth_header = request.META.get("HTTP_AUTHORIZATION")

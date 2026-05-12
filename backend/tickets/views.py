@@ -433,7 +433,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 if mcp_overrides.get("enabled") is not False:
                     mcp_overrides["enabled"] = True
                     # Always prefer built-in MCP endpoint for ticket assistant.
-                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/mcp").rstrip("/")
+                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
                     mcp_overrides["force_internal"] = True
                 if not mcp_overrides.get("token"):
                     auth_header = request.META.get("HTTP_AUTHORIZATION")
@@ -646,7 +646,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
             if isinstance(mcp_overrides, dict):
                 if mcp_overrides.get("enabled") and not mcp_overrides.get("base_url"):
-                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/mcp").rstrip("/")
+                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
                 if not mcp_overrides.get("token"):
                     auth_header = request.META.get("HTTP_AUTHORIZATION")
                     if isinstance(auth_header, str) and auth_header.strip():

@@ -88,7 +88,7 @@ export default function Orchestrator(){
   }
 
   const fetch = async ()=>{
-    try{ const res = await client.get('/tasks/'); setItems(res.data) }catch(e){ setItems([]) }
+    try{ const res = await client.get('/orchestrator/tasks/'); setItems(res.data) }catch(e){ setItems([]) }
   }
 
   const fetchIntegrations = async ()=>{
@@ -212,10 +212,10 @@ export default function Orchestrator(){
     try{
       if(editingTask){
         // update existing task
-        await client.put(`/tasks/${editingTask.id}/`, payload)
+        await client.put(`/orchestrator/tasks/${editingTask.id}/`, payload)
         message.success('Task updated')
       }else{
-        await client.post('/tasks/', payload)
+        await client.post('/orchestrator/tasks/', payload)
         message.success('Task created')
       }
       setShowModal(false)
@@ -227,14 +227,14 @@ export default function Orchestrator(){
 
   const fetchRuns = async ()=>{
     try{
-      const r = await client.get('/task_runs/')
+      const r = await client.get('/orchestrator/task_runs/')
       setRuns(r.data || [])
     }catch(e){ setRuns([]) }
   }
 
   const runTask = async (taskId: string) => {
     try{
-      const r = await client.post(`/tasks/${taskId}/run/`)
+      const r = await client.post(`/orchestrator/tasks/${taskId}/run/`)
   const run = r.data
   // Run object includes id, status, logs; show in a modal
   Modal.info({ title: `Task run ${run.id} - ${run.status}`, width: 800, content: (<pre style={{ whiteSpace: 'pre-wrap' }}>{run.logs}</pre>) })
@@ -254,7 +254,7 @@ export default function Orchestrator(){
       okButtonProps: { danger: true },
       onOk: async () => {
         try{
-          await client.delete(`/tasks/${taskId}/`)
+          await client.delete(`/orchestrator/tasks/${taskId}/`)
           message.success('Task deleted')
           fetch()
           fetchRuns()

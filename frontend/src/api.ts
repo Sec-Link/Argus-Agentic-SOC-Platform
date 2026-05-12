@@ -76,7 +76,7 @@ const client = axios.create({
 const addAuthHeader = (config: InternalAxiosRequestConfig) => {
   const method = String(config.method || 'get').toUpperCase();
   const url = String(config.url || '');
-  const readonlyAllowedPaths = ['/auth/logout/', '/auth/otp/request/', '/auth/otp/verify/'];
+  const readonlyAllowedPaths = ['/accounts/auth/logout/', '/accounts/auth/otp/request/', '/accounts/auth/otp/verify/'];
   if (typeof window !== 'undefined') {
     let isReadonly = false;
     try {
@@ -105,7 +105,7 @@ client.interceptors.request.use(addAuthHeader);
 const TICKETS_BASE = '/tickets';
 
 export async function login(username: string, password: string) {
-  const res = await client.post('/auth/login/', { username, password });
+  const res = await client.post('/accounts/auth/login/', { username, password });
   setAccessToken(res.data.token);
   try {
     // persist token for page reloads
@@ -128,7 +128,7 @@ export async function register(
   password: string,
   passwordConfirm: string
 ) {
-  const res = await client.post('/auth/register/', {
+  const res = await client.post('/accounts/auth/register/', {
     username,
     email,
     password,
@@ -146,12 +146,12 @@ export async function register(
 }
 
 export async function registerEmail(email: string) {
-  const res = await client.post('/auth/register-email/', { email });
+  const res = await client.post('/accounts/auth/register-email/', { email });
   return res.data;
 }
 
 export async function getGuestEmailStatus(email: string) {
-  const res = await client.post('/auth/guest-email-status/', { email });
+  const res = await client.post('/accounts/auth/guest-email-status/', { email });
   return res.data as {
     email: string;
     is_registered_readonly: boolean;
@@ -160,12 +160,12 @@ export async function getGuestEmailStatus(email: string) {
 }
 
 export async function requestOtp(email: string) {
-  const res = await client.post('/auth/otp/request/', { email });
+  const res = await client.post('/accounts/auth/otp/request/', { email });
   return res.data;
 }
 
 export async function verifyOtp(email: string, otp: string) {
-  const res = await client.post('/auth/otp/verify/', { email, otp });
+  const res = await client.post('/accounts/auth/otp/verify/', { email, otp });
   setAccessToken(res.data.token);
   try {
     localStorage.setItem('siem_access_token', res.data.token);
@@ -571,7 +571,7 @@ export async function fetchAiAssistantMcpMonitor(params?: {
 }
 
 export async function fetchAiAssistantInternalMcpTools() {
-  const res = await client.get('/mcp/tools/');
+  const res = await client.get('/ai-assistant/mcp/tools/');
   return res.data;
 }
 
