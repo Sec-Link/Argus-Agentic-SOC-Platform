@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { List, Card, Typography, Spin, Button, Modal, Form, Input, Select, message } from 'antd'
+import { Alert, List, Card, Tag, Typography, Spin, Button, Modal, Form, Input, Select, message } from 'antd'
 import { listDatasources, createDatasource, updateDatasource, deleteDatasource, testDatasource } from 'services/datasource'
+import { getIsReadonly } from 'lib/auth'
 
 const { Text } = Typography
 
@@ -12,7 +13,9 @@ export default function DataSources(){
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
   const [editing, setEditing] = useState<any|null>(null)
+  const [isReadonly, setIsReadonly] = useState(false)
   const [form] = Form.useForm()
+  useEffect(()=>{ setIsReadonly(getIsReadonly()) }, [])
 
   // Initial load of data sources list
   useEffect(()=>{
@@ -174,20 +177,32 @@ export default function DataSources(){
   return (
     <div style={{padding:20}}>
       <h2>Data Sources</h2>
-      <div style={{marginBottom:12}}>
-        <Button type="primary" onClick={openNew}>New Data Source</Button>
-      </div>
+      {isReadonly ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="Read-only view"
+          description="Guest accounts can view configured data sources but cannot inspect credentials or make changes."
+        />
+      ) : (
+        <div style={{marginBottom:12}}>
+          <Button type="primary" onClick={openNew}>New Data Source</Button>
+        </div>
+      )}
       <List
         grid={{ gutter: 16, column: 2 }}
         dataSource={items}
         renderItem={item=> (
           <List.Item>
             <Card title={item.name} size="small" extra={
-              <div>
-                <Button size="small" onClick={()=>onTest(item)} style={{marginRight:8}}>Test</Button>
-                <Button size="small" onClick={()=>onEdit(item)} style={{marginRight:8}}>Edit</Button>
-                <Button size="small" danger onClick={()=>onDelete(item)}>Delete</Button>
-              </div>
+              isReadonly ? <Tag>Read-only</Tag> : (
+                <div>
+                  <Button size="small" onClick={()=>onTest(item)} style={{marginRight:8}}>Test</Button>
+                  <Button size="small" onClick={()=>onEdit(item)} style={{marginRight:8}}>Edit</Button>
+                  <Button size="small" danger onClick={()=>onDelete(item)}>Delete</Button>
+                </div>
+              )
             }>
               <div><Text type="secondary">Type:</Text> {item.db_type}</div>
               <div><Text type="secondary">Host:</Text> {item.host || '—'}</div>
@@ -198,7 +213,7 @@ export default function DataSources(){
         )}
       />
 
-      <Modal title={editing ? 'Edit Data Source' : 'New Data Source'} open={modalVisible} onOk={onModalOk} onCancel={()=>setModalVisible(false)}>
+      <Modal title={editing ? 'Edit Data Source' : 'New Data Source'} open={modalVisible && !isReadonly} onOk={onModalOk} onCancel={()=>setModalVisible(false)}>
         <Form form={form} layout="vertical" onValuesChange={onFormValuesChange} initialValues={{ db_type: 'postgres' }}>
           <Form.Item name="name" label="Name" rules={[{required:true}]}> 
             <Input onChange={setFieldFromEvent('name')} /> 

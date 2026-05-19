@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react'
-import { List, Button, Modal, Form, Input, Card, Space, Tag, message, Select, Divider } from 'antd'
+import { Alert, List, Button, Modal, Form, Input, Card, Space, Tag, message, Select, Divider } from 'antd'
 import {
   testEsIntegration,
   testLogstashIntegration,
@@ -10,6 +10,7 @@ import {
   deleteIntegration,
   testDatasource,
 } from 'services/integrations'
+import { getIsReadonly } from 'lib/auth'
 // Integrations page manages data integrations (Elasticsearch, Logstash, Airflow, PostgreSQL, MySQL).
 // Key features:
 // - List existing integrations
@@ -24,34 +25,92 @@ const Integrations: React.FC = () =>{
   const [items, setItems] = useState<any[]>([])
   const [showModal, setShowModal] = useState(false)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [isReadonly, setIsReadonly] = useState(false)
+  const [viewingItem, setViewingItem] = useState<any | null>(null)
   const [form] = Form.useForm()
 
+  const getErrorText = (e: any) => {
+    const detail = e?.response?.data?.detail
+    const error = e?.response?.data?.error
+    const body = e?.response?.data?.body
+    const msg = e?.message
+    if (typeof detail === 'string' && detail) return detail
+    if (typeof error === 'string' && error) return error
+    if (typeof body === 'string' && body) return body
+    if (body && typeof body === 'object') return JSON.stringify(body, null, 2)
+    if (typeof msg === 'string' && msg) return msg
+    return String(e)
+  }
+
   useEffect(()=>{ fetchList() }, [])
+  useEffect(()=>{ setIsReadonly(getIsReadonly()) }, [])
 
   const fetchList = async ()=>{
     try{ const r = await listIntegrations(); setItems(r) }catch(e){ setItems([]) }
   }
 
+  const isLikelyUiRouteHost = (value: string) => {
+    try {
+      const u = new URL(value)
+      return u.pathname.startsWith('/settings/') || u.pathname.startsWith('/integrations')
+    } catch {
+      return false
+    }
+  }
+
+  const normalizeIntegration = (raw: any) => {
+    const config = raw?.config || {}
+    let host = raw?.host || raw?.url || config?.host || config?.url || ''
+    if (typeof host !== 'string') host = String(host || '')
+    if (host && isLikelyUiRouteHost(host)) host = ''
+
+    return {
+      ...raw,
+      host,
+      username: raw?.username || raw?.user || config?.username || config?.user || '',
+      password: raw?.password || config?.password || '',
+      path: raw?.path || config?.path || '/_cluster/health',
+      config,
+    }
+  }
+
+  const handleView = (item: any) => {
+    setViewingItem(item)
+  }
+
+  const handleDelete = async (item: any) => {
+    const name = item?.name || item?.host || item?.id || 'this integration'
+    const ok = window.confirm(`Delete ${name}? This cannot be undone.`)
+    if (!ok) return
+    try {
+      await deleteIntegration(item.id)
+      message.success('Deleted')
+      fetchList()
+    } catch (e: any) {
+      message.error('Delete failed: ' + getErrorText(e))
+    }
+  }
+
   const testIntegration = async (info: any) => {
-    const type = info.type || 'elasticsearch'
+    const normalized = normalizeIntegration(info)
+    const type = normalized.type || 'elasticsearch'
     if(type === 'elasticsearch'){
-      // Normalize payload: prefer explicit host/url, fall back to config.host
-      const host = info.host || info.url || (info.config && info.config.host) || ''
-      const username = info.username || info.user || (info.config && info.config.username) || ''
-      const password = info.password || (info.config && info.config.password) || ''
-      const path = info.path || (info.config && info.config.path) || '/_cluster/health'
+      const host = normalized.host || ''
+      const username = normalized.username || ''
+      const password = normalized.password || ''
+      const path = normalized.path || '/_cluster/health'
       if(!host) throw new Error('Elasticsearch host required')
       return testEsIntegration({ host, username, password, path })
     }
-    if(type === 'logstash') return testLogstashIntegration(info)
-    if(type === 'airflow') return testAirflowIntegration(info)
+    if(type === 'logstash') return testLogstashIntegration(normalized)
+    if(type === 'airflow') return testAirflowIntegration(normalized)
     if(type === 'postgresql' || type === 'mysql'){
       const payload: any = { db_type: type === 'postgresql' ? 'postgres' : 'mysql' }
-      payload.user = info.user || info.username || ''
-      payload.password = info.password || ''
-      payload.host = info.host || ''
-      payload.port = info.port || ''
-      payload.database = info.dbname || info.database || info.db || ''
+      payload.user = normalized.user || normalized.username || ''
+      payload.password = normalized.password || ''
+      payload.host = normalized.host || ''
+      payload.port = normalized.port || ''
+      payload.database = normalized.dbname || normalized.database || normalized.db || ''
       return testDatasource(payload)
     }
     throw new Error('Unsupported integration type')
@@ -104,7 +163,7 @@ const Integrations: React.FC = () =>{
       const v = form.getFieldsValue()
       await testIntegration(v)
       message.success('Connection OK')
-    }catch(e:any){ message.error('Connection failed: ' + (e.message || String(e))) }
+    }catch(e:any){ message.error('Connection failed: ' + getErrorText(e)) }
   }
 
   const openNew = ()=>{ setEditingIndex(null); form.resetFields(); setShowModal(true) }
@@ -135,20 +194,36 @@ const Integrations: React.FC = () =>{
   return (
     <div style={{ padding: 12 }}>
       <Card title="Integrations">
-        <Button type="primary" onClick={openNew} style={{ marginBottom: 12 }}>Add Integration</Button>
-        <List dataSource={items} renderItem={(it:any, idx)=> (
-          <List.Item actions={[
-            <Button key="view" onClick={()=>{ Modal.info({ title: `Integration: ${it.name || it.host}`, content: (<pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(it, null, 2)}</pre>), width: 700 }) }}>View</Button>,
-            <Button key="test" onClick={async ()=>{ try{ const res = await testIntegration(it); Modal.success({ title: 'Connection OK', content: (<pre style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}>{JSON.stringify(res, null, 2)}</pre>) }) }catch(e:any){ const detail = e.body || e.message || String(e); Modal.error({ title: 'Connection failed', content: (<pre style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>{detail}</pre>), width: 700 }) } }}>Test</Button>,
-            <Button key="edit" onClick={()=>openEdit(it, idx)}>Edit</Button>,
-            <Button key="del" danger onClick={()=>{ Modal.confirm({ title: 'Delete integration?', content: `Delete ${it.name || it.host}? This cannot be undone.`, onOk: async ()=>{ try{ await deleteIntegration(it.id); message.success('Deleted'); fetchList() }catch(e:any){ message.error(String(e)) } } }) }}>Delete</Button>
-          ]}>
-            <List.Item.Meta title={<a onClick={()=>openEdit(it, idx)}>{it.name || it.host}</a>} description={<div><Tag>{it.type}</Tag> {it.host}</div>} />
+        {isReadonly ? (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Read-only view"
+            description="Guest accounts can view configured integrations but cannot inspect credentials or make changes."
+          />
+        ) : (
+          <Button type="primary" onClick={openNew} style={{ marginBottom: 12 }}>Add Integration</Button>
+        )}
+        <List dataSource={items} renderItem={(it:any, idx)=> {
+          const n = normalizeIntegration(it)
+          const actionButtons = isReadonly ? [<Tag key="ro">Read-only</Tag>] : [
+            <Button key="view" onClick={(e)=>{ e.stopPropagation(); handleView(n) }}>View</Button>,
+            <Button key="test" onClick={async (e)=>{ e.stopPropagation(); try{ const res = await testIntegration(n); Modal.success({ title: 'Connection OK', content: (<pre style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}>{JSON.stringify(res, null, 2)}</pre>) }) }catch(e:any){ const detail = getErrorText(e); Modal.error({ title: 'Connection failed', content: (<pre style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>{detail}</pre>), width: 700 }) } }}>Test</Button>,
+            <Button key="edit" onClick={(e)=>{ e.stopPropagation(); openEdit(it, idx) }}>Edit</Button>,
+            <Button key="del" danger onClick={(e)=>{ e.stopPropagation(); handleDelete({ ...n, id: n.id || it.id }) }}>Delete</Button>
+          ]
+          return (
+          <List.Item extra={<Space>{actionButtons}</Space>}>
+            <List.Item.Meta
+              title={isReadonly ? (n.name || n.host) : <a onClick={()=>openEdit(it, idx)}>{n.name || n.host}</a>}
+              description={<div><Tag>{n.type}</Tag> {n.host}</div>}
+            />
           </List.Item>
-        )} />
+        )}} />
       </Card>
 
-      <Modal open={showModal} onCancel={()=>setShowModal(false)} onOk={save} title="Add Integration">
+      <Modal open={showModal && !isReadonly} onCancel={()=>setShowModal(false)} onOk={save} title="Add Integration">
         <Form form={form} layout="vertical" initialValues={{ type: 'elasticsearch' }}>
           <Form.Item name="type" label="Type">
             <Select onChange={(v:any)=>{ form.setFieldsValue({ type: v }) }}>
@@ -300,6 +375,17 @@ const Integrations: React.FC = () =>{
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        open={!!viewingItem}
+        onCancel={() => setViewingItem(null)}
+        footer={null}
+        title={`Integration: ${viewingItem?.name || viewingItem?.host || ''}`}
+        width={700}
+      >
+        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 420, overflow: 'auto' }}>
+          {JSON.stringify(viewingItem, null, 2)}
+        </pre>
       </Modal>
 
       

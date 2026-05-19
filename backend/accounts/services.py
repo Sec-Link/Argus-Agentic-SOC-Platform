@@ -667,6 +667,20 @@ class OtpService:
         return True, "ok"
 
 
+def is_user_readonly(user) -> bool:
+    """Return True if the user is an authenticated readonly (guest) account.
+
+    Superusers and staff are never treated as readonly even if a stray profile
+    flag is set.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+        return False
+    profile = UserAuthProfile.objects.filter(user=user).first()
+    return bool(profile and profile.is_readonly)
+
+
 def should_deny_write_for_readonly_user(user: User, path: str, method: str) -> bool:
     if not user or not getattr(user, "is_authenticated", False):
         return False

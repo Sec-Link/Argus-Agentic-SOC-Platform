@@ -299,10 +299,10 @@ def ai_chat(request):
 def external_mcp_servers(request):
     if request.method == "GET":
         rows = ExternalMCPServer.objects.all().order_by("name")
-        serializer = ExternalMCPServerSerializer(rows, many=True)
+        serializer = ExternalMCPServerSerializer(rows, many=True, context={"request": request})
         return Response(serializer.data)
 
-    serializer = ExternalMCPServerSerializer(data=request.data)
+    serializer = ExternalMCPServerSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
     serializer.save()
     return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -316,13 +316,13 @@ def external_mcp_detail(request, name: str):
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == "GET":
-        return Response(ExternalMCPServerSerializer(server).data)
+        return Response(ExternalMCPServerSerializer(server, context={"request": request}).data)
 
     if request.method == "DELETE":
         server.delete()
         return Response({"message": "deleted"})
 
-    serializer = ExternalMCPServerSerializer(server, data=request.data, partial=True)
+    serializer = ExternalMCPServerSerializer(server, data=request.data, partial=True, context={"request": request})
     serializer.is_valid(raise_exception=True)
     serializer.save()
     return Response(serializer.data)
