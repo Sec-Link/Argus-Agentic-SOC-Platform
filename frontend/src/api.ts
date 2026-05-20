@@ -65,10 +65,18 @@ export function clearAccessToken() {
   } catch (e) {}
 }
 
+function resolveApiBase() {
+  const raw = (typeof process !== 'undefined' && (process as any).env && (process as any).env.NEXT_PUBLIC_API_BASE)
+    ? String((process as any).env.NEXT_PUBLIC_API_BASE).trim()
+    : '';
+  if (!raw) return '/api/v1';
+  // Guard against accidental UI/page URLs being used as API base.
+  if (raw.includes('/settings/')) return '/api/v1';
+  return raw.replace(/\/+$/, '');
+}
+
 const client = axios.create({
-  baseURL: (typeof process !== 'undefined' && (process as any).env && (process as any).env.NEXT_PUBLIC_API_BASE)
-    ? String((process as any).env.NEXT_PUBLIC_API_BASE)
-    : '/api/v1',
+  baseURL: resolveApiBase(),
   withCredentials: true,
   xsrfCookieName: 'csrftoken',
   xsrfHeaderName: 'X-CSRFToken',
@@ -805,6 +813,16 @@ export async function deleteDatasource(id:string){
 
 export async function testDatasource(payload:any){
   const r = await client.post('/datasource/test', payload)
+  return r.data
+}
+
+export async function testIntegrationById(id: string){
+  const r = await client.post(`/integrations/${encodeURIComponent(id)}/test/`, {})
+  return r.data
+}
+
+export async function testDbConnection(payload: any){
+  const r = await client.post('/integrations/test_db', payload)
   return r.data
 }
 

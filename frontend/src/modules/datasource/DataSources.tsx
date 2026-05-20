@@ -1,9 +1,65 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, List, Card, Tag, Typography, Spin, Button, Modal, Form, Input, Select, message } from 'antd'
-import { listDatasources, createDatasource, updateDatasource, deleteDatasource, testDatasource } from 'services/datasource'
+import { listIntegrations, createIntegration, updateIntegration, deleteIntegration } from 'services/integrations'
+import { testDbConnection } from 'api'
 import { getIsReadonly } from 'lib/auth'
 
 const { Text } = Typography
+
+type TestResultState = {
+  open: boolean
+  ok: boolean
+  title: string
+  detail: string
+}
+
+const toDatasource = (item: any) => {
+  const cfg = item?.config || {}
+  return {
+    id: item?.id,
+    name: item?.name || '',
+    db_type: item?.type === 'postgresql' ? 'postgres' : (item?.type === 'mysql' ? 'mysql' : (item?.type || 'postgres')),
+    host: cfg?.host || '',
+    port: cfg?.port || '',
+    database: cfg?.dbname || cfg?.database || '',
+    user: cfg?.user || cfg?.username || '',
+    password: cfg?.password || '',
+    django_db: cfg?.django_db || '',
+    conn_str: cfg?.conn_str || '',
+    raw: item,
+  }
+}
+
+const toIntegrationPayload = (vals: any) => {
+  const dbType = vals?.db_type === 'mysql' ? 'mysql' : 'postgresql'
+  return {
+    name: vals?.name,
+    type: dbType,
+    config: {
+      host: vals?.host || undefined,
+      port: vals?.port || undefined,
+      user: vals?.user || undefined,
+      password: vals?.password || undefined,
+      dbname: vals?.database || undefined,
+      django_db: vals?.django_db || undefined,
+      conn_str: vals?.conn_str || undefined,
+    }
+  }
+}
+
+const testDbIntegration = async (item: any) => {
+  const vals = item?.raw ? toDatasource(item.raw) : item
+  const payload: any = {
+    db_type: vals?.db_type === 'mysql' ? 'mysql' : 'postgres',
+    host: vals?.host || '',
+    port: vals?.port || '',
+    database: vals?.database || '',
+    user: vals?.user || '',
+    password: vals?.password || '',
+    conn_str: vals?.conn_str || '',
+  }
+  return testDbConnection(payload)
+}
 
 // DataSources manages available data sources (e.g., Postgres / MySQL / SQLite).
 // Core features: list, create, edit, delete, and validate connections via "Test Connection".
@@ -14,14 +70,30 @@ export default function DataSources(){
   const [modalVisible, setModalVisible] = useState(false)
   const [editing, setEditing] = useState<any|null>(null)
   const [isReadonly, setIsReadonly] = useState(false)
+  const [testResult, setTestResult] = useState<TestResultState>({
+    open: false,
+    ok: true,
+    title: '',
+    detail: '',
+  })
   const [form] = Form.useForm()
   useEffect(()=>{ setIsReadonly(getIsReadonly()) }, [])
+
+  const showTestResult = (ok: boolean, detail: unknown) => {
+    setTestResult({
+      open: true,
+      ok,
+      title: ok ? 'Connection OK' : 'Connection failed',
+      detail: typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2),
+    })
+  }
 
   // Initial load of data sources list
   useEffect(()=>{
     setLoading(true)
-    listDatasources().then(d=>{
-      setItems(d)
+    listIntegrations().then(d=>{
+      const list = Array.isArray(d) ? d : []
+      setItems(list.filter((x:any)=>x?.type === 'postgresql' || x?.type === 'mysql').map(toDatasource))
     }).catch(e=>{
       console.error(e)
     }).finally(()=>setLoading(false))
@@ -29,7 +101,13 @@ export default function DataSources(){
 
   const reload = ()=>{
     setLoading(true)
-    listDatasources().then(d=>setItems(d)).catch(()=>{}).finally(()=>setLoading(false))
+    listIntegrations()
+      .then(d=>{
+        const list = Array.isArray(d) ? d : []
+        setItems(list.filter((x:any)=>x?.type === 'postgresql' || x?.type === 'mysql').map(toDatasource))
+      })
+      .catch(()=>{})
+      .finally(()=>setLoading(false))
   }
 
   const openNew = ()=>{
@@ -42,9 +120,6 @@ export default function DataSources(){
   }
 
   const onEdit = (item:any)=>{
-    // Edit existing data source: set editing and open modal
-    // eslint-disable-next-line no-console
-    console.log('Editing item:', item)
     setEditing(item)
     setModalVisible(true)
   }
@@ -55,25 +130,12 @@ export default function DataSources(){
       try{
         // reset then apply editing values to avoid stale state
         form.resetFields()
-        // eslint-disable-next-line no-console
-        console.log('Applying editing to form (before):', editing)
         form.setFieldsValue(editing)
-        // log immediate snapshot
-        // eslint-disable-next-line no-console
-        console.log('Form snapshot after setFieldsValue:', form.getFieldsValue())
-        // delayed snapshot to see if mount timing affects it
-        setTimeout(()=>{
-          // eslint-disable-next-line no-console
-          console.log('Form snapshot (delayed):', form.getFieldsValue())
-        },50)
       }catch(e){ console.error('setFieldsValue failed', e) }
     }
   },[modalVisible, editing])
 
-  // debug: log form value changes
   const onFormValuesChange = (changed:any, all:any) => {
-    // eslint-disable-next-line no-console
-    console.log('Form values changed:', changed, all)
   }
 
   // helper to set a single field from input change events (write uncontrolled input back to Form)
@@ -84,7 +146,7 @@ export default function DataSources(){
 
   const onDelete = async (item:any)=>{
     try{
-      await deleteDatasource(item.id)
+      await deleteIntegration(item.id)
       message.success('Deleted')
       reload()
     }catch(e){
@@ -94,29 +156,26 @@ export default function DataSources(){
 
   const onTest = async (item:any)=>{
     try{
-      const r = await testDatasource({ id: item.id })
-      if(r.ok) message.success('Connection OK')
-      else message.error('Test failed: '+(r.error||'unknown'))
-    }catch(e){
-      message.error('Test failed')
+      const res = await testDbIntegration(item)
+      showTestResult(true, res)
+    }catch(e:any){
+      const detail = e?.response?.data?.error || e?.response?.data?.detail || e?.message || 'Test failed'
+      showTestResult(false, detail)
     }
   }
 
   const onModalOk = async ()=>{
     try {
-      // Debug: log current form values before validation
-      // eslint-disable-next-line no-console
-      console.log('onModalOk form values:', form.getFieldsValue())
-      // Use normal validation now
       const vals = await form.validateFields()
       if(!vals.db_type) vals.db_type = 'postgres'
+      const payload = toIntegrationPayload(vals)
       if(editing){
-        // update existing datasource
-        await updateDatasource(editing.id, vals)
+        // update existing datasource-backed integration
+        await updateIntegration(editing.id, payload)
         message.success('Updated')
       } else {
-        // create new datasource
-        await createDatasource(vals)
+        // create new datasource-backed integration
+        await createIntegration(payload)
         message.success('Created')
       }
       setModalVisible(false)
@@ -144,31 +203,15 @@ export default function DataSources(){
 
   const onModalTest = async ()=>{
     try{
-      // Validate the db_type field so the Select shows an inline error if missing
       await form.validateFields(['db_type'])
       const vals = form.getFieldsValue()
-      // debug: show exact payload being sent to /api/datasource/test
-      // eslint-disable-next-line no-console
-      console.log('Test Connection payload:', vals)
-      // Apply sensible defaults for postgres/mysql if user left blank (for quick testing)
-      if(vals.db_type === 'postgres'){
-        if(!vals.host) vals.host = 'localhost'
-        if(!vals.port) vals.port = 5432
-      }
-      if(vals.db_type === 'mysql'){
-        if(!vals.host) vals.host = 'localhost'
-        if(!vals.port) vals.port = 3306
-      }
-      const r = await testDatasource(vals)
-      if(r && r.ok){
-        message.success('Connection OK')
-      }else{
-        message.error('Test failed: '+(r && r.error ? r.error : 'unknown'))
-      }
+      const res = await testDbIntegration(vals)
+      showTestResult(true, res)
     }catch(e:any){
       // If validation error, let the Form show inline errors; otherwise show a toast
       if(e && e.errorFields) return
-      message.error(e?.message || 'Test failed')
+      const detail = e?.response?.data?.error || e?.response?.data?.detail || e?.message || 'Test failed'
+      showTestResult(false, detail)
     }
   }
 
@@ -243,6 +286,22 @@ export default function DataSources(){
         <div style={{textAlign:'right', marginTop: 12}}>
           <Button onClick={onModalTest} style={{marginRight:8}}>Test Connection</Button>
         </div>
+      </Modal>
+      <Modal
+        title={testResult.title}
+        open={testResult.open}
+        footer={null}
+        onCancel={()=>setTestResult(prev=>({ ...prev, open: false }))}
+      >
+        <Alert
+          type={testResult.ok ? 'success' : 'error'}
+          showIcon
+          message={testResult.ok ? 'Database connection succeeded' : 'Database connection failed'}
+          style={{ marginBottom: 12 }}
+        />
+        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 360, overflow: 'auto', margin: 0 }}>
+          {testResult.detail}
+        </pre>
       </Modal>
     </div>
   )

@@ -8,8 +8,8 @@ import {
   createIntegration,
   updateIntegration,
   deleteIntegration,
-  testDatasource,
 } from 'services/integrations'
+import { testDbConnection } from 'api'
 import { getIsReadonly } from 'lib/auth'
 // Integrations page manages data integrations (Elasticsearch, Logstash, Airflow, PostgreSQL, MySQL).
 // Key features:
@@ -26,7 +26,12 @@ const Integrations: React.FC = () =>{
   const [showModal, setShowModal] = useState(false)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [isReadonly, setIsReadonly] = useState(false)
-  const [viewingItem, setViewingItem] = useState<any | null>(null)
+  const [testResult, setTestResult] = useState({
+    open: false,
+    ok: true,
+    title: '',
+    detail: '',
+  })
   const [form] = Form.useForm()
 
   const getErrorText = (e: any) => {
@@ -44,6 +49,15 @@ const Integrations: React.FC = () =>{
 
   useEffect(()=>{ fetchList() }, [])
   useEffect(()=>{ setIsReadonly(getIsReadonly()) }, [])
+
+  const showTestResult = (ok: boolean, detail: unknown) => {
+    setTestResult({
+      open: true,
+      ok,
+      title: ok ? 'Connection OK' : 'Connection failed',
+      detail: typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2),
+    })
+  }
 
   const fetchList = async ()=>{
     try{ const r = await listIntegrations(); setItems(r) }catch(e){ setItems([]) }
@@ -72,10 +86,6 @@ const Integrations: React.FC = () =>{
       path: raw?.path || config?.path || '/_cluster/health',
       config,
     }
-  }
-
-  const handleView = (item: any) => {
-    setViewingItem(item)
   }
 
   const handleDelete = async (item: any) => {
@@ -111,7 +121,7 @@ const Integrations: React.FC = () =>{
       payload.host = normalized.host || ''
       payload.port = normalized.port || ''
       payload.database = normalized.dbname || normalized.database || normalized.db || ''
-      return testDatasource(payload)
+      return testDbConnection(payload)
     }
     throw new Error('Unsupported integration type')
   }
@@ -161,9 +171,11 @@ const Integrations: React.FC = () =>{
   const handleTestFromModal = async ()=>{
     try{
       const v = form.getFieldsValue()
-      await testIntegration(v)
-      message.success('Connection OK')
-    }catch(e:any){ message.error('Connection failed: ' + getErrorText(e)) }
+      const res = await testIntegration(v)
+      showTestResult(true, res)
+    }catch(e:any){
+      showTestResult(false, getErrorText(e))
+    }
   }
 
   const openNew = ()=>{ setEditingIndex(null); form.resetFields(); setShowModal(true) }
@@ -208,8 +220,7 @@ const Integrations: React.FC = () =>{
         <List dataSource={items} renderItem={(it:any, idx)=> {
           const n = normalizeIntegration(it)
           const actionButtons = isReadonly ? [<Tag key="ro">Read-only</Tag>] : [
-            <Button key="view" onClick={(e)=>{ e.stopPropagation(); handleView(n) }}>View</Button>,
-            <Button key="test" onClick={async (e)=>{ e.stopPropagation(); try{ const res = await testIntegration(n); Modal.success({ title: 'Connection OK', content: (<pre style={{ whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}>{JSON.stringify(res, null, 2)}</pre>) }) }catch(e:any){ const detail = getErrorText(e); Modal.error({ title: 'Connection failed', content: (<pre style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>{detail}</pre>), width: 700 }) } }}>Test</Button>,
+            <Button key="test" onClick={async (e)=>{ e.stopPropagation(); try{ const res = await testIntegration(n); showTestResult(true, res) }catch(e:any){ showTestResult(false, getErrorText(e)) } }}>Test</Button>,
             <Button key="edit" onClick={(e)=>{ e.stopPropagation(); openEdit(it, idx) }}>Edit</Button>,
             <Button key="del" danger onClick={(e)=>{ e.stopPropagation(); handleDelete({ ...n, id: n.id || it.id }) }}>Delete</Button>
           ]
@@ -377,18 +388,21 @@ const Integrations: React.FC = () =>{
         </Form>
       </Modal>
       <Modal
-        open={!!viewingItem}
-        onCancel={() => setViewingItem(null)}
+        title={testResult.title}
+        open={testResult.open}
         footer={null}
-        title={`Integration: ${viewingItem?.name || viewingItem?.host || ''}`}
-        width={700}
+        onCancel={()=>setTestResult(prev=>({ ...prev, open: false }))}
       >
-        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 420, overflow: 'auto' }}>
-          {JSON.stringify(viewingItem, null, 2)}
+        <Alert
+          type={testResult.ok ? 'success' : 'error'}
+          showIcon
+          message={testResult.ok ? 'Connection succeeded' : 'Connection failed'}
+          style={{ marginBottom: 12 }}
+        />
+        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 360, overflow: 'auto', margin: 0 }}>
+          {testResult.detail}
         </pre>
       </Modal>
-
-      
     </div>
   )
 }
