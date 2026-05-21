@@ -14,6 +14,7 @@ from django.utils.dateparse import parse_datetime
 import os
 import datetime
 from rest_framework import status as rf_status
+from sqlalchemy import create_engine
 
 # Helper to write a detailed sync debug log when sync fails or imports zero rows.
 def _write_sync_debug_log(index, mapping_columns, docs, extraction_results=None, errors=None, exc_tb=None, name=None):
@@ -395,6 +396,43 @@ def test_es_connection(request):
 
     return Response({'ok': True, 'status': resp.status_code, 'body': body, 'headers': headers})
 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def test_db_connection(request):
+    denied = _deny_if_no_perm(request, "integrations.change_integration")
+    if denied:
+        return denied
+    payload = request.data or {}
+    db_type = str(payload.get('db_type') or 'postgres').lower()
+    host = str(payload.get('host') or '').strip()
+    port = payload.get('port')
+    database = str(payload.get('database') or payload.get('dbname') or '').strip()
+    user = str(payload.get('user') or payload.get('username') or '').strip()
+    password = str(payload.get('password') or '')
+    conn_str = payload.get('conn_str')
+
+    if not conn_str:
+        if not host or not database or not user:
+            return Response(
+                {'ok': False, 'error': 'host, database and user are required unless conn_str is provided'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if db_type == 'mysql':
+            p = int(port) if str(port or '').strip() else 3306
+            conn_str = f"mysql+pymysql://{user}:{password}@{host}:{p}/{database}"
+        else:
+            p = int(port) if str(port or '').strip() else 5432
+            conn_str = f"postgresql+psycopg2://{user}:{password}@{host}:{p}/{database}"
+
+    try:
+        engine = create_engine(str(conn_str), pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+        return Response({'ok': True, 'message': 'Connection OK'})
+    except Exception as e:
+        return Response({'ok': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def integrations_preview_es_mapping(request):
@@ -641,4 +679,3 @@ def integrations_preview_es_mapping(request):
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
  
-

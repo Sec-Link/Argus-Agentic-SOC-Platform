@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import { getIsReadonly } from '../../lib/auth';
 import {
   createAiAssistantMcpServer,
   createAiAssistantSkillConfig,
@@ -51,6 +52,8 @@ export default function AiAssistantSettings() {
   const [detailRow, setDetailRow] = useState<any | null>(null);
   const [toolFilter, setToolFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'running'>('all');
+  const [isReadonly, setIsReadonly] = useState(false);
+  useEffect(() => { setIsReadonly(getIsReadonly()); }, []);
   const toolStats = useMemo(() => {
     const byTool = monitorData?.stats || {};
     return Object.entries(byTool)
@@ -114,13 +117,13 @@ export default function AiAssistantSettings() {
     try {
       generalForm.setFieldsValue({
         enabled: localStorage.getItem(STORAGE_KEYS.enabled) !== '0',
-        apiKey: localStorage.getItem(STORAGE_KEYS.apiKey) || '',
+        apiKey: isReadonly ? '' : (localStorage.getItem(STORAGE_KEYS.apiKey) || ''),
         model: localStorage.getItem(STORAGE_KEYS.model) || 'gpt-5.1-codex',
         baseUrl: localStorage.getItem(STORAGE_KEYS.baseUrl) || 'https://api.openai.com/v1',
         timeout: localStorage.getItem(STORAGE_KEYS.timeout) || '45',
       });
     } catch {}
-  }, [generalForm]);
+  }, [generalForm, isReadonly]);
 
   const loadMonitor = async (silent = false) => {
     if (!silent) setMonitorLoading(true);
@@ -603,6 +606,15 @@ export default function AiAssistantSettings() {
       <Typography.Paragraph type="secondary">
         General settings are stored locally in the browser. MCP/Skills management is stored server-side.
       </Typography.Paragraph>
+      {isReadonly ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Read-only view"
+          description="Guest accounts cannot view stored API keys or tokens, and cannot modify AI Assistant settings."
+        />
+      ) : null}
 
       <Tabs
         items={[
@@ -611,12 +623,12 @@ export default function AiAssistantSettings() {
             label: 'General',
             children: (
               <Card>
-                <Form form={generalForm} layout="vertical">
+                <Form form={generalForm} layout="vertical" disabled={isReadonly}>
                   <Form.Item label="Enable AI Assistant" name="enabled" valuePropName="checked">
                     <Switch />
                   </Form.Item>
                   <Form.Item label="OpenAI API Key" name="apiKey">
-                    <Input.Password placeholder="sk-..." />
+                    <Input.Password placeholder={isReadonly ? 'Hidden for read-only users' : 'sk-...'} />
                   </Form.Item>
                   <Form.Item label="Model" name="model">
                     <Input placeholder="gpt-5.1-codex" />
@@ -627,16 +639,18 @@ export default function AiAssistantSettings() {
                   <Form.Item label="Timeout (seconds)" name="timeout">
                     <Input />
                   </Form.Item>
-                  <Form.Item>
-                    <Space>
-                      <Button type="primary" onClick={onSaveGeneral}>
-                        Save General
-                      </Button>
-                      <Button onClick={onTestConnectivity} loading={testLoading}>
-                        Test Connectivity
-                      </Button>
-                    </Space>
-                  </Form.Item>
+                  {isReadonly ? null : (
+                    <Form.Item>
+                      <Space>
+                        <Button type="primary" onClick={onSaveGeneral}>
+                          Save General
+                        </Button>
+                        <Button onClick={onTestConnectivity} loading={testLoading}>
+                          Test Connectivity
+                        </Button>
+                      </Space>
+                    </Form.Item>
+                  )}
                 </Form>
               </Card>
             ),
@@ -807,7 +821,7 @@ export default function AiAssistantSettings() {
                   extra={(
                     <Space>
                       <Button onClick={() => loadMcpServers()} loading={mcpLoading}>Refresh</Button>
-                      <Button type="primary" onClick={() => openMcpModal()}>Add MCP</Button>
+                      {isReadonly ? null : <Button type="primary" onClick={() => openMcpModal()}>Add MCP</Button>}
                     </Space>
                   )}
                 >
@@ -827,10 +841,10 @@ export default function AiAssistantSettings() {
                         key: 'enabled',
                         width: 110,
                         render: (_: any, row: any) => (
-                          <Switch checked={row.enabled !== false} onChange={(checked) => onToggleMcp(row, checked)} />
+                          <Switch disabled={isReadonly} checked={row.enabled !== false} onChange={(checked) => onToggleMcp(row, checked)} />
                         ),
                       },
-                      {
+                      ...(isReadonly ? [] : [{
                         title: 'Action',
                         key: 'action',
                         width: 180,
@@ -840,7 +854,7 @@ export default function AiAssistantSettings() {
                             <Button danger size="small" onClick={() => onDeleteMcp(row)}>Delete</Button>
                           </Space>
                         ),
-                      },
+                      }]),
                     ]}
                   />
                 </Card>
@@ -884,7 +898,7 @@ export default function AiAssistantSettings() {
                   extra={(
                     <Space>
                       <Button onClick={() => loadSkills()} loading={skillsLoading}>Refresh</Button>
-                      <Button type="primary" onClick={() => openSkillModal()}>Add Skill</Button>
+                      {isReadonly ? null : <Button type="primary" onClick={() => openSkillModal()}>Add Skill</Button>}
                     </Space>
                   )}
                 >
@@ -904,10 +918,10 @@ export default function AiAssistantSettings() {
                         key: 'enabled',
                         width: 110,
                         render: (_: any, row: any) => (
-                          <Switch checked={row.enabled !== false} onChange={(checked) => updateAiAssistantSkillConfig(row.name, { enabled: checked }).then(loadSkillConfigs).catch(() => message.error('Failed to update skill'))} />
+                          <Switch disabled={isReadonly} checked={row.enabled !== false} onChange={(checked) => updateAiAssistantSkillConfig(row.name, { enabled: checked }).then(loadSkillConfigs).catch(() => message.error('Failed to update skill'))} />
                         ),
                       },
-                      {
+                      ...(isReadonly ? [] : [{
                         title: 'Action',
                         key: 'action',
                         width: 180,
@@ -917,7 +931,7 @@ export default function AiAssistantSettings() {
                             <Button danger size="small" onClick={() => onDeleteSkill(row)}>Delete</Button>
                           </Space>
                         ),
-                      },
+                      }]),
                     ]}
                   />
                 </Card>
@@ -953,7 +967,7 @@ export default function AiAssistantSettings() {
                           const cfg = skillConfigMap.get(row?.name);
                           const label = cfg ? (cfg.enabled ? 'Enabled' : 'Enable') : 'Add';
                           return (
-                            <Button size="small" disabled={cfg?.enabled} onClick={() => onEnableCatalogSkill(row)}>
+                            <Button size="small" disabled={isReadonly || cfg?.enabled} onClick={() => onEnableCatalogSkill(row)}>
                               {label}
                             </Button>
                           );
@@ -1053,7 +1067,7 @@ export default function AiAssistantSettings() {
 
       <Modal
         title={mcpEditRow ? 'Edit MCP Server' : 'Add MCP Server'}
-        open={mcpModalOpen}
+        open={mcpModalOpen && !isReadonly}
         onCancel={() => setMcpModalOpen(false)}
         onOk={submitMcpModal}
         okText={mcpEditRow ? 'Save' : 'Create'}
@@ -1087,7 +1101,7 @@ export default function AiAssistantSettings() {
 
       <Modal
         title={skillEditRow ? 'Edit Skill' : 'Add Skill'}
-        open={skillModalOpen}
+        open={skillModalOpen && !isReadonly}
         onCancel={() => setSkillModalOpen(false)}
         onOk={submitSkillModal}
         okText={skillEditRow ? 'Save' : 'Create'}
