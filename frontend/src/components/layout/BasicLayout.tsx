@@ -167,8 +167,9 @@ export default function BasicLayout({
   useEffect(() => {
     if (['dashboard', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
     else if (['tickets', 'assets'].includes(selectedKey)) setOpenKeys(['investigationGroup']);
-    else if (['integrations', 'datasources', 'dashboards'].includes(selectedKey)) setOpenKeys(['dataPlatformGroup']);
-    else if (['correlation', 'orchestrator', 'interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
+    else if (['dashboards'].includes(selectedKey)) setOpenKeys(['dataPlatformGroup']);
+    else if (['integrations', 'orchestrator', 'correlation'].includes(selectedKey)) setOpenKeys(['setupPipelineGroup']);
+    else if (['interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
       setOpenKeys(['automationGroup']);
     } else if (['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs'].includes(selectedKey)) {
       setOpenKeys(['systemManagementGroup']);
@@ -187,12 +188,11 @@ export default function BasicLayout({
   const settingsItems = useMemo(
     () =>
       [
-        { key: 'integrations' as RouteKey, label: 'Integrations' },
         { key: 'dashboards' as RouteKey, label: 'Dashboard List' },
-        { key: 'datasources' as RouteKey, label: 'Data Sources' },
+        { key: 'integrations' as RouteKey, label: 'Integrations' },
         { key: 'orchestrator' as RouteKey, label: 'Orchestrator' },
-        { key: 'interfaces' as RouteKey, label: 'Interfaces' },
         { key: 'correlation' as RouteKey, label: 'Correlation' },
+        { key: 'interfaces' as RouteKey, label: 'Interfaces' },
         { key: 'workflows' as RouteKey, label: 'Workflows' },
         { key: 'workflow-executions' as RouteKey, label: 'Workflow Executions' },
         { key: 'permissions' as RouteKey, label: 'Access Management' },
@@ -211,13 +211,13 @@ export default function BasicLayout({
       'Settings',
       'Monitoring',
       'Investigation',
+      'Setup Pipeline',
       'Detection & Automation',
       'Access Management',
       'Correlation',
       'Orchestrator',
       'Interfaces',
       'Workflow Executions',
-      'Data Sources',
       'Dashboard List',
       'Integrations',
     ];

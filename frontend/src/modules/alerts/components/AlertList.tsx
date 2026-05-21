@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
-import { fetchAlerts, getESConfig } from 'services/alerts';
+import { fetchAlerts } from 'services/alerts';
 import type { Alert } from 'types';
 
 const { Text } = Typography;
@@ -92,15 +92,7 @@ const AlertList: React.FC = () => {
     setLoading(true);
     const start = performance.now();
     try {
-      let indexToUse: string | undefined = undefined;
-      try {
-        const cfg = await getESConfig();
-        const idx = String(cfg?.index || '').trim();
-        if (idx) indexToUse = idx;
-      } catch {
-        // fallback to backend active index if config fetch fails
-      }
-      const res = await fetchAlerts(p, ps, indexToUse, {
+      const res = await fetchAlerts(p, ps, undefined, {
         q: opts?.q ?? searchText,
         severity: opts?.severity ?? severityFilter,
         ordering: opts?.ordering ?? ordering,
@@ -108,7 +100,7 @@ const AlertList: React.FC = () => {
       setAlerts(res.alerts || []);
       setTotal(res.total || (res.alerts || []).length);
       setSource(res.source || null);
-      setActiveIndex(res.applied_index || res.active_index || indexToUse || null);
+      setActiveIndex(res.applied_index || res.active_index || null);
       if (res.ordering) setOrdering(String(res.ordering));
     } catch (err) {
       console.error('Failed to load alerts', err);

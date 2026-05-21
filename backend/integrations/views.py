@@ -14,7 +14,6 @@ from django.utils.dateparse import parse_datetime
 import os
 import datetime
 from rest_framework import status as rf_status
-from sqlalchemy import create_engine
 
 # Helper to write a detailed sync debug log when sync fails or imports zero rows.
 def _write_sync_debug_log(index, mapping_columns, docs, extraction_results=None, errors=None, exc_tb=None, name=None):
@@ -56,26 +55,53 @@ def _deny_if_no_perm(request, perm):
     if user.is_superuser or user.has_perm(perm):
         return None
     return Response({"detail": "Permission denied."}, status=rf_status.HTTP_403_FORBIDDEN)
-# -----------------------------
-# 涓枃娉ㄩ噴锛堟枃浠剁骇鍒鏄庯級
-#
-# 璇ユ枃浠跺寘鍚?Integrations 鐩稿叧鐨勮鍥惧嚱鏁板拰宸ュ叿鏂规硶锛屼富瑕佽亴璐ｅ寘鎷細
-# - 鎻愪緵 Integration 鐨勬祴璇曟帴鍙ｏ紙IntegrationViewSet.test锛夌敤浜庢鏌ュ閮ㄦ湇鍔¤繛閫氭€э紙渚嬪 Elasticsearch锛?
-# - 浠?Elasticsearch 鎶撳彇鏁版嵁骞跺悓姝ュ埌鐩爣鏁版嵁搴擄紙sync_es_to_db锛夛紝鏀寔 PostgreSQL銆丮ySQL 鍜岄€氳繃 Django settings 鐨?DB 杩炴帴
-# - 鎻愪緵棰勮 ES 绱㈠紩鏍锋湰锛坧review_es_index锛夌敤浜庡湪鍒涘缓琛ㄦ垨鎺ㄦ柇鏄犲皠涔嬪墠鏌ョ湅绀轰緥鏂囨。
-# - 鎻愪緵鏌ヨ鐩爣鏁版嵁搴撹〃鍒楄〃鐨勬帴鍙ｏ紙integrations_db_tables锛?
-# - 鎻愪緵鎸?ES 鏄犲皠鍒涘缓鐩爣琛ㄧ殑鎺ュ彛锛坕ntegrations_create_table_from_es / integrations_create_table锛?
-# - 鎻愪緵杩斿洖 ES 鏄犲皠鎺ㄦ柇鍒椾俊鎭殑鎺ュ彛锛坕ntegrations_preview_es_mapping锛夛紝鍓嶇浼氫娇鐢ㄨ鎺ュ彛璁╃敤鎴风紪杈戝垪鍚嶅拰 SQL 绫诲瀷
-#
-# 娉ㄦ剰锛氭湰鏂囦欢涓柊澧炵殑娉ㄩ噴浠呯敤浜庤鏄庝唬鐮侀€昏緫锛屾湭瀵圭幇鏈夎涓哄仛鍑轰慨鏀广€傝鍦ㄨ繍琛屾椂纭繚 Python 鐜鍖呭惈 requests/psycopg2/pymysql 绛変緷璧栦互渚垮畬鏁村姛鑳藉彲鐢ㄣ€?
-# -----------------------------
-
-
 class IntegrationViewSet(viewsets.ModelViewSet):
     queryset = Integration.objects.all().order_by('-created_at')
     serializer_class = IntegrationSerializer
     permission_classes = [RbacModelPermissions]
     rbac_action_perms = {"test": "change"}
+
+    def _activate_alerts_es_config(self, integration: Integration):
+        if integration.type != 'elasticsearch':
+            return None
+        cfg = integration.config or {}
+        host = str(cfg.get('host') or '').strip()
+        if not host:
+            return None
+        index = str(cfg.get('index') or 'alerts').strip() or 'alerts'
+        try:
+            from alerts.models import ESIntegrationConfig
+            from alerts.tasks import sync_es_alerts_to_db
+
+            es_cfg = ESIntegrationConfig.objects.order_by('-id').first()
+            values = {
+                'enabled': True,
+                'hosts': host,
+                'index': index,
+                'username': cfg.get('username') or '',
+                'password': cfg.get('password') or '',
+                'use_ssl': host.startswith('https://'),
+                'verify_certs': True,
+            }
+            if es_cfg:
+                for key, value in values.items():
+                    setattr(es_cfg, key, value)
+                es_cfg.save(update_fields=list(values.keys()))
+            else:
+                es_cfg = ESIntegrationConfig.objects.create(**values)
+            ESIntegrationConfig.objects.exclude(id=es_cfg.id).delete()
+            return sync_es_alerts_to_db(size=1000, force_config=True, fetch_all=True)
+        except Exception as exc:
+            return {'ok': False, 'error': str(exc)}
+
+    def perform_create(self, serializer):
+        integration = serializer.save()
+        self._activate_alerts_es_config(integration)
+
+    def perform_update(self, serializer):
+        integration = serializer.save()
+        self._activate_alerts_es_config(integration)
+
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):
         it = self.get_object()
@@ -83,13 +109,14 @@ class IntegrationViewSet(viewsets.ModelViewSet):
             cfg = it.config or {}
             if it.type == 'elasticsearch':
                 host = cfg.get('host')
+                if not host:
+                    return Response({'error': 'integration config missing host'}, status=status.HTTP_400_BAD_REQUEST)
                 auth = None
                 if cfg.get('username'):
                     auth = (cfg.get('username'), cfg.get('password'))
                 r = requests.get(host, auth=auth, timeout=10)
                 return Response({'status': r.status_code, 'body': r.text, 'headers': dict(r.headers)})
-            # naive test for other types
-            return Response({'ok': True, 'type': it.type})
+            return Response({'error': 'only Elasticsearch integrations can be tested'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -399,48 +426,12 @@ def test_es_connection(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def test_db_connection(request):
-    denied = _deny_if_no_perm(request, "integrations.change_integration")
-    if denied:
-        return denied
-    payload = request.data or {}
-    db_type = str(payload.get('db_type') or 'postgres').lower()
-    host = str(payload.get('host') or '').strip()
-    port = payload.get('port')
-    database = str(payload.get('database') or payload.get('dbname') or '').strip()
-    user = str(payload.get('user') or payload.get('username') or '').strip()
-    password = str(payload.get('password') or '')
-    conn_str = payload.get('conn_str')
-
-    if not conn_str:
-        if not host or not database or not user:
-            return Response(
-                {'ok': False, 'error': 'host, database and user are required unless conn_str is provided'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if db_type == 'mysql':
-            p = int(port) if str(port or '').strip() else 3306
-            conn_str = f"mysql+pymysql://{user}:{password}@{host}:{p}/{database}"
-        else:
-            p = int(port) if str(port or '').strip() else 5432
-            conn_str = f"postgresql+psycopg2://{user}:{password}@{host}:{p}/{database}"
-
-    try:
-        engine = create_engine(str(conn_str), pool_pre_ping=True)
-        with engine.connect() as conn:
-            conn.exec_driver_sql("SELECT 1")
-        return Response({'ok': True, 'message': 'Connection OK'})
-    except Exception as e:
-        return Response({'ok': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
 def integrations_preview_es_mapping(request):
     denied = _deny_if_no_perm(request, "integrations.view_integration")
     if denied:
         return denied
     """Preview Elasticsearch index mapping and return inferred columns without creating a table.
-    POST payload: { alerts: id, index: name, db_type?: 'postgres'|'mysql', conn_str?, host?, user?, password?, database?, port?, django_db? }
+    POST payload: { alerts: id, index: name }
     Response: { ok: True, columns: [{ orig_name, colname, es_type, sql_type, sample }] }
     """
     try:
@@ -537,29 +528,6 @@ def integrations_preview_es_mapping(request):
                 return 'jsonb'
             return 'jsonb'
 
-        def es_to_mysql(field: dict) -> str:
-            t = field.get('type')
-            if not t:
-                return 'JSON'
-            t = t.lower()
-            if t in ('text', 'keyword', 'string'):
-                return 'TEXT'
-            if t in ('integer', 'int'):
-                return 'INT'
-            if t in ('long',):
-                return 'BIGINT'
-            if t in ('short', 'byte'):
-                return 'SMALLINT'
-            if t in ('float', 'double', 'scaled_float', 'half_float'):
-                return 'DOUBLE'
-            if t in ('boolean',):
-                return 'TINYINT(1)'
-            if t in ('date',):
-                return 'DATETIME'
-            if t in ('object', 'nested'):
-                return 'JSON'
-            return 'JSON'
-
         cols = []
         for name, meta in (props or {}).items():
             colname = sanitize_col(name)
@@ -604,22 +572,10 @@ def integrations_preview_es_mapping(request):
         except Exception:
             samples = {}
 
-        # determine target db type for sql_type hints
-        db_type = data.get('db_type')
-        if data.get('conn_str'):
-            conn_str = data.get('conn_str')
-            if conn_str.startswith('postgres'):
-                db_type = 'postgres'
-            elif conn_str.startswith('mysql'):
-                db_type = 'mysql'
-
         out_cols = []
         for orig, colname, meta in cols:
             es_t = (meta.get('type') if isinstance(meta, dict) else None) or None
-            if db_type == 'mysql':
-                sql_t = es_to_mysql(meta or {})
-            else:
-                sql_t = es_to_pg(meta or {})
+            sql_t = es_to_pg(meta or {})
             out_cols.append({'orig_name': orig, 'colname': colname, 'es_type': es_t, 'sql_type': sql_t, 'sample': samples.get(orig)})
 
         # Persist preview mapping to ESMapping model when `table` provided; optionally write file if requested

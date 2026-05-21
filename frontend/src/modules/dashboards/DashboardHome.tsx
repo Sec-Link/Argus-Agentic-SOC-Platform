@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
-import { Card, Statistic, Row, Col, Space, Select, Button, Modal, Form, Input, Switch, message, Spin, Table, Empty, Divider } from 'antd';
+import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { fetchDashboard, getESConfig, setESConfig, getWebhookConfig, setWebhookConfig } from 'services/alerts';
+import { fetchDashboard } from 'services/alerts';
 import type { DashboardData } from 'types';
 
 const Dashboard: React.FC = () => {
@@ -16,15 +16,7 @@ const Dashboard: React.FC = () => {
 
   const CACHE_KEY = 'siem_dashboard_cache_v1';
   const POLL_INTERVAL_MS = 10 * 1000;
-  const [esModalVisible, setEsModalVisible] = useState(false);
-  const [webhookModalVisible, setWebhookModalVisible] = useState(false);
-  const [esConfig, setEsConfigState] = useState<any>(null);
-  const [webhookConfig, setWebhookConfigState] = useState<any>(null);
-  const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null);
-  const [syncDigest, setSyncDigest] = useState<any | null>(null);
-  const [syncDigestVisible, setSyncDigestVisible] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [esSaving, setEsSaving] = useState(false);
   const [trendGroupBy, setTrendGroupBy] = useState<'hour' | 'day'>('hour');
   const [scoreGroupBy, setScoreGroupBy] = useState<'hour' | 'day'>('hour');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
@@ -38,8 +30,6 @@ const Dashboard: React.FC = () => {
   // Debug helpers to inspect raw displayData when trends show no data
   const [debugModalVisible, setDebugModalVisible] = useState(false);
   const [debugKey, setDebugKey] = useState<string | null>(null);
-  const [showSyncDetails, setShowSyncDetails] = useState(false);
-  const [esForm] = Form.useForm();
   const openDebugModal = (key: string | null) => { setDebugKey(key); setDebugModalVisible(true); };
   const getDebugContent = () => {
     if (!displayData) return 'No displayData (dashboard failed to load)';
@@ -145,21 +135,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const loadConfigs = async () => {
-    try {
-      const es = await getESConfig();
-      setEsConfigState(es);
-    } catch (e) {
-      // ignore
-    }
-    try {
-      const wh = await getWebhookConfig();
-      setWebhookConfigState(wh);
-    } catch (e) {
-      // ignore
-    }
-  }
-
   // small hook to animate numbers smoothly between updates
   function useAnimatedNumber(target: number, duration = 500) {
     const [value, setValue] = React.useState(target);
@@ -202,9 +177,8 @@ const Dashboard: React.FC = () => {
       // ignore cache errors
     }
 
-    // initial load and config load
+    // initial load
     load();
-    loadConfigs();
 
     const syncTheme = () => {
       try {
@@ -242,136 +216,6 @@ const Dashboard: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const openEsModal = () => setEsModalVisible(true);
-  const openWebhookModal = () => setWebhookModalVisible(true);
-
-  useEffect(() => {
-    if (!esModalVisible) return;
-    const cfg = esConfig || {};
-    const schedule = cfg.schedule || {};
-    esForm.setFieldsValue({
-      enabled: !!cfg.enabled,
-      hosts: cfg.hosts || '',
-      index: cfg.index || 'alerts',
-      username: cfg.username || '',
-      password: '',
-      use_ssl: !!cfg.use_ssl,
-      verify_certs: cfg.verify_certs !== false,
-      auto_sync: !!schedule.enabled,
-      interval_seconds: Number(schedule.interval_seconds || 300),
-      batch_size: Number(schedule.batch_size || 500),
-      fetch_all: !!schedule.fetch_all,
-    });
-    setSelectedHistoryId(null);
-  }, [esModalVisible, esConfig, esForm]);
-
-  const onSelectHistoryConnector = (id: number | null) => {
-    if (!id) {
-      setSelectedHistoryId(null);
-      return;
-    }
-    const history = (esConfig?.history || []) as any[];
-    const picked = history.find((h) => Number(h.id) === Number(id));
-    if (!picked) return;
-    esForm.setFieldsValue({
-      enabled: true,
-      hosts: picked.hosts || '',
-      index: picked.index || 'alerts',
-      username: picked.username || '',
-      password: '',
-      use_ssl: !!picked.use_ssl,
-      verify_certs: picked.verify_certs !== false,
-    });
-    setSelectedHistoryId(Number(id));
-    message.success('Connector filled from history. Click Save to switch and sync.');
-  };
-
-  const onEsSave = async (values:any) => {
-    // Close immediately so large-index sync does not block the modal UX.
-    setEsModalVisible(false);
-    setEsSaving(true);
-    try {
-      const payload = { ...values } as any;
-      if (selectedHistoryId) payload.history_id = selectedHistoryId;
-      if (!String(payload.password || '').trim()) delete payload.password;
-      payload.schedule = {
-        enabled: !!payload.auto_sync,
-        interval_seconds: Number(payload.interval_seconds || 300),
-        batch_size: Number(payload.batch_size || 500),
-        fetch_all: !!payload.fetch_all,
-      };
-      delete payload.auto_sync;
-      delete payload.interval_seconds;
-      delete payload.batch_size;
-      delete payload.fetch_all;
-      const res = await setESConfig(payload);
-      setEsConfigState(res);
-      const sync = (res as any)?.sync;
-      if (sync?.es_total != null && sync?.db_total != null && Number(sync.db_total) < Number(sync.es_total)) {
-        message.warning(`ES sync incomplete: ES has ${sync.es_total}, DB has ${sync.db_total}. Check backend logs.`);
-      } else if (sync?.fetched === 0) {
-        message.warning('ES config saved, but sync fetched 0 docs. Check backend logs for diagnostics.');
-      } else if (sync?.index_table?.ok) {
-        message.success(`ES config saved. Synced ${sync.fetched} docs and updated table ${sync.index_table.table}`);
-      } else {
-        const esTotal = sync?.es_total ?? 'N/A';
-        const dbTotal = sync?.db_total ?? 'N/A';
-        message.success(`ES config saved. ES total: ${esTotal}, DB total: ${dbTotal}`);
-      }
-      setSyncDigest(sync || null);
-      setShowSyncDetails(false);
-      setSyncDigestVisible(true);
-      try {
-        window.dispatchEvent(
-          new CustomEvent('siem_es_connector_switched', {
-            detail: { index: (res as any)?.index || values?.index || null },
-          })
-        );
-      } catch {
-        // ignore event dispatch failures
-      }
-      try {
-        localStorage.removeItem(CACHE_KEY);
-      } catch {
-        // ignore cache clear failures
-      }
-      setData(null);
-      setDisplayData(null);
-      await loadConfigs();
-      await load();
-    } catch (e:any) {
-      console.error(e);
-      const detail = e?.response?.data?.detail || e?.message || 'Failed to save ES config';
-      message.error(detail);
-      // Re-open modal on save failure so user can retry quickly.
-      setEsModalVisible(true);
-    } finally {
-      setEsSaving(false);
-    }
-  }
-
-  const onWebhookSave = async (values:any) => {
-    try {
-      // parse headers if it's a string from textarea
-      if (typeof values.headers === 'string') {
-        try {
-          values.headers = JSON.parse(values.headers || '{}');
-        } catch (err) {
-          message.error('Headers is not valid JSON');
-          return;
-        }
-      }
-      const res = await setWebhookConfig(values);
-      setWebhookConfigState(res);
-      setWebhookModalVisible(false);
-      message.success('Webhook config saved');
-    } catch (e:any) {
-      console.error(e);
-      const detail = e?.response?.data?.detail || e?.message || 'Failed to save webhook config';
-      message.error(detail);
-    }
-  }
-
   const categoryBreakdown = displayData?.category_breakdown;
   const severityDistribution = displayData?.severity_distribution;
   const panelRefresh = (panelKey: string, ariaLabel = 'Refresh panel') => (
@@ -392,10 +236,6 @@ const Dashboard: React.FC = () => {
           <span style={{ fontSize: 16, fontWeight: 700 }}>Dashboard Overview</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <div>
-            <Button onClick={openEsModal} style={{ marginRight: 8 }}>ES Settings</Button>
-            <Button onClick={openWebhookModal}>Webhook Settings</Button>
-          </div>
           {refreshing && <Spin size="small" style={{ marginLeft: 12 }} />}
         </div>
       </Space>
@@ -793,120 +633,6 @@ const Dashboard: React.FC = () => {
         <pre style={{ maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{getDebugContent()}</pre>
       </Modal>
 
-      <Modal title="ES Settings" open={esModalVisible} onCancel={() => setEsModalVisible(false)} footer={null}>
-        <Form form={esForm} initialValues={esConfig || {enabled: false, hosts: '', index: 'alerts', use_ssl: false, verify_certs: true}} onFinish={onEsSave}>
-          <Form.Item name="enabled" valuePropName="checked" label="Enabled">
-            <Switch />
-          </Form.Item>
-          <Form.Item label="Recent connectors">
-            <Select
-              allowClear
-              placeholder="Select previous successful connector"
-              value={selectedHistoryId as any}
-              onChange={(v) => onSelectHistoryConnector((v as number) || null)}
-              options={((esConfig?.history || []) as any[]).map((h: any) => ({
-                label: `${h.index || 'alerts'} @ ${h.hosts || ''} (${h.username || 'no-user'})`,
-                value: h.id,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item name="hosts" label="Hosts">
-            <Input placeholder="http://localhost:9200" />
-          </Form.Item>
-          <Form.Item name="index" label="Index">
-            <Input placeholder="alerts" />
-          </Form.Item>
-          <Form.Item name="username" label="Username">
-            <Input />
-          </Form.Item>
-          <Form.Item name="password" label="Password">
-            <Input.Password placeholder={selectedHistoryId ? 'Leave blank to reuse saved password' : ''} />
-          </Form.Item>
-          <Form.Item name="use_ssl" valuePropName="checked" label="Use SSL">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="verify_certs" valuePropName="checked" label="Verify Certs">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="auto_sync" valuePropName="checked" label="Auto Sync">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="interval_seconds" label="Sync Interval (s)">
-            <Input type="number" min={10} />
-          </Form.Item>
-          <Form.Item name="batch_size" label="Batch Size">
-            <Input type="number" min={1} />
-          </Form.Item>
-          <Form.Item name="fetch_all" valuePropName="checked" label="Fetch All">
-            <Switch />
-          </Form.Item>
-          <Form.Item>
-            <Button htmlType="submit" type="primary" loading={esSaving}>Save</Button>
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title="Connector Sync Digest"
-        open={syncDigestVisible}
-        onCancel={() => setSyncDigestVisible(false)}
-        footer={<Button type="primary" onClick={() => setSyncDigestVisible(false)}>Done</Button>}
-        width={760}
-      >
-        <div
-          style={{
-            borderRadius: 14,
-            padding: 16,
-            background: 'linear-gradient(135deg, rgba(22,119,255,0.08) 0%, rgba(56,189,248,0.08) 50%, rgba(34,197,94,0.08) 100%)',
-            border: '1px solid rgba(22,119,255,0.18)',
-            marginBottom: 12,
-          }}
-        >
-          <div style={{ fontSize: 16, fontWeight: 700 }}>Index: {syncDigest?.index || '-'}</div>
-          <div style={{ marginTop: 4, color: '#64748b' }}>
-            Source: {syncDigest?.source || '-'} • Duration: {syncDigest?.duration_ms ?? 0} ms
-          </div>
-        </div>
-        <Row gutter={[12, 12]}>
-          {[
-            ['Fetched', syncDigest?.fetched ?? 0],
-            ['Inserted', syncDigest?.inserted ?? 0],
-            ['Updated', syncDigest?.updated ?? 0],
-            ['Unchanged', syncDigest?.unchanged ?? 0],
-            ['Skipped', syncDigest?.skipped ?? 0],
-            ['DB Total', syncDigest?.db_total ?? 0],
-            ['ES Total', syncDigest?.es_total ?? 'N/A'],
-          ].map(([name, value]) => (
-            <Col xs={12} md={8} key={String(name)}>
-              <Card size="small" styles={{ body: { padding: 12 } }}>
-                <div style={{ fontSize: 12, color: '#64748b' }}>{String(name)}</div>
-                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4 }}>{String(value)}</div>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-        <Divider style={{ margin: '12px 0' }} />
-        <Button size="small" onClick={() => setShowSyncDetails((s) => !s)}>
-          {showSyncDetails ? 'Hide details' : 'View details'}
-        </Button>
-        {showSyncDetails && (
-          <pre style={{ marginTop: 10, maxHeight: '34vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-            {JSON.stringify(syncDigest || {}, null, 2)}
-          </pre>
-        )}
-      </Modal>
-
-      <Modal title="Webhook Settings" open={webhookModalVisible} onCancel={() => setWebhookModalVisible(false)} footer={null}>
-        <Form initialValues={webhookConfig || {url: '', method: 'POST', headers: {}, active: true}} onFinish={onWebhookSave}>
-          <Form.Item name="url" label="URL" rules={[{ required: true, message: 'Please enter URL' }]}> <Input /> </Form.Item>
-          <Form.Item name="method" label="Method"> <Input /> </Form.Item>
-          <Form.Item name="active" valuePropName="checked" label="Active"> <Switch /> </Form.Item>
-          <Form.Item name="headers" label="Headers (JSON)"> <Input.TextArea placeholder='{"Authorization":"Bearer ..."}' /> </Form.Item>
-          <Form.Item>
-            <Button htmlType="submit" type="primary">Save</Button>
-          </Form.Item>
-        </Form>
-      </Modal>
     </>
   );
 };

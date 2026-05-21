@@ -22,22 +22,6 @@ import { keyToPath, permissionByKey, type RouteKey } from 'route';
 
 const { Sider } = Layout;
 
-const DatabaseSvg: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
-  <svg
-    viewBox="0 0 24 24"
-    width="16"
-    height="16"
-    style={style}
-    xmlns="http://www.w3.org/2000/svg"
-    fill="none"
-    stroke="currentColor"
-  >
-    <ellipse cx="12" cy="5" rx="8" ry="3" strokeWidth="1.6" />
-    <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" strokeWidth="1.6" />
-    <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" strokeWidth="1.6" />
-  </svg>
-);
-
 function iconByKey(key: RouteKey) {
   if (key === 'dashboard') return <DashboardOutlined />;
   if (key === 'alerts') return <BellOutlined />;
@@ -45,7 +29,6 @@ function iconByKey(key: RouteKey) {
   if (key === 'assets') return <HddOutlined />;
   if (key === 'integrations') return <AppstoreOutlined />;
   if (key === 'dashboards') return <DashboardOutlined />;
-  if (key === 'datasources') return <DatabaseSvg style={{ marginRight: 8 }} />;
   if (key === 'orchestrator') return <DeploymentUnitOutlined />;
   if (key === 'interfaces') return <ApiOutlined />;
   if (key === 'correlation') return <LineChartOutlined />;
@@ -93,7 +76,6 @@ export default function Sidebar({
     assets: 'Assets',
     integrations: labelOverrides.integrations || 'Integrations',
     dashboards: labelOverrides.dashboards || 'Dashboard List',
-    datasources: labelOverrides.datasources || 'Data Sources',
     orchestrator: labelOverrides.orchestrator || 'Orchestrator',
     interfaces: labelOverrides.interfaces || 'Interfaces',
     correlation: labelOverrides.correlation || 'Correlation',
@@ -123,13 +105,19 @@ export default function Sidebar({
       key: 'dataPlatformGroup',
       title: 'Data & Platform',
       icon: <AppstoreOutlined />,
-      items: ['integrations', 'datasources', 'dashboards'],
+      items: ['dashboards'],
+    },
+    {
+      key: 'setupPipelineGroup',
+      title: 'Setup Pipeline',
+      icon: <DeploymentUnitOutlined />,
+      items: ['integrations', 'orchestrator', 'correlation'],
     },
     {
       key: 'automationGroup',
       title: 'Detection & Automation',
       icon: <BranchesOutlined />,
-      items: ['correlation', 'orchestrator', 'interfaces', 'workflows', 'workflow-executions'],
+      items: ['interfaces', 'workflows', 'workflow-executions'],
     },
     {
       key: 'systemManagementGroup',

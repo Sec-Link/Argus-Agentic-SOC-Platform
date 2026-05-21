@@ -59,17 +59,6 @@ class ESIntegrationConfig(models.Model):
         return f"ESConfig({self.id})"
 
 
-class WebhookConfig(models.Model):
-    """Stores webhook configuration used to notify external systems."""
-    url = models.CharField(max_length=1024)
-    method = models.CharField(max_length=8, default='POST')
-    headers = models.JSONField(default=dict, blank=True)
-    active = models.BooleanField(default=True)
-
-    def __str__(self):
-        return f"WebhookConfig({self.id})"
-
-
 class ESIntegrationConfigHistory(models.Model):
     """Saved connector presets for quick switching in dashboard settings."""
 
@@ -121,4 +110,3 @@ class DashboardStats(models.Model):
 If you still need SQLAlchemy for a separate pipeline, create a dedicated module
 and keep Django models isolated here.
 """
-

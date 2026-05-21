@@ -1,21 +1,18 @@
 ﻿import React, { useEffect, useState } from 'react'
-import { Alert, List, Button, Modal, Form, Input, Card, Space, Tag, message, Select, Divider } from 'antd'
+import { Alert, List, Button, Modal, Form, Input, Card, Space, Tag, message, Select } from 'antd'
 import {
   testEsIntegration,
-  testLogstashIntegration,
-  testAirflowIntegration,
   listIntegrations,
   createIntegration,
   updateIntegration,
   deleteIntegration,
 } from 'services/integrations'
-import { testDbConnection } from 'api'
 import { getIsReadonly } from 'lib/auth'
-// Integrations page manages data integrations (Elasticsearch, Logstash, Airflow, PostgreSQL, MySQL).
+// Integrations page manages Elasticsearch integrations.
 // Key features:
 // - List existing integrations
 // - Create/edit integrations via form
-// - Test connections and refresh target DB table lists
+// - Test Elasticsearch connectivity
 // - Preview ES index mapping, edit column names/types, and create tables from mapping
 // Notes:
 // - Edited columns are stored in editedColumns. After table creation, new integrations store columns in pendingMapping,
@@ -60,7 +57,11 @@ const Integrations: React.FC = () =>{
   }
 
   const fetchList = async ()=>{
-    try{ const r = await listIntegrations(); setItems(r) }catch(e){ setItems([]) }
+    try{
+      const r = await listIntegrations()
+      const list = Array.isArray(r) ? r : []
+      setItems(list.filter((item:any)=>item?.type === 'elasticsearch'))
+    }catch(e){ setItems([]) }
   }
 
   const isLikelyUiRouteHost = (value: string) => {
@@ -81,8 +82,9 @@ const Integrations: React.FC = () =>{
     return {
       ...raw,
       host,
-      username: raw?.username || raw?.user || config?.username || config?.user || '',
+      username: raw?.username || config?.username || '',
       password: raw?.password || config?.password || '',
+      index: raw?.index || config?.index || 'alerts',
       path: raw?.path || config?.path || '/_cluster/health',
       config,
     }
@@ -112,55 +114,37 @@ const Integrations: React.FC = () =>{
       if(!host) throw new Error('Elasticsearch host required')
       return testEsIntegration({ host, username, password, path })
     }
-    if(type === 'logstash') return testLogstashIntegration(normalized)
-    if(type === 'airflow') return testAirflowIntegration(normalized)
-    if(type === 'postgresql' || type === 'mysql'){
-      const payload: any = { db_type: type === 'postgresql' ? 'postgres' : 'mysql' }
-      payload.user = normalized.user || normalized.username || ''
-      payload.password = normalized.password || ''
-      payload.host = normalized.host || ''
-      payload.port = normalized.port || ''
-      payload.database = normalized.dbname || normalized.database || normalized.db || ''
-      return testDbConnection(payload)
-    }
-    throw new Error('Unsupported integration type')
+    throw new Error('Only Elasticsearch integrations are supported')
   }
 
   const save = async ()=>{
     const v = await form.validateFields()
     try{
       // Collect form values and build create/update integration payload.
-      const payload: any = { name: v.name, type: v.type, config: {} }
-      if(v.type === 'elasticsearch'){
-        payload.config = { host: v.host || '', username: v.username || '', password: v.password || '' }
-      }else if(v.type === 'logstash'){
-        payload.config = v.config || { inputs: [], filters: [], outputs: [] }
-      }else if(v.type === 'airflow'){
-        payload.config = { host: v.host || '', username: v.username || '', password: v.password || '', token: v.token || '', path: v.path || '' }
-      }else if(v.type === 'postgresql' || v.type === 'mysql'){
-        payload.config = {
-          conn_str: v.conn_str || undefined,
-          host: v.host || undefined,
-          port: v.port || undefined,
-          user: v.user || v.username || undefined,
-          password: v.password || undefined,
-          dbname: v.dbname || v.database || undefined,
-          django_db: v.django_db || undefined,
-          table: v.table || undefined,
-        }
-      }else{
-        payload.config = { ...(v.config || {}), host: v.host }
+      const host = String(v.host || '').trim()
+      const index = String(v.index || 'alerts').trim() || 'alerts'
+      const payload: any = {
+        name: v.name,
+        type: 'elasticsearch',
+        config: {
+          host,
+          index,
+          username: v.username || '',
+          password: v.password || '',
+          path: v.path || '/_cluster/health',
+        },
       }
 
       // Create vs update: editingIndex === null => create new integration; otherwise update existing
       if(editingIndex === null){
         await createIntegration(payload)
-        message.success('Integration created')
       }else{
         const id = items[editingIndex].id
         await updateIntegration(id, payload)
-        message.success('Integration updated')
       }
+
+      message.success('Integration saved and activated for Alerts/Dashboard.')
+      try{ window.dispatchEvent(new Event('siem_es_connector_switched')) }catch(e){}
       setShowModal(false)
       setEditingIndex(null)
       form.resetFields()
@@ -183,22 +167,14 @@ const Integrations: React.FC = () =>{
   const openEdit = (it:any, idx:number)=>{
     setEditingIndex(idx)
     const copy = { ...it }
-    if(!copy.config) copy.config = { inputs: [], filters: [], outputs: [] }
+    if(!copy.config) copy.config = {}
     const merged: any = { ...copy }
-    if(copy.type === 'logstash') merged.config = copy.config
-    else{
-      merged.host = copy.config.host || copy.config.url || undefined
-      merged.username = copy.config.username
-      merged.password = copy.config.password
-      merged.token = copy.config.token
-      merged.path = copy.config.path
-      merged.conn_str = copy.config.conn_str || copy.config.url || undefined
-      merged.port = copy.config.port || undefined
-      merged.user = copy.config.user || copy.config.username || undefined
-      merged.dbname = copy.config.dbname || copy.config.database || undefined
-      merged.django_db = copy.config.django_db || undefined
-      merged.table = copy.config.table || undefined
-    }
+    merged.type = 'elasticsearch'
+    merged.host = copy.config.host || copy.config.url || undefined
+    merged.username = copy.config.username
+    merged.password = copy.config.password
+    merged.index = copy.config.index || 'alerts'
+    merged.path = copy.config.path || '/_cluster/health'
     form.setFieldsValue(merged)
     setShowModal(true)
   }
@@ -235,149 +211,18 @@ const Integrations: React.FC = () =>{
       </Card>
 
       <Modal open={showModal && !isReadonly} onCancel={()=>setShowModal(false)} onOk={save} title="Add Integration">
-        <Form form={form} layout="vertical" initialValues={{ type: 'elasticsearch' }}>
+        <Form form={form} layout="vertical" initialValues={{ type: 'elasticsearch', index: 'alerts' }}>
           <Form.Item name="type" label="Type">
             <Select onChange={(v:any)=>{ form.setFieldsValue({ type: v }) }}>
               <Select.Option value="elasticsearch">Elasticsearch</Select.Option>
-              <Select.Option value="logstash">Logstash</Select.Option>
-              <Select.Option value="airflow">Airflow</Select.Option>
-              <Select.Option value="postgresql">PostgreSQL</Select.Option>
-              <Select.Option value="mysql">MySQL</Select.Option>
             </Select>
           </Form.Item>
           <Form.Item name="name" label="Name" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item shouldUpdate noStyle>
-            {()=>{
-              const t = form.getFieldValue('type')
-              let hostLabel = 'Host'
-              if(t === 'elasticsearch') hostLabel = 'Host (http://...)'
-              else if(t === 'postgresql' || t === 'mysql') hostLabel = 'DB Host'
-              else if(t === 'airflow') hostLabel = 'Host (http://...)'
-
-              return (
-                <>
-                  <Form.Item name="host" label={hostLabel}><Input /></Form.Item>
-
-                  {t === 'elasticsearch' && (
-                    <>
-                      <Form.Item name="username" label="Username (optional)"><Input /></Form.Item>
-                      <Form.Item name="password" label="Password (optional)"><Input.Password /></Form.Item>
-                    </>
-                  )}
-
-                  {t === 'logstash' && (
-                    <>
-                      <Form.Item label="Logstash Config (inputs/filters/outputs)">
-                        <Divider />
-                        <Form.List name={[ 'config', 'inputs' ]}>
-                          {(fields, { add, remove }) => (
-                            <div>
-                              <h4>Inputs</h4>
-                              {fields.map(f=> (
-                                <div key={f.key} style={{ marginBottom: 8 }}>
-                                  <Form.Item name={[f.name, 'type']} rules={[{ required: true }]} style={{ display: 'inline-block', width: '30%', marginRight: 8 }}>
-                                    <Select>
-                                      <Select.Option value="file">file</Select.Option>
-                                      <Select.Option value="tcp">tcp</Select.Option>
-                                      <Select.Option value="http">http</Select.Option>
-                                    </Select>
-                                  </Form.Item>
-                                  <Form.Item name={[f.name, 'path']} style={{ display: 'inline-block', width: '60%' }}>
-                                    <Input placeholder="path or host" />
-                                  </Form.Item>
-                                  <Button danger onClick={()=>remove(f.name)}>Remove</Button>
-                                </div>
-                              ))}
-                              <Button onClick={()=>add({ type: 'file', path: '' })}>Add Input</Button>
-                            </div>
-                          )}
-                        </Form.List>
-
-                        <Form.List name={[ 'config', 'filters' ]}>
-                          {(fields, { add, remove }) => (
-                            <div>
-                              <h4>Filters</h4>
-                              {fields.map(f=> (
-                                <div key={f.key} style={{ marginBottom: 8 }}>
-                                  <Form.Item name={[f.name, 'type']} rules={[{ required: true }]} style={{ display: 'inline-block', width: '30%', marginRight: 8 }}>
-                                    <Select>
-                                      <Select.Option value="grok">grok</Select.Option>
-                                      <Select.Option value="mutate">mutate</Select.Option>
-                                    </Select>
-                                  </Form.Item>
-                                  <Form.Item name={[f.name, 'pattern']} style={{ display: 'inline-block', width: '60%' }}>
-                                    <Input placeholder="pattern or config" />
-                                  </Form.Item>
-                                  <Button danger onClick={()=>remove(f.name)}>Remove</Button>
-                                </div>
-                              ))}
-                              <Button onClick={()=>add({ type: 'grok', pattern: '' })}>Add Filter</Button>
-                            </div>
-                          )}
-                        </Form.List>
-
-                        <Form.List name={[ 'config', 'outputs' ]}>
-                          {(fields, { add, remove }) => (
-                            <div>
-                              <h4>Outputs</h4>
-                              {fields.map(f=> (
-                                <div key={f.key} style={{ marginBottom: 8 }}>
-                                  <Form.Item name={[f.name, 'type']} rules={[{ required: true }]} style={{ display: 'inline-block', width: '30%', marginRight: 8 }}>
-                                    <Select>
-                                      <Select.Option value="elasticsearch">elasticsearch</Select.Option>
-                                      <Select.Option value="postgresql">postgresql</Select.Option>
-                                    </Select>
-                                  </Form.Item>
-                                  <Form.Item name={[f.name, 'config']} style={{ display: 'inline-block', width: '60%' }}>
-                                    <Input placeholder="config or host" />
-                                  </Form.Item>
-                                  <Button danger onClick={()=>remove(f.name)}>Remove</Button>
-                                </div>
-                              ))}
-                              <Button onClick={()=>add({ type: 'elasticsearch', config: '' })}>Add Output</Button>
-                            </div>
-                          )}
-                        </Form.List>
-
-                        <Button style={{ marginTop: 8 }} onClick={()=>{
-                          const vals = form.getFieldsValue()
-                          const cfg = vals.config || {}
-                          let txt = ''
-                          const ins = cfg.inputs || []
-                          ins.forEach((i:any)=>{ txt += `input { ${i.type} { ${i.path || ''} } }\n` })
-                          const fil = cfg.filters || []
-                          fil.forEach((f:any)=>{ txt += `filter { ${f.type} { ${f.pattern || ''} } }\n` })
-                          const outs = cfg.outputs || []
-                          outs.forEach((o:any)=>{ txt += `output { ${o.type} { ${o.config || ''} } }\n` })
-                          Modal.info({ title: 'Logstash config preview', width: 700, content: (<pre style={{ whiteSpace: 'pre-wrap' }}>{txt}</pre>) })
-                        }}>Preview Logstash Config</Button>
-                      </Form.Item>
-                    </>
-                  )}
-
-                  {t === 'airflow' && (
-                    <>
-                      <Form.Item name="username" label="Username (optional)"><Input /></Form.Item>
-                      <Form.Item name="password" label="Password (optional)"><Input.Password /></Form.Item>
-                      <Form.Item name="token" label="Bearer Token (optional)"><Input /></Form.Item>
-                      <Form.Item name="path" label="API Path (optional)"><Input placeholder="e.g. /api/v1/health" /></Form.Item>
-                    </>
-                  )}
-
-                  {(t === 'postgresql' || t === 'mysql') && (
-                    <>
-                      <Form.Item name="conn_str" label="Connection string (optional)"><Input placeholder="e.g. postgresql://user:pass@host:5432/dbname" /></Form.Item>
-                      <Form.Item name="port" label="Port"><Input /></Form.Item>
-                      <Form.Item name="user" label="User"><Input /></Form.Item>
-                      <Form.Item name="password" label="Password"><Input.Password /></Form.Item>
-                      <Form.Item name="dbname" label="Database"><Input /></Form.Item>
-                      <Form.Item name="django_db" label="Django DB alias (optional)"><Input placeholder="e.g. default" /></Form.Item>
-                    </>
-                  )}
-                </>
-              )
-            }}
-          </Form.Item>
+          <Form.Item name="host" label="Host (http://...)" rules={[{ required: true, message: 'Elasticsearch host required' }]}><Input /></Form.Item>
+          <Form.Item name="index" label="Index" rules={[{ required: true, message: 'Elasticsearch index required' }]}><Input placeholder="alerts" /></Form.Item>
+          <Form.Item name="username" label="Username (optional)"><Input /></Form.Item>
+          <Form.Item name="password" label="Password (optional)"><Input.Password /></Form.Item>
+          <Form.Item name="path" label="Health Check Path"><Input placeholder="/_cluster/health" /></Form.Item>
           <Form.Item name="notes" label="Notes"><Input.TextArea rows={3} /></Form.Item>
           <Form.Item>
             <Space>

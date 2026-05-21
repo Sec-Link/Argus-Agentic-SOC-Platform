@@ -22,7 +22,7 @@ from django.db.models import Q
 from django.utils import timezone as django_timezone
 
 from .models import Alert, ESIntegrationConfig, AlertSyncSchedule
-from .services import _http_search, _detect_timestamp_field, _resolve_timestamp_sort_field, _ensure_alert_identity
+from .services import _http_search, _detect_timestamp_field, _resolve_timestamp_sort_field, _ensure_alert_identity, _extract_alert_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +205,7 @@ def _create_or_update_index_table(index: str, docs: List[Dict[str, Any]]) -> Dic
             continue
 
         defaults = {
-            'timestamp': _parse_es_timestamp(doc.get('timestamp')),
+            'timestamp': _extract_alert_timestamp(doc),
             'severity': doc.get('severity'),
             'message': doc.get('message'),
             'source_index': doc.get('source_index') or index_name,
@@ -543,7 +543,7 @@ def sync_es_alerts_to_db(
                 doc['source_index'] = index_name
 
                 defaults = {
-                    'timestamp': _parse_es_timestamp(doc.get('timestamp')),
+                    'timestamp': _extract_alert_timestamp(doc, sort_field),
                     'severity': doc.get('severity'),
                     'message': doc.get('message'),
                     'source_index': index_name,
@@ -697,4 +697,3 @@ def run_alert_sync_by_schedule(*, force: bool = False) -> Dict[str, Any]:
         schedule.last_error = str(exc)
         schedule.save(update_fields=['last_run_at', 'last_status', 'last_error', 'updated_at'])
         raise
-

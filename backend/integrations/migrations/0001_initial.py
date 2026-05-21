@@ -2,13 +2,6 @@
 from django.db import migrations, models
 import uuid
 
-# -----------------------------
-# 中文注释：
-# 该迁移是为 Integration 模型创建初始表结构的自动生成迁移文件。
-# - 包含 Integration 模型的字段定义（id,name,type,config,created_at,updated_at）
-# - 迁移文件用于在目标数据库上创建相应表结构，不应随意修改以避免与 ORM 不一致
-# -----------------------------
-
 class Migration(migrations.Migration):
     initial = True
 

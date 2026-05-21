@@ -10,7 +10,7 @@ import json
 import os
 import hashlib
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import List, Dict, Tuple
 import logging
 import inspect
@@ -66,20 +66,99 @@ def _alerts_queryset_for_active_index():
 
 
 def _parse_es_timestamp(value) -> datetime | None:
-    """Parse timestamps like `2025-12-16T12:00:00Z` (with/without fractions)."""
+    """Parse common ES timestamps into timezone-aware datetimes."""
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
+        return timezone.make_aware(value, dt_timezone.utc) if timezone.is_naive(value) else value
+    if isinstance(value, (int, float)):
+        try:
+            # ES/event pipelines may store epoch seconds or milliseconds.
+            ts = float(value)
+            if ts > 10_000_000_000:
+                ts = ts / 1000
+            return datetime.fromtimestamp(ts, tz=dt_timezone.utc)
+        except Exception:
+            return None
     if not isinstance(value, str):
         value = str(value)
     raw = value.strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return _parse_es_timestamp(int(raw))
     if raw.endswith('Z'):
         raw = raw[:-1] + '+00:00'
     try:
-        return datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(raw)
+        return timezone.make_aware(parsed, dt_timezone.utc) if timezone.is_naive(parsed) else parsed
     except Exception:
         return None
+
+
+def _get_source_field_value(doc: Dict, field: str):
+    """Get a value from a source document, including dotted paths and `.keyword` fields."""
+    if not isinstance(doc, dict) or not field:
+        return None
+    path = field[:-8] if field.endswith('.keyword') else field
+    cur = doc
+    for part in path.split('.'):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+        if cur is None:
+            return None
+    return cur
+
+
+def _extract_alert_timestamp(doc: Dict, preferred_field: str | None = None) -> datetime | None:
+    fields = [
+        preferred_field,
+        'timestamp',
+        '@timestamp',
+        'event_time',
+        'event.created',
+        'event.ingested',
+        'data.timestamp',
+        'data.@timestamp',
+        'source.timestamp',
+        'source.@timestamp',
+    ]
+    seen = set()
+    for field in fields:
+        if not field or field in seen:
+            continue
+        seen.add(field)
+        value = _get_source_field_value(doc, field)
+        parsed = _parse_es_timestamp(value)
+        if parsed:
+            return parsed
+    return None
+
+
+def _backfill_missing_alert_timestamps(qs, preferred_field: str | None = None, limit: int = 5000) -> int:
+    """Repair previously ingested alerts whose timestamp was not normalized.
+
+    Older sync code only looked for a top-level `timestamp` field. Many ES
+    payloads use `@timestamp`, `event.created`, epoch milliseconds, or nested
+    timestamp keys, so those rows were saved but excluded from trend charts.
+    """
+    rows = list(
+        qs.filter(timestamp__isnull=True)
+        .exclude(source_data__isnull=True)
+        .only('id', 'timestamp', 'source_data')[:limit]
+    )
+    updates: List[Alert] = []
+    for row in rows:
+        payload = row.source_data if isinstance(row.source_data, dict) else {}
+        parsed = _extract_alert_timestamp(payload, preferred_field)
+        if parsed:
+            row.timestamp = parsed
+            updates.append(row)
+
+    if updates:
+        Alert.objects.bulk_update(updates, ['timestamp'], batch_size=500)
+    return len(updates)
 
 
 def _coerce_int(value):
@@ -164,7 +243,7 @@ def _upsert_docs_to_db(docs: List[Dict]) -> None:
             doc['alert_id'] = alert_id
             doc['source_index'] = src_idx
             defaults = {
-                'timestamp': _parse_es_timestamp(doc.get('timestamp')),
+                'timestamp': _extract_alert_timestamp(doc),
                 'severity': doc.get('severity'),
                 'message': doc.get('message'),
                 'source_index': src_idx,
@@ -463,14 +542,6 @@ def _resolve_timestamp_sort_field(cfg: ESIntegrationConfig, detected_field: str,
     return None
 
 
-def _get_source_field_value(doc: Dict, field: str):
-    """Get value from document _source for a field name, handling '.keyword' by using base field."""
-    if not isinstance(doc, dict):
-        return None
-    base = field.split('.')[0]
-    return doc.get(base)
-
-
 class AlertService:
     @staticmethod
     def load_mock_alerts() -> List[Dict]:
@@ -747,6 +818,13 @@ class AlertService:
 
         try:
             qs = _alerts_queryset_for_active_index()
+            try:
+                repaired = _backfill_missing_alert_timestamps(qs, ts_field)
+                if repaired:
+                    logger.info('Backfilled %d alert timestamps for dashboard trend aggregation', repaired)
+            except Exception:
+                logger.exception('Failed to backfill missing alert timestamps before dashboard aggregation')
+
             total_alerts_db = qs.count()
             last_1h_alerts_db = qs.filter(timestamp__gte=cutoff_1h).count()
             data_source_count_db = qs.exclude(source_index__isnull=True).exclude(source_index='').values('source_index').distinct().count()
@@ -979,4 +1057,3 @@ class AlertService:
             'top_sources': top_sources,
             'top_rules': top_rules,
         }
-

@@ -739,26 +739,6 @@ export async function resolveSlaTicket(
   return res.data;
 }
 
-export async function getESConfig() {
-  const res = await client.get('/alerts/config/es/');
-  return res.data;
-}
-
-export async function setESConfig(payload: any) {
-  const res = await client.post('/alerts/config/es/', payload);
-  return res.data;
-}
-
-export async function getWebhookConfig() {
-  const res = await client.get('/alerts/config/webhook/');
-  return res.data;
-}
-
-export async function setWebhookConfig(payload: any) {
-  const res = await client.post('/alerts/config/webhook/', payload);
-  return res.data;
-}
-
 export async function fetchTicketPolicies() {
   const res = await client.get('/ticket-policies/');
   return res.data;
@@ -779,40 +759,10 @@ export async function deleteTicketPolicy(id: string) {
   return res.data;
 }
 
-export async function getDatasourceFields(table: string){
-  const r = await client.get(`/datasource/fields?table=${encodeURIComponent(table)}`)
-  return r.data
-}
-
-export async function listDatasources(){
-  const r = await client.get('/datasources/')
-  return r.data
-}
-
 // Dataset APIs removed — use DataSource + SQL preview instead
 
 export async function queryPreview(payload:any){
   const r = await client.post('/query/preview', payload)
-  return r.data
-}
-
-export async function createDatasource(payload:any){
-  const r = await client.post('/datasources/', payload)
-  return r.data
-}
-
-export async function updateDatasource(id:string, payload:any){
-  const r = await client.put(`/datasources/${id}/`, payload)
-  return r.data
-}
-
-export async function deleteDatasource(id:string){
-  const r = await client.delete(`/datasources/${id}/`)
-  return r.data
-}
-
-export async function testDatasource(payload:any){
-  const r = await client.post('/datasource/test', payload)
   return r.data
 }
 
@@ -821,23 +771,8 @@ export async function testIntegrationById(id: string){
   return r.data
 }
 
-export async function testDbConnection(payload: any){
-  const r = await client.post('/integrations/test_db', payload)
-  return r.data
-}
-
 export async function testEsIntegration(payload:any){
   const r = await client.post('/integrations/test_es', payload)
-  return r.data
-}
-
-export async function testLogstashIntegration(payload:any){
-  const r = await client.post('/integrations/test_logstash', payload)
-  return r.data
-}
-
-export async function testAirflowIntegration(payload:any){
-  const r = await client.post('/integrations/test_airflow', payload)
   return r.data
 }
 

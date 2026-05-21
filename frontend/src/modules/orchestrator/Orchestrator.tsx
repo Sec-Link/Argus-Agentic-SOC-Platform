@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react'
 import dayjs from 'dayjs'
-import { Card, Button, List, Modal, Form, Input, Select, message, InputNumber, DatePicker, Table } from 'antd'
+import { Card, Button, List, Modal, Form, Input, Select, message, InputNumber, DatePicker, Table, Popconfirm } from 'antd'
 import client from 'services/client'
 import { previewEsIntegration } from 'services/integrations'
 
@@ -21,6 +21,7 @@ export default function Orchestrator(){
   const [editingTask, setEditingTask] = useState<any | null>(null)
   const [form] = Form.useForm()
   const [runsModalTask, setRunsModalTask] = useState<any | null>(null)
+  const [logsModalRun, setLogsModalRun] = useState<any | null>(null)
   const [showPreviewDataModal, setShowPreviewDataModal] = useState(false)
   const [previewData, setPreviewData] = useState<any[] | null>(null)
   const [chartTaskId, setChartTaskId] = useState<string | number | null>(null)
@@ -247,23 +248,16 @@ export default function Orchestrator(){
   }
 
   const deleteTask = async (taskId: string) => {
-    Modal.confirm({
-      title: 'Delete task?',
-      content: 'This will remove the task and its runs. Continue?',
-      okText: 'Delete',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try{
-          await client.delete(`/orchestrator/tasks/${taskId}/`)
-          message.success('Task deleted')
-          fetch()
-          fetchRuns()
-        }catch(e:any){
-          const detail = e.response && e.response.data ? JSON.stringify(e.response.data) : String(e)
-          message.error(detail)
-        }
-      }
-    })
+    try{
+      await client.delete(`/orchestrator/tasks/${taskId}/`)
+      message.success('Task deleted')
+      if(chartTaskId === taskId) setChartTaskId(null)
+      fetch()
+      fetchRuns()
+    }catch(e:any){
+      const detail = e.response && e.response.data ? JSON.stringify(e.response.data) : String(e)
+      Modal.error({ title: 'Delete failed', content: detail })
+    }
   }
 
   const openRunsForTask = (task:any) => {
@@ -274,75 +268,85 @@ export default function Orchestrator(){
 
   const closeRunsModal = ()=> setRunsModalTask(null)
 
+  const openEditTask = (it:any) => {
+    setEditingTask(it)
+    const cfg = it.config || {}
+    const initial: any = { name: it.name, schedule: it.schedule }
+    initial.source_integration = cfg.source_integration
+    initial.dest_integration = cfg.dest_integration
+    initial.index = cfg.index
+    initial.limit = cfg.limit || 1000
+    if(cfg.query) initial.config = typeof cfg.query === 'string' ? cfg.query : JSON.stringify(cfg.query, null, 2)
+    if(cfg.timestamp_field) initial.timestamp_field = cfg.timestamp_field
+    if(cfg.timestamp_from) initial.timestamp_from = dayjs(cfg.timestamp_from)
+    if(cfg.timestamp_to) initial.timestamp_to = dayjs(cfg.timestamp_to)
+    if(cfg.timestamp_relative) initial.timestamp_relative = cfg.timestamp_relative
+    if (cfg.timestamp_from || cfg.timestamp_to) {
+      initial.time_selector = 'absolute'
+    } else if (cfg.timestamp_relative) {
+      if (typeof cfg.timestamp_relative === 'string') {
+        if (cfg.timestamp_relative === 'custom') {
+          initial.time_selector = 'custom_relative'
+        } else {
+          initial.time_selector = cfg.timestamp_relative
+        }
+      } else if (typeof cfg.timestamp_relative === 'object') {
+        initial.time_selector = 'custom_relative'
+        initial.timestamp_relative_custom_value = cfg.timestamp_relative.value
+        initial.timestamp_relative_custom_unit = cfg.timestamp_relative.unit
+      }
+    }
+    if (!initial.time_selector && cfg.query && cfg.query.query && cfg.query.query.range) {
+      const rangeObj = cfg.query.query.range
+      const rangeField = Object.keys(rangeObj || {})[0]
+      const rangeVal = rangeField ? rangeObj[rangeField] : null
+      const gte = rangeVal && rangeVal.gte
+      const lte = rangeVal && rangeVal.lte
+      if (!initial.timestamp_field && rangeField) initial.timestamp_field = rangeField
+      if (typeof gte === 'string' && typeof lte === 'string' && lte === 'now' && gte.startsWith('now-')) {
+        const rel = gte.replace('now-', '')
+        if (['1h','6h','24h','7d'].includes(rel)) {
+          initial.time_selector = rel
+        } else {
+          const m = rel.match(/^(\d+)([mhd])$/)
+          if (m) {
+            initial.time_selector = 'custom_relative'
+            initial.timestamp_relative_custom_value = Number(m[1])
+            initial.timestamp_relative_custom_unit = m[2]
+          }
+        }
+      } else if (gte || lte) {
+        initial.time_selector = 'absolute'
+        if (gte && typeof gte === 'string') initial.timestamp_from = dayjs(gte)
+        if (lte && typeof lte === 'string' && lte !== 'now') initial.timestamp_to = dayjs(lte)
+      }
+    }
+    form.resetFields()
+    form.setFieldsValue(initial)
+    setShowModal(true)
+  }
+
   return (
     <div style={{ padding: 12 }}>
       <Card title="Orchestrator">
-        <Button type="primary" onClick={()=>setShowModal(true)} style={{ marginBottom: 12 }}>New Task</Button>
+        <Button type="primary" onClick={()=>{ setEditingTask(null); form.resetFields(); setShowModal(true) }} style={{ marginBottom: 12 }}>New Task</Button>
         <List dataSource={items} renderItem={(it:any)=>(
           <List.Item actions={[
             <Button key="run" onClick={()=>runTask(it.id)}>Run</Button>,
             <Button key="runs" onClick={()=>openRunsForTask(it)}>View Runs</Button>,
-            <Button key="delete" danger onClick={()=>deleteTask(it.id)}>Delete</Button>
+            <Button key="edit" onClick={()=>openEditTask(it)}>Edit</Button>,
+            <Popconfirm
+              key="delete"
+              title="Delete task?"
+              description="This will remove the task and its runs."
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              onConfirm={()=>deleteTask(it.id)}
+            >
+              <Button danger>Delete</Button>
+            </Popconfirm>
           ]}>
-            <List.Item.Meta title={<a onClick={()=>{
-              // open modal for editing
-              setEditingTask(it)
-              // set form fields from task
-              const cfg = it.config || {}
-              const initial: any = { name: it.name, schedule: it.schedule }
-              // fill fields used by form
-              initial.source_integration = cfg.source_integration
-              initial.dest_integration = cfg.dest_integration
-              initial.index = cfg.index
-              initial.limit = cfg.limit || 1000
-              if(cfg.query) initial.config = typeof cfg.query === 'string' ? cfg.query : JSON.stringify(cfg.query, null, 2)
-              if(cfg.timestamp_field) initial.timestamp_field = cfg.timestamp_field
-              if(cfg.timestamp_from) initial.timestamp_from = dayjs(cfg.timestamp_from)
-              if(cfg.timestamp_to) initial.timestamp_to = dayjs(cfg.timestamp_to)
-              if(cfg.timestamp_relative) initial.timestamp_relative = cfg.timestamp_relative
-              if (cfg.timestamp_from || cfg.timestamp_to) {
-                initial.time_selector = 'absolute'
-              } else if (cfg.timestamp_relative) {
-                if (typeof cfg.timestamp_relative === 'string') {
-                  if (cfg.timestamp_relative === 'custom') {
-                    initial.time_selector = 'custom_relative'
-                  } else {
-                    initial.time_selector = cfg.timestamp_relative
-                  }
-                } else if (typeof cfg.timestamp_relative === 'object') {
-                  initial.time_selector = 'custom_relative'
-                  initial.timestamp_relative_custom_value = cfg.timestamp_relative.value
-                  initial.timestamp_relative_custom_unit = cfg.timestamp_relative.unit
-                }
-              }
-              if (!initial.time_selector && cfg.query && cfg.query.query && cfg.query.query.range) {
-                const rangeObj = cfg.query.query.range
-                const rangeField = Object.keys(rangeObj || {})[0]
-                const rangeVal = rangeField ? rangeObj[rangeField] : null
-                const gte = rangeVal && rangeVal.gte
-                const lte = rangeVal && rangeVal.lte
-                if (!initial.timestamp_field && rangeField) initial.timestamp_field = rangeField
-                if (typeof gte === 'string' && typeof lte === 'string' && lte === 'now' && gte.startsWith('now-')) {
-                  const rel = gte.replace('now-', '')
-                  if (['1h','6h','24h','7d'].includes(rel)) {
-                    initial.time_selector = rel
-                  } else {
-                    const m = rel.match(/^(\d+)([mhd])$/)
-                    if (m) {
-                      initial.time_selector = 'custom_relative'
-                      initial.timestamp_relative_custom_value = Number(m[1])
-                      initial.timestamp_relative_custom_unit = m[2]
-                    }
-                  }
-                } else if (gte || lte) {
-                  initial.time_selector = 'absolute'
-                  if (gte && typeof gte === 'string') initial.timestamp_from = dayjs(gte)
-                  if (lte && typeof lte === 'string' && lte !== 'now') initial.timestamp_to = dayjs(lte)
-                }
-              }
-              form.setFieldsValue(initial)
-              setShowModal(true)
-            }}>{it.name}</a>} description={<div>Type: {it.task_type} Schedule: {it.schedule}</div>} />
+            <List.Item.Meta title={<a onClick={()=>openEditTask(it)}>{it.name}</a>} description={<div>Type: {it.task_type} Schedule: {it.schedule}</div>} />
           </List.Item>
         )} />
       </Card>
@@ -369,9 +373,21 @@ export default function Orchestrator(){
         <List dataSource={runs.filter(r => runsModalTask ? r.task === runsModalTask.id : true)} renderItem={(r:any)=>(
           <List.Item>
             <List.Item.Meta title={`Run ${r.id} - ${r.status}`} description={r.started_at ? `started: ${r.started_at}` : ''} />
-            <Button onClick={()=>Modal.info({ title: `Run ${r.id} logs`, width: 800, content: (<pre style={{ whiteSpace: 'pre-wrap' }}>{r.logs}</pre>) })}>View Logs</Button>
+            <Button onClick={()=>setLogsModalRun(r)}>View Logs</Button>
           </List.Item>
         )} />
+      </Modal>
+
+      <Modal
+        open={!!logsModalRun}
+        title={logsModalRun ? `Run ${logsModalRun.id} logs` : 'Run logs'}
+        onCancel={()=>setLogsModalRun(null)}
+        footer={<Button onClick={()=>setLogsModalRun(null)}>Close</Button>}
+        width={800}
+      >
+        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 500, overflow: 'auto' }}>
+          {logsModalRun?.logs || 'No logs available.'}
+        </pre>
       </Modal>
 
       <Modal
@@ -386,7 +402,7 @@ export default function Orchestrator(){
         </pre>
       </Modal>
 
-      <Modal open={showModal} onCancel={()=>setShowModal(false)} onOk={save} title="New Task">
+      <Modal open={showModal} onCancel={()=>{ setShowModal(false); setEditingTask(null) }} onOk={save} title={editingTask ? 'Edit Task' : 'New Task'}>
         <Form form={form} layout="vertical" initialValues={{ schedule: '0 0 * * *', dest_integration: DJANGO_DEFAULT_DEST }}>
           <Form.Item name="name" label="Name" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="schedule" label="Cron (e.g. 0 0 * * *)" rules={[{ required: true }]}><Input /></Form.Item>
@@ -520,4 +536,3 @@ export default function Orchestrator(){
     </div>
   )
 }
-
