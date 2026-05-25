@@ -1363,3 +1363,125 @@ export async function testInterfaceEndpoint(id: string, payload?: Record<string,
   const r = await client.post(`/interfaces/endpoints/${id}/test/`, payload || { event: 'manual_test' });
   return r.data;
 }
+
+export type DetectionRuleItem = {
+  id: string;
+  name?: string;
+  type?: 'directory' | 'file' | string;
+  [key: string]: any;
+};
+
+export async function listDetectionRules(): Promise<DetectionRuleItem[]> {
+  const r = await client.get('/detections/rules/');
+  return r.data;
+}
+
+export async function getDetectionRule(id: string): Promise<{ yaml?: string; [key: string]: any }> {
+  const r = await client.get(`/detections/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function saveDetectionRule(id: string, yaml: string): Promise<any> {
+  const r = await client.post(`/detections/rules/${encodeURIComponent(id)}/`, { yaml });
+  return r.data;
+}
+
+export async function deleteDetectionRule(id: string): Promise<any> {
+  const r = await client.delete(`/detections/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function testDetectionRule(payload: {
+  rule: string;
+  options?: {
+    testType?: 'all' | 'schemaOnly' | 'countOnly';
+    days?: string | number;
+    alert?: boolean;
+    format?: 'json' | string;
+    maxResults?: number;
+  };
+}): Promise<any> {
+  const r = await client.post('/detections/test/', payload);
+  return r.data;
+}
+
+// Kibana Detection Engine rules
+export type KibanaDetectionRule = {
+  id: string;
+  rule_id?: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  risk_score?: number;
+  severity?: string;
+  description?: string;
+  index?: string[];
+  query?: string;
+  language?: string;
+  from?: string;
+  interval?: string;
+  tags?: string[];
+  [key: string]: any;
+};
+
+export async function listKibanaDetectionRules(params?: {
+  page?: number;
+  per_page?: number;
+  filter?: string;
+  sort_field?: string;
+  sort_order?: 'asc' | 'desc';
+}): Promise<{ data: KibanaDetectionRule[]; total: number }> {
+  const safePage = Number.isFinite(Number(params?.page)) && Number(params?.page) > 0
+    ? Math.floor(Number(params?.page))
+    : undefined;
+  const safePerPage = Number.isFinite(Number(params?.per_page)) && Number(params?.per_page) > 0
+    ? Math.floor(Number(params?.per_page))
+    : undefined;
+  const qp = new URLSearchParams();
+  if (safePage) qp.set('page', String(safePage));
+  if (safePerPage) qp.set('per_page', String(safePerPage));
+  if (params?.filter) qp.set('filter', params.filter);
+  if (params?.sort_field) qp.set('sort_field', params.sort_field);
+  if (params?.sort_order) qp.set('sort_order', params.sort_order);
+  const q = qp.toString();
+  const r = await client.get(`/detections/kibana/rules/${q ? `?${q}` : ''}`);
+  const body = r.data || {};
+  const data = Array.isArray(body.data) ? body.data : [];
+  const total = Number(body.total || data.length || 0);
+  return { data, total };
+}
+
+export async function getKibanaDetectionRule(id: string): Promise<KibanaDetectionRule> {
+  const r = await client.get(`/detections/kibana/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function createKibanaDetectionRule(payload: Record<string, any>): Promise<KibanaDetectionRule> {
+  const r = await client.post('/detections/kibana/rules/', payload);
+  return r.data;
+}
+
+export async function updateKibanaDetectionRule(id: string, payload: Record<string, any>): Promise<KibanaDetectionRule> {
+  const r = await client.put(`/detections/kibana/rules/${encodeURIComponent(id)}/`, payload);
+  return r.data;
+}
+
+export async function patchKibanaDetectionRule(id: string, payload: Record<string, any>): Promise<KibanaDetectionRule> {
+  const r = await client.patch(`/detections/kibana/rules/${encodeURIComponent(id)}/`, payload);
+  return r.data;
+}
+
+export async function deleteKibanaDetectionRule(id: string): Promise<any> {
+  const r = await client.delete(`/detections/kibana/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function previewKibanaDetectionRule(payload: Record<string, any>): Promise<any> {
+  const r = await client.post('/detections/kibana/rules/preview/', payload);
+  return r.data;
+}
+
+export async function listKibanaConnectors(): Promise<Array<{ id: string; name: string; connector_type_id?: string }>> {
+  const r = await client.get('/detections/kibana/connectors/');
+  return Array.isArray(r.data) ? r.data : [];
+}

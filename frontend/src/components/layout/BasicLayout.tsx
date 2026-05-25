@@ -168,7 +168,7 @@ export default function BasicLayout({
     if (['dashboard', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
     else if (['tickets', 'assets'].includes(selectedKey)) setOpenKeys(['investigationGroup']);
     else if (['integrations', 'datasources', 'dashboards'].includes(selectedKey)) setOpenKeys(['dataPlatformGroup']);
-    else if (['correlation', 'orchestrator', 'interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
+    else if (['detection', 'correlation', 'orchestrator', 'interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
       setOpenKeys(['automationGroup']);
     } else if (['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs'].includes(selectedKey)) {
       setOpenKeys(['systemManagementGroup']);
@@ -193,6 +193,7 @@ export default function BasicLayout({
         { key: 'orchestrator' as RouteKey, label: 'Orchestrator' },
         { key: 'interfaces' as RouteKey, label: 'Interfaces' },
         { key: 'correlation' as RouteKey, label: 'Correlation' },
+        { key: 'detection' as RouteKey, label: 'Detection' },
         { key: 'workflows' as RouteKey, label: 'Workflows' },
         { key: 'workflow-executions' as RouteKey, label: 'Workflow Executions' },
         { key: 'permissions' as RouteKey, label: 'Access Management' },
@@ -212,6 +213,7 @@ export default function BasicLayout({
       'Monitoring',
       'Investigation',
       'Detection & Automation',
+      'Detection',
       'Access Management',
       'Correlation',
       'Orchestrator',

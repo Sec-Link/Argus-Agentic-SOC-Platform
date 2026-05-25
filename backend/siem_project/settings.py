@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'orchestrator',
     'workflows',
     'workflow_interfaces',
+    'detections',
     'django_scheduled_tasks',
 ]
 
@@ -193,6 +194,16 @@ TASKS = {
 
 # Orchestrator schedule polling window (seconds).
 ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS = int(os.getenv('ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS', '30'))
+
+# ElastAlert2 Server proxy settings
+ELASTALERT2_SERVER_BASE_URL = os.getenv('ELASTALERT2_SERVER_BASE_URL', 'http://localhost:3030').rstrip('/')
+
+# Kibana Detection Engine proxy settings
+KIBANA_BASE_URL = os.getenv('KIBANA_BASE_URL', '').rstrip('/')
+KIBANA_API_KEY = os.getenv('KIBANA_API_KEY', '')
+KIBANA_USERNAME = os.getenv('KIBANA_USERNAME', '')
+KIBANA_PASSWORD = os.getenv('KIBANA_PASSWORD', '')
+KIBANA_SPACE = os.getenv('KIBANA_SPACE', 'default')
 
 
 # OTP/Auth Registration settings

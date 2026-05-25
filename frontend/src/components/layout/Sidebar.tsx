@@ -49,6 +49,7 @@ function iconByKey(key: RouteKey) {
   if (key === 'orchestrator') return <DeploymentUnitOutlined />;
   if (key === 'interfaces') return <ApiOutlined />;
   if (key === 'correlation') return <LineChartOutlined />;
+  if (key === 'detection') return <BellOutlined />;
   if (key === 'workflows') return <BranchesOutlined />;
   if (key === 'workflow-executions') return <RadarChartOutlined />;
   if (key === 'permissions') return <LockOutlined />;
@@ -97,6 +98,7 @@ export default function Sidebar({
     orchestrator: labelOverrides.orchestrator || 'Orchestrator',
     interfaces: labelOverrides.interfaces || 'Interfaces',
     correlation: labelOverrides.correlation || 'Correlation',
+    detection: labelOverrides.detection || 'Detection',
     permissions: labelOverrides.permissions || 'Access Management',
     'registration-approvals': labelOverrides['registration-approvals'] || 'Registration Approvals',
     'audit-logs': labelOverrides['audit-logs'] || 'Audit Logs',
@@ -129,7 +131,7 @@ export default function Sidebar({
       key: 'automationGroup',
       title: 'Detection & Automation',
       icon: <BranchesOutlined />,
-      items: ['correlation', 'orchestrator', 'interfaces', 'workflows', 'workflow-executions'],
+      items: ['detection', 'correlation', 'orchestrator', 'interfaces', 'workflows', 'workflow-executions'],
     },
     {
       key: 'systemManagementGroup',

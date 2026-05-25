@@ -9,6 +9,7 @@ export type RouteKey =
   | 'orchestrator'
   | 'interfaces'
   | 'correlation'
+  | 'detection'
   | 'permissions'
   | 'registration-approvals'
   | 'audit-logs'
@@ -28,6 +29,7 @@ export const permissionByKey: Record<RouteKey, string | undefined> = {
   orchestrator: 'orchestrator.view_task',
   interfaces: 'workflow_interfaces.view_interfaceendpoint',
   correlation: 'correlation.view_correlationpolicy',
+  detection: 'integrations.view_integration',
   permissions: 'accounts.view_user',
   'registration-approvals': 'accounts.view_user',
   'audit-logs': 'accounts.view_user',
@@ -48,6 +50,7 @@ export const keyToPath: Record<RouteKey, string> = {
   orchestrator: '/settings/orchestrator',
   interfaces: '/settings/interfaces',
   correlation: '/settings/correlation',
+  detection: '/settings/detection',
   permissions: '/settings/permissions',
   'registration-approvals': '/settings/registration-approvals',
   'audit-logs': '/settings/audit-logs',
@@ -81,6 +84,7 @@ export function resolveRouteKey(pathname: string): { key: RouteKey; ticketNumber
   if (p === '/settings/orchestrator') return { key: 'orchestrator' };
   if (p === '/settings/interfaces') return { key: 'interfaces' };
   if (p === '/settings/correlation') return { key: 'correlation' };
+  if (p === '/settings/detection') return { key: 'detection' };
   if (p === '/settings/permissions') return { key: 'permissions' };
   if (p === '/settings/registration-approvals') return { key: 'registration-approvals' };
   if (p === '/settings/audit-logs') return { key: 'audit-logs' };
