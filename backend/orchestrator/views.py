@@ -1,7 +1,9 @@
 import os
 import json
+import uuid
 from django.conf import settings
-from rest_framework import viewsets, status
+from django.db import transaction
+from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Task, TaskRun
@@ -39,6 +41,29 @@ class TaskViewSet(viewsets.ModelViewSet):
         cfg["table"] = self.DEST_TABLE
         return cfg
 
+    def _get_deleted_history_task(self, task: Task) -> Task:
+        """Return a stable archive task used to preserve run history on delete.
+
+        This avoids relying on the live database FK behavior during rollout,
+        which may still be using older constraints until migrations are applied.
+        """
+        archive_name = f"[deleted] {task.name} {task.id}"
+        archive_defaults = {
+            "task_type": task.task_type or "deleted_task_history",
+            "schedule": task.schedule or "@deleted",
+            "config": {
+                "archived_task_id": str(task.id),
+                "archived_task_name": task.name,
+                "archived": True,
+                "table": self.DEST_TABLE,
+            },
+        }
+        archive_task, _ = Task.objects.get_or_create(
+            name=archive_name[:200],
+            defaults=archive_defaults,
+        )
+        return archive_task
+
     def perform_create(self, serializer):
         task = serializer.save(config=self._normalize_config(serializer.validated_data.get("config")))
         # generate task config and DAG immediately
@@ -58,6 +83,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             TaskRequestLog.objects.create(task=task, user=str(self.request.user) if getattr(self.request, 'user', None) else None, request_body=self.request.data)
         except Exception:
             pass
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            archive_task = self._get_deleted_history_task(instance)
+            TaskRun.objects.filter(task=instance).update(task=archive_task)
+            TaskRequestLog.objects.filter(task=instance).update(task=None)
+            instance.delete()
 
     def _write_task_request_log(self, request_data, task: Task = None):
         try:
@@ -161,9 +193,28 @@ class TaskViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class TaskRunViewSet(viewsets.ReadOnlyModelViewSet):
+class TaskRunViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelViewSet):
     queryset = TaskRun.objects.all().order_by('-started_at')
     serializer_class = TaskRunSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        task_id = (self.request.query_params.get('task') or '').strip()
+        include_deleted = (self.request.query_params.get('include_deleted') or '').strip().lower()
+        if task_id:
+            qs = qs.filter(task_id=task_id)
+        elif include_deleted not in {'1', 'true', 'yes'}:
+            qs = qs.filter(task__isnull=False)
+            qs = qs.exclude(task__name__startswith='[deleted] ')
+        return qs
+
+    @action(detail=False, methods=['delete'], url_path='clear')
+    def clear(self, request):
+        task_id = (request.query_params.get('task') or '').strip()
+        if not task_id:
+            return Response({'detail': 'task query parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        deleted_count, _ = TaskRun.objects.filter(task_id=task_id).delete()
+        return Response({'deleted': deleted_count}, status=status.HTTP_200_OK)
 
 
 class TaskRequestLogViewSet(viewsets.ReadOnlyModelViewSet):

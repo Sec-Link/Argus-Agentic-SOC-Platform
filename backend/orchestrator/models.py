@@ -35,8 +35,8 @@ class Task(models.Model):
 class TaskRun(models.Model):
     # 每次任务执行的唯一标识
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # 关联到对应的 Task，Task 被删除时同时删除其运行记录
-    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='runs')
+    # 关联到对应的 Task；删除 Task 时保留运行历史，便于审计与排障
+    task = models.ForeignKey(Task, on_delete=models.SET_NULL, null=True, blank=True, related_name='runs')
     # 开始/结束时间，可为 null（未开始或未结束）
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)

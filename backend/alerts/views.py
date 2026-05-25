@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
+from django.utils.dateparse import parse_datetime
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -56,7 +58,24 @@ class AlertDashboardView(APIView):
 
     def get(self, request):
         try:
-            data = AlertService.aggregate_dashboard(force_db=True)
+            all_time_raw = request.GET.get('all_time')
+            start_time_raw = request.GET.get('start_time')
+            end_time_raw = request.GET.get('end_time')
+            all_time = _boolify(all_time_raw, default=False)
+
+            start_time = None if all_time else (parse_datetime(start_time_raw) if start_time_raw else None)
+            end_time = None if all_time else (parse_datetime(end_time_raw) if end_time_raw else None)
+            if start_time and timezone.is_naive(start_time):
+                start_time = timezone.make_aware(start_time, timezone.get_current_timezone())
+            if end_time and timezone.is_naive(end_time):
+                end_time = timezone.make_aware(end_time, timezone.get_current_timezone())
+
+            data = AlertService.aggregate_dashboard(
+                force_db=True,
+                start_time=start_time,
+                end_time=end_time,
+                all_time=all_time,
+            )
             return Response(data)
         except Exception as exc:
             logger.exception('Error in dashboard_alerts: %s', exc)

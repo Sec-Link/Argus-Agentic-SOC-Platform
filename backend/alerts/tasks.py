@@ -22,9 +22,36 @@ from django.db.models import Q
 from django.utils import timezone as django_timezone
 
 from .models import Alert, ESIntegrationConfig, AlertSyncSchedule
-from .services import _http_search, _detect_timestamp_field, _resolve_timestamp_sort_field, _ensure_alert_identity, _extract_alert_timestamp
+from .services import _http_search, _detect_timestamp_field, _resolve_timestamp_sort_field, _ensure_alert_identity, _extract_alert_timestamp, _normalize_alert_severity
 
 logger = logging.getLogger(__name__)
+
+def _looks_unresolved_template(value: object) -> bool:
+    if value is None:
+        return False
+    s = str(value)
+    return '{{' in s and '}}' in s
+
+
+def _sanitize_doc(doc):
+    if isinstance(doc, dict):
+        out = {}
+        for k, v in doc.items():
+            cleaned = _sanitize_doc(v)
+            if cleaned is None:
+                continue
+            out[k] = cleaned
+        return out
+    if isinstance(doc, list):
+        cleaned_list = []
+        for item in doc:
+            cleaned_item = _sanitize_doc(item)
+            if cleaned_item is not None:
+                cleaned_list.append(cleaned_item)
+        return cleaned_list
+    if _looks_unresolved_template(doc):
+        return None
+    return doc
 
 
 def _fetch_all_docs_via_scroll(
@@ -206,7 +233,7 @@ def _create_or_update_index_table(index: str, docs: List[Dict[str, Any]]) -> Dic
 
         defaults = {
             'timestamp': _extract_alert_timestamp(doc),
-            'severity': doc.get('severity'),
+            'severity': _normalize_alert_severity(doc.get('severity')),
             'message': doc.get('message'),
             'source_index': doc.get('source_index') or index_name,
             'rule_id': doc.get('rule_id'),
@@ -541,10 +568,13 @@ def sync_es_alerts_to_db(
                 alert_id = _ensure_alert_identity(doc, index_name)
                 doc['alert_id'] = alert_id
                 doc['source_index'] = index_name
+                clean_doc = _sanitize_doc(doc if isinstance(doc, dict) else {})
+                parsed_ts = _extract_alert_timestamp(clean_doc or doc, sort_field)
 
                 defaults = {
-                    'timestamp': _extract_alert_timestamp(doc, sort_field),
-                    'severity': doc.get('severity'),
+                    # Enforce non-null valid timestamp for trend compatibility.
+                    'timestamp': parsed_ts or django_timezone.now(),
+                    'severity': _normalize_alert_severity(doc.get('severity')),
                     'message': doc.get('message'),
                     'source_index': index_name,
                     'rule_id': doc.get('rule_id'),
@@ -552,7 +582,7 @@ def sync_es_alerts_to_db(
                     'status': _coerce_int(doc.get('status')),
                     'description': doc.get('description'),
                     'category': doc.get('category'),
-                    'source_data': {**doc, 'alert_id': alert_id},
+                    'source_data': {**(clean_doc or {}), **doc, 'alert_id': alert_id},
                 }
 
                 with transaction.atomic():

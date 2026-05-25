@@ -18,7 +18,7 @@ class Alert(models.Model):
 
     alert_id = models.CharField(max_length=64, null=True, blank=True)
     timestamp = models.DateTimeField(null=True, blank=True)
-    severity = models.CharField(max_length=16, null=True, blank=True)
+    severity = models.CharField(max_length=64, null=True, blank=True)
     message = models.TextField(null=True, blank=True)
     source_index = models.CharField(max_length=64, null=True, blank=True)
 

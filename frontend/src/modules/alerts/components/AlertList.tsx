@@ -7,6 +7,7 @@ const { Text } = Typography;
 
 const normalizeAlertSeverity = (sev?: string): 'critical' | 'high' | 'medium' | 'low' | 'unknown' => {
   const s = String(sev || '').trim().toLowerCase();
+  if (s.includes('{{') || s.includes('}}')) return 'unknown';
   if (!s) return 'unknown';
   if (['critical', 'fatal', 'emergency', 'panic', 'crit'].includes(s)) return 'critical';
   if (['high', 'error', 'severe'].includes(s)) return 'high';
@@ -41,14 +42,16 @@ const pick = (obj: any, keys: string[]): any => {
 const normalizeText = (value: any) => {
   if (value === undefined || value === null) return '-';
   const txt = String(value).trim();
-  if (!txt) return '-';
+  if (!txt || txt.includes('{{') || txt.includes('}}')) return '-';
   return txt;
 };
 
 const formatTime = (value: any) => {
-  if (value === undefined || value === null || String(value).trim() === '') return '-';
-  const dt = new Date(String(value));
-  if (Number.isNaN(dt.getTime())) return String(value);
+  if (value === undefined || value === null || String(value).trim() === '') return 'Unknown Time';
+  const raw = String(value).trim();
+  if (raw.includes('{{') || raw.includes('}}')) return 'Unknown Time';
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return 'Unknown Time';
   return dt.toLocaleString();
 };
 

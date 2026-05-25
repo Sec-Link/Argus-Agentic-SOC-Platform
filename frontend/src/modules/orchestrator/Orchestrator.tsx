@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react'
 import dayjs from 'dayjs'
-import { Card, Button, List, Modal, Form, Input, Select, message, InputNumber, DatePicker, Table, Popconfirm } from 'antd'
+import { Card, Button, List, Modal, Form, Input, Select, message, InputNumber, DatePicker, Table, Popconfirm, Tag } from 'antd'
 import client from 'services/client'
 import { previewEsIntegration } from 'services/integrations'
 
@@ -27,6 +27,10 @@ export default function Orchestrator(){
   const [chartTaskId, setChartTaskId] = useState<string | number | null>(null)
   const DJANGO_DEFAULT_DEST = '__django_default__'
   const DEST_TABLE = 'alerts_alert'
+  const visibleItems = useMemo(
+    () => items.filter((it:any) => !String(it?.name || '').startsWith('[deleted] ')),
+    [items]
+  )
 
   // compute ISO timestamps for lower and upper bounds based on absolute or relative selectors
   // Input may include: timestamp_from, timestamp_to, timestamp_relative, timestamp_relative_custom_value/unit
@@ -100,12 +104,23 @@ export default function Orchestrator(){
   useEffect(()=>{ fetch() }, [])
 
   useEffect(()=>{ fetchIntegrations() }, [])
-  useEffect(()=>{ fetchRuns() }, [])
+  useEffect(()=>{ fetchRuns({ includeDeleted: true }) }, [])
   useEffect(()=>{
-    if(!chartTaskId && items.length){
-      setChartTaskId(items[0].id)
+    const intervalId = window.setInterval(() => {
+      fetch()
+      fetchRuns({ includeDeleted: true })
+    }, 5000)
+    return () => window.clearInterval(intervalId)
+  }, [])
+  useEffect(()=>{
+    if(!chartTaskId && visibleItems.length){
+      setChartTaskId(visibleItems[0].id)
+    }else if(chartTaskId && visibleItems.length && !visibleItems.some((it:any) => String(it.id) === String(chartTaskId))){
+      setChartTaskId(visibleItems[0].id)
+    }else if(chartTaskId && visibleItems.length === 0){
+      setChartTaskId(null)
     }
-  }, [items, chartTaskId])
+  }, [visibleItems, chartTaskId])
 
   const parsePolicyMetrics = (logs?: string) => {
     if(!logs) return null
@@ -126,28 +141,60 @@ export default function Orchestrator(){
     return Number(m[1])
   }
 
+  const parseSyncMetrics = (logs?: string) => {
+    if(!logs) return null
+    const m = logs.match(/fetched=(\d+)\s+inserted=(\d+)\s+updated=(\d+)/i)
+    if(!m) return null
+    return {
+      fetched: Number(m[1]),
+      inserted: Number(m[2]),
+      updated: Number(m[3]),
+    }
+  }
+
+  const statusColor = (status?: string) => {
+    const s = String(status || '').toLowerCase()
+    if(s === 'running' || s === 'pending') return 'processing'
+    if(s === 'success' || s === 'completed') return 'success'
+    if(s === 'failed' || s === 'error') return 'error'
+    return 'default'
+  }
+
+  const latestRunByTask = useMemo(() => {
+    const byTask: Record<string, any> = {}
+    for(const run of runs){
+      const taskId = String(run.task || '')
+      if(!taskId) continue
+      const current = byTask[taskId]
+      const runTime = dayjs(run.started_at || run.finished_at || run.created_at || 0).valueOf()
+      const currentTime = current ? dayjs(current.started_at || current.finished_at || current.created_at || 0).valueOf() : -1
+      if(!current || runTime > currentTime) byTask[taskId] = run
+    }
+    return byTask
+  }, [runs])
+
   const chartData = useMemo(() => {
     if(!chartTaskId) return []
-    const filtered = runs.filter(r => r.task === chartTaskId)
+    const filtered = runs.filter(r => String(r.task || r.task_id || '') === String(chartTaskId))
     const rows = filtered
       .map((r:any) => {
         const metrics = parsePolicyMetrics(r.logs)
         const imported = parseImportedCount(r.logs)
+        const syncMetrics = parseSyncMetrics(r.logs)
         const ts = r.finished_at || r.started_at || r.created_at
-        if(!metrics && imported === null) return null
         if(!ts) return null
         return {
           key: r.id,
           time: dayjs(ts).format('YYYY-MM-DD HH:mm:ss'),
-          matched: metrics?.matched ?? 0,
-          created: metrics?.created ?? 0,
-          attached: metrics?.attached ?? 0,
-          skipped: metrics?.skipped ?? 0,
-          imported: imported ?? 0,
+          matched: metrics?.matched ?? syncMetrics?.fetched ?? '-',
+          created: metrics?.created ?? syncMetrics?.inserted ?? '-',
+          attached: metrics?.attached ?? syncMetrics?.updated ?? '-',
+          skipped: metrics?.skipped ?? '-',
+          imported: imported ?? syncMetrics?.fetched ?? '-',
           status: r.status,
         }
       })
-      .filter((row): row is { key: any; time: string; matched: number; created: number; attached: number; skipped: number; imported: number; status: any } => row !== null)
+      .filter((row): row is { key: any; time: string; matched: number | string; created: number | string; attached: number | string; skipped: number | string; imported: number | string; status: any } => row !== null)
     return rows
   }, [runs, chartTaskId])
   const tableColumns = useMemo(() => ([
@@ -157,7 +204,7 @@ export default function Orchestrator(){
     { title: 'Appended', dataIndex: 'attached', key: 'attached' },
     { title: 'Skipped', dataIndex: 'skipped', key: 'skipped' },
     { title: 'Imported', dataIndex: 'imported', key: 'imported' },
-    { title: 'Status', dataIndex: 'status', key: 'status' },
+    { title: 'Status', dataIndex: 'status', key: 'status', render: (value:string) => <Tag color={statusColor(value)}>{value || 'unknown'}</Tag> },
   ]), [])
 
   const save = async ()=>{
@@ -222,13 +269,14 @@ export default function Orchestrator(){
       setShowModal(false)
       setEditingTask(null)
       fetch()
-      fetchRuns()
+      fetchRuns({ includeDeleted: true })
     }catch(e:any){ message.error(String(e)) }
   }
 
-  const fetchRuns = async ()=>{
+  const fetchRuns = async (opts?: { includeDeleted?: boolean })=>{
     try{
-      const r = await client.get('/orchestrator/task_runs/')
+      const suffix = opts?.includeDeleted ? '?include_deleted=1' : ''
+      const r = await client.get(`/orchestrator/task_runs/${suffix}`)
       setRuns(r.data || [])
     }catch(e){ setRuns([]) }
   }
@@ -240,7 +288,7 @@ export default function Orchestrator(){
   // Run object includes id, status, logs; show in a modal
   Modal.info({ title: `Task run ${run.id} - ${run.status}`, width: 800, content: (<pre style={{ whiteSpace: 'pre-wrap' }}>{run.logs}</pre>) })
       fetch()
-      fetchRuns()
+      fetchRuns({ includeDeleted: true })
     }catch(e:any){
       const detail = e.response && e.response.data ? JSON.stringify(e.response.data) : String(e)
       Modal.error({ title: 'Run failed', content: detail })
@@ -251,9 +299,14 @@ export default function Orchestrator(){
     try{
       await client.delete(`/orchestrator/tasks/${taskId}/`)
       message.success('Task deleted')
-      if(chartTaskId === taskId) setChartTaskId(null)
+      if(String(chartTaskId) === String(taskId)) setChartTaskId(null)
+      if(runsModalTask && String(runsModalTask.id) === String(taskId)) setRunsModalTask(null)
+      if(editingTask && String(editingTask.id) === String(taskId)){
+        setEditingTask(null)
+        setShowModal(false)
+      }
       fetch()
-      fetchRuns()
+      fetchRuns({ includeDeleted: true })
     }catch(e:any){
       const detail = e.response && e.response.data ? JSON.stringify(e.response.data) : String(e)
       Modal.error({ title: 'Delete failed', content: detail })
@@ -263,10 +316,22 @@ export default function Orchestrator(){
   const openRunsForTask = (task:any) => {
     setRunsModalTask(task)
     // ensure latest runs
-    fetchRuns()
+    fetchRuns({ includeDeleted: true })
   }
 
   const closeRunsModal = ()=> setRunsModalTask(null)
+
+  const clearRunsForTask = async (taskId: string) => {
+    try{
+      await client.delete(`/orchestrator/task_runs/clear/?task=${encodeURIComponent(taskId)}`)
+      setLogsModalRun(null)
+      message.success('Task runs cleared')
+      fetchRuns({ includeDeleted: true })
+    }catch(e:any){
+      const detail = e.response && e.response.data ? JSON.stringify(e.response.data) : String(e)
+      Modal.error({ title: 'Clear task runs failed', content: detail })
+    }
+  }
 
   const openEditTask = (it:any) => {
     setEditingTask(it)
@@ -330,7 +395,7 @@ export default function Orchestrator(){
     <div style={{ padding: 12 }}>
       <Card title="Orchestrator">
         <Button type="primary" onClick={()=>{ setEditingTask(null); form.resetFields(); setShowModal(true) }} style={{ marginBottom: 12 }}>New Task</Button>
-        <List dataSource={items} renderItem={(it:any)=>(
+        <List dataSource={visibleItems} renderItem={(it:any)=>(
           <List.Item actions={[
             <Button key="run" onClick={()=>runTask(it.id)}>Run</Button>,
             <Button key="runs" onClick={()=>openRunsForTask(it)}>View Runs</Button>,
@@ -341,12 +406,26 @@ export default function Orchestrator(){
               description="This will remove the task and its runs."
               okText="Delete"
               okButtonProps={{ danger: true }}
+              placement="leftTop"
               onConfirm={()=>deleteTask(it.id)}
             >
               <Button danger>Delete</Button>
             </Popconfirm>
           ]}>
-            <List.Item.Meta title={<a onClick={()=>openEditTask(it)}>{it.name}</a>} description={<div>Type: {it.task_type} Schedule: {it.schedule}</div>} />
+            <List.Item.Meta
+              title={<a onClick={()=>openEditTask(it)}>{it.name}</a>}
+              description={
+                <div>
+                  Type: {it.task_type} Schedule: {it.schedule}
+                  {latestRunByTask[String(it.id)] && (
+                    <span style={{ marginLeft: 12 }}>
+                      Latest run: <Tag color={statusColor(latestRunByTask[String(it.id)].status)}>{latestRunByTask[String(it.id)].status}</Tag>
+                      {latestRunByTask[String(it.id)].started_at ? dayjs(latestRunByTask[String(it.id)].started_at).format('YYYY-MM-DD HH:mm:ss') : ''}
+                    </span>
+                  )}
+                </div>
+              }
+            />
           </List.Item>
         )} />
       </Card>
@@ -357,7 +436,7 @@ export default function Orchestrator(){
           placeholder="Select task"
           value={chartTaskId ?? undefined}
           onChange={setChartTaskId}
-          options={items.map((it:any) => ({ label: it.name, value: it.id }))}
+          options={visibleItems.map((it:any) => ({ label: it.name, value: it.id }))}
         />
       }>
         <Table
@@ -365,15 +444,39 @@ export default function Orchestrator(){
           columns={tableColumns}
           dataSource={chartData}
           pagination={{ pageSize: 10 }}
-          locale={{ emptyText: 'No matched/created/skipped metrics found for this task.' }}
+          locale={{ emptyText: 'No runs found for this task yet.' }}
         />
       </Card>
 
-      <Modal open={!!runsModalTask} onCancel={closeRunsModal} footer={null} title={runsModalTask ? `Runs for ${runsModalTask.name}` : 'Runs'}>
-        <List dataSource={runs.filter(r => runsModalTask ? r.task === runsModalTask.id : true)} renderItem={(r:any)=>(
+      <Modal
+        open={!!runsModalTask}
+        onCancel={closeRunsModal}
+        footer={null}
+        title={runsModalTask ? `Runs for ${runsModalTask.name}` : 'Runs'}
+      >
+        {runsModalTask && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+            <Popconfirm
+              title="Clear task runs?"
+              description="This removes all run history for this task."
+              okText="Clear"
+              okButtonProps={{ danger: true }}
+              placement="leftTop"
+              onConfirm={()=>clearRunsForTask(runsModalTask.id)}
+            >
+              <Button danger>Clear Runs</Button>
+            </Popconfirm>
+          </div>
+        )}
+        <List dataSource={runs.filter(r => runsModalTask ? String(r.task || r.task_id || '') === String(runsModalTask.id) : true)} renderItem={(r:any)=>(
           <List.Item>
-            <List.Item.Meta title={`Run ${r.id} - ${r.status}`} description={r.started_at ? `started: ${r.started_at}` : ''} />
-            <Button onClick={()=>setLogsModalRun(r)}>View Logs</Button>
+            <List.Item.Meta
+              title={<span>{r.task_name ? `${r.task_name} · ` : ''}Run {r.id} - <Tag color={statusColor(r.status)}>{r.status || 'unknown'}</Tag></span>}
+              description={r.started_at ? `started: ${dayjs(r.started_at).format('YYYY-MM-DD HH:mm:ss')}` : ''}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button onClick={()=>setLogsModalRun(r)}>View Logs</Button>
+            </div>
           </List.Item>
         )} />
       </Modal>

@@ -22,8 +22,9 @@ import requests
 
 from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Case, CharField, Count, IntegerField, Sum, Value, When
-from django.db.models.functions import TruncHour
+from django.db.models.functions import TruncHour, TruncDate
 from django.utils import timezone
+from django.core.cache import cache
 
 from .models import Alert, ESIntegrationConfig
 
@@ -35,6 +36,31 @@ except Exception:
     Elasticsearch = None
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_unresolved_template(value: object) -> bool:
+    """Detect unresolved template placeholders like `{{date}}`."""
+    if value is None:
+        return False
+    s = str(value)
+    return '{{' in s and '}}' in s
+
+
+def _sanitize_source_doc(doc: Dict) -> Dict:
+    """Recursively strip unresolved template literals from source payloads."""
+    if isinstance(doc, dict):
+        out = {}
+        for k, v in doc.items():
+            cleaned = _sanitize_source_doc(v)
+            if cleaned is None:
+                continue
+            out[k] = cleaned
+        return out
+    if isinstance(doc, list):
+        return [_sanitize_source_doc(v) for v in doc if _sanitize_source_doc(v) is not None]
+    if _looks_unresolved_template(doc):
+        return None
+    return doc
 
 
 def _get_global_es_config() -> ESIntegrationConfig | None:
@@ -83,6 +109,8 @@ def _parse_es_timestamp(value) -> datetime | None:
     if not isinstance(value, str):
         value = str(value)
     raw = value.strip()
+    if _looks_unresolved_template(raw):
+        return None
     if not raw:
         return None
     if raw.isdigit():
@@ -170,6 +198,32 @@ def _coerce_int(value):
         return None
 
 
+def _normalize_alert_severity(value):
+    """Convert noisy source severities into compact tiers that fit the DB column."""
+    if value in (None, ''):
+        return None
+    raw = str(value).strip().lower()
+    if raw in {'critical', 'crit', 'fatal', 'emergency', 'emerg', 'panic'}:
+        return 'critical'
+    if raw in {'high', 'error', 'err', 'severe'}:
+        return 'high'
+    if raw in {'medium', 'med', 'moderate', 'warning', 'warn'}:
+        return 'medium'
+    if raw in {'low', 'info', 'informational', 'notice', 'debug'}:
+        return 'low'
+    try:
+        n = int(float(raw))
+        if n >= 12:
+            return 'critical'
+        if n >= 9:
+            return 'high'
+        if n >= 6:
+            return 'medium'
+        return 'low'
+    except Exception:
+        return raw[:16]
+
+
 def _compute_alert_identity(doc: Dict, fallback_index: str | None = None) -> str | None:
     """Return a stable alert identity to prevent duplicate inserts.
 
@@ -238,13 +292,16 @@ def _upsert_docs_to_db(docs: List[Dict]) -> None:
     active_index = _get_active_index_name()
     for doc in docs:
         try:
+            clean_doc = _sanitize_source_doc(doc if isinstance(doc, dict) else {})
             src_idx = doc.get('source_index') or active_index
             alert_id = _ensure_alert_identity(doc, active_index)
             doc['alert_id'] = alert_id
             doc['source_index'] = src_idx
+            parsed_ts = _extract_alert_timestamp(clean_doc or doc)
             defaults = {
-                'timestamp': _extract_alert_timestamp(doc),
-                'severity': doc.get('severity'),
+                # Enforce a valid timestamp for ingestion durability.
+                'timestamp': parsed_ts or timezone.now(),
+                'severity': _normalize_alert_severity(doc.get('severity')),
                 'message': doc.get('message'),
                 'source_index': src_idx,
                 'rule_id': doc.get('rule_id'),
@@ -252,7 +309,7 @@ def _upsert_docs_to_db(docs: List[Dict]) -> None:
                 'status': _coerce_int(doc.get('status')),
                 'description': doc.get('description'),
                 'category': doc.get('category'),
-                'source_data': {**doc, 'alert_id': alert_id},
+                'source_data': {**(clean_doc or {}), **doc, 'alert_id': alert_id},
             }
             with transaction.atomic():
                 if alert_id:
@@ -729,7 +786,14 @@ class AlertService:
         return alerts, 'mock'
 
     @staticmethod
-    def aggregate_dashboard(force_es: bool = False, force_mock: bool = False, force_db: bool = False) -> Dict:
+    def aggregate_dashboard(
+        force_es: bool = False,
+        force_mock: bool = False,
+        force_db: bool = False,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        all_time: bool = False,
+    ) -> Dict:
         # Default behavior: keep existing fields for backward compatibility.
         # Additionally, compute richer dashboard metrics directly from Postgres so
         # counts are not limited to the latest 100 cached rows.
@@ -797,8 +861,10 @@ class AlertService:
 
         # DB-based aggregates (preferred when DB is available)
         now = timezone.now()
-        cutoff_1h = now - timedelta(hours=1)
-        cutoff_trend = now - timedelta(days=7)
+        range_end = None if all_time else (end_time or now)
+        range_start = None if all_time else start_time
+        cutoff_1h = (range_end or now) - timedelta(hours=1)
+        cutoff_trend = None if all_time else (range_start or ((range_end or now) - timedelta(days=7)))
 
         total_alerts_db = None
         last_1h_alerts_db = None
@@ -818,6 +884,10 @@ class AlertService:
 
         try:
             qs = _alerts_queryset_for_active_index()
+            if range_start:
+                qs = qs.filter(timestamp__gte=range_start)
+            if range_end:
+                qs = qs.filter(timestamp__lte=range_end)
             try:
                 repaired = _backfill_missing_alert_timestamps(qs, ts_field)
                 if repaired:
@@ -825,18 +895,45 @@ class AlertService:
             except Exception:
                 logger.exception('Failed to backfill missing alert timestamps before dashboard aggregation')
 
-            total_alerts_db = qs.count()
-            last_1h_alerts_db = qs.filter(timestamp__gte=cutoff_1h).count()
-            data_source_count_db = qs.exclude(source_index__isnull=True).exclude(source_index='').values('source_index').distinct().count()
-            enabled_rule_count_db = qs.exclude(rule_id__isnull=True).exclude(rule_id='').values('rule_id').distinct().count()
-            detected_rule_count_1h_db = (
-                qs.filter(timestamp__gte=cutoff_1h)
-                .exclude(rule_id__isnull=True)
-                .exclude(rule_id='')
-                .values('rule_id')
-                .distinct()
-                .count()
-            )
+            # For all-time queries, cache expensive counters to avoid repeated full scans.
+            cache_key = None
+            cached_summary = None
+            if all_time:
+                active_idx = _get_active_index_name() or 'all'
+                cache_key = f"alerts:dashboard:alltime:summary:{active_idx}"
+                cached_summary = cache.get(cache_key)
+
+            if cached_summary:
+                total_alerts_db = int(cached_summary.get('total_alerts_db') or 0)
+                last_1h_alerts_db = int(cached_summary.get('last_1h_alerts_db') or 0)
+                data_source_count_db = int(cached_summary.get('data_source_count_db') or 0)
+                enabled_rule_count_db = int(cached_summary.get('enabled_rule_count_db') or 0)
+                detected_rule_count_1h_db = int(cached_summary.get('detected_rule_count_1h_db') or 0)
+            else:
+                total_alerts_db = qs.count()
+                last_1h_alerts_db = qs.filter(timestamp__gte=cutoff_1h).count()
+                data_source_count_db = qs.exclude(source_index__isnull=True).exclude(source_index='').values('source_index').distinct().count()
+                enabled_rule_count_db = qs.exclude(rule_id__isnull=True).exclude(rule_id='').values('rule_id').distinct().count()
+                detected_rule_count_1h_db = (
+                    qs.filter(timestamp__gte=cutoff_1h)
+                    .exclude(rule_id__isnull=True)
+                    .exclude(rule_id='')
+                    .values('rule_id')
+                    .distinct()
+                    .count()
+                )
+                if all_time and cache_key:
+                    cache.set(
+                        cache_key,
+                        {
+                            'total_alerts_db': total_alerts_db,
+                            'last_1h_alerts_db': last_1h_alerts_db,
+                            'data_source_count_db': data_source_count_db,
+                            'enabled_rule_count_db': enabled_rule_count_db,
+                            'detected_rule_count_1h_db': detected_rule_count_1h_db,
+                        },
+                        timeout=60,
+                    )
 
             # category pie
             for row in (
@@ -922,10 +1019,21 @@ class AlertService:
                 severity_level_counts_db[tier] = severity_level_counts_db.get(tier, 0) + int(row.get('c') or 0)
 
             # alert trend (hour buckets, last 7d)
+            # Bound trend resolution for very wide ranges to avoid oversized grouping.
+            trend_granularity_day = all_time or (
+                range_start is not None
+                and range_end is not None
+                and (range_end - range_start) > timedelta(days=31)
+            )
+            time_bucket_expr = TruncDate('timestamp') if trend_granularity_day else TruncHour('timestamp')
+
+            trend_qs = qs
+            if cutoff_trend:
+                trend_qs = trend_qs.filter(timestamp__gte=cutoff_trend)
             for row in (
-                qs.filter(timestamp__gte=cutoff_trend)
+                trend_qs
                 .exclude(timestamp__isnull=True)
-                .annotate(h=TruncHour('timestamp'))
+                .annotate(h=time_bucket_expr)
                 .values('h')
                 .annotate(c=Count('id'))
                 .order_by('h')
@@ -933,13 +1041,19 @@ class AlertService:
                 h = row.get('h')
                 if h is None:
                     continue
-                alert_trend_db[h.isoformat(timespec='hours')] = int(row.get('c') or 0)
+                if trend_granularity_day:
+                    alert_trend_db[h.isoformat()] = int(row.get('c') or 0)
+                else:
+                    alert_trend_db[h.isoformat(timespec='hours')] = int(row.get('c') or 0)
 
             # Build stacked series and score trend from a simple per-hour/per-severity rollup.
+            per_hour_sev_qs = qs
+            if cutoff_trend:
+                per_hour_sev_qs = per_hour_sev_qs.filter(timestamp__gte=cutoff_trend)
             per_hour_sev_rows = (
-                qs.filter(timestamp__gte=cutoff_trend)
+                per_hour_sev_qs
                 .exclude(timestamp__isnull=True)
-                .annotate(h=TruncHour('timestamp'))
+                .annotate(h=time_bucket_expr)
                 .values('h', 'severity')
                 .annotate(c=Count('id'))
                 .order_by('h')
@@ -952,7 +1066,7 @@ class AlertService:
                 h = row.get('h')
                 if h is None:
                     continue
-                hour_key = h.isoformat(timespec='hours')
+                hour_key = h.isoformat() if trend_granularity_day else h.isoformat(timespec='hours')
                 tier = _severity_to_tier(row.get('severity'))
                 c = int(row.get('c') or 0)
 
@@ -1046,14 +1160,14 @@ class AlertService:
             'siem_rule_detected_count_1h': detected_rule_count_1h_db,
 
             # new dashboard blocks
-            'category_breakdown': category_counts_db,
-            'severity_distribution': severity_level_counts_db,
-            'alert_trend': alert_trend_db,
-            'alert_score_trend': alert_score_trend_db,
-            'alert_trend_series': alert_trend_series_db,
-            'alert_score_trend_series': alert_score_trend_series_db,
-            'top_source_ips': top_source_ips,
-            'top_users': top_users,
-            'top_sources': top_sources,
-            'top_rules': top_rules,
+            'category_breakdown': category_counts_db or {},
+            'severity_distribution': severity_level_counts_db or {},
+            'alert_trend': alert_trend_db or {},
+            'alert_score_trend': alert_score_trend_db or {},
+            'alert_trend_series': alert_trend_series_db or [],
+            'alert_score_trend_series': alert_score_trend_series_db or [],
+            'top_source_ips': top_source_ips or [],
+            'top_users': top_users or [],
+            'top_sources': top_sources or [],
+            'top_rules': top_rules or [],
         }

@@ -261,8 +261,13 @@ export async function fetchAlerts(
   return res.data;
 }
 
-export async function fetchDashboard() {
-  const res = await client.get(`/alerts/dashboard/?_ts=${Date.now()}`);
+export async function fetchDashboard(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+  const qp = new URLSearchParams();
+  qp.set('_ts', String(Date.now()));
+  if (params?.all_time) qp.set('all_time', 'true');
+  if (params?.start_time) qp.set('start_time', params.start_time);
+  if (params?.end_time) qp.set('end_time', params.end_time);
+  const res = await client.get(`/alerts/dashboard/?${qp.toString()}`);
   return res.data;
 }
 

@@ -1,10 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
-import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty } from 'antd';
+import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Popover, Divider, Typography, Input } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { fetchDashboard } from 'services/alerts';
 import type { DashboardData } from 'types';
+import dayjs from 'dayjs';
+import type { Dayjs } from 'dayjs';
+
+type TimeRangePreset = '1h' | '24h' | '7d' | 'all' | 'custom';
+type TimeWindow = {
+  start_time?: string;
+  end_time?: string;
+  all_time?: boolean;
+  isCustomRange: boolean;
+  preset: TimeRangePreset;
+};
 
 const Dashboard: React.FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -15,8 +26,26 @@ const Dashboard: React.FC = () => {
   const [activePanelRefresh, setActivePanelRefresh] = useState<string | null>(null);
 
   const CACHE_KEY = 'siem_dashboard_cache_v1';
+  const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v2';
   const POLL_INTERVAL_MS = 10 * 1000;
   const [loading, setLoading] = useState(false);
+  const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [timePreset, setTimePreset] = useState<TimeRangePreset>('24h');
+  const [customRange, setCustomRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+  const [customStartTimeText, setCustomStartTimeText] = useState('00:00:00');
+  const [customEndTimeText, setCustomEndTimeText] = useState('23:59:59');
+  const [isCustomRange, setIsCustomRange] = useState(false);
+  const [activeTimeWindow, setActiveTimeWindow] = useState<TimeWindow>(() => {
+    const now = dayjs();
+    return {
+      start_time: now.subtract(24, 'hour').toISOString(),
+      end_time: now.toISOString(),
+      all_time: false,
+      isCustomRange: false,
+      preset: '24h',
+    };
+  });
+  const activeTimeWindowRef = React.useRef<TimeWindow>(activeTimeWindow);
   const [trendGroupBy, setTrendGroupBy] = useState<'hour' | 'day'>('hour');
   const [scoreGroupBy, setScoreGroupBy] = useState<'hour' | 'day'>('hour');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
@@ -83,11 +112,14 @@ const Dashboard: React.FC = () => {
   };
 
   const hasEntries = (obj?: Record<string, unknown> | null) => !!obj && Object.keys(obj).length > 0;
+  const hasSeriesRows = (rows?: Array<{ time: string; series: string; value: number }> | null) =>
+    Array.isArray(rows) && rows.length > 0;
+  const hasTrendMap = (obj?: Record<string, number> | null) => !!obj && Object.keys(obj).length > 0;
   const isDarkTheme = themeMode === 'dark';
   const chartTextColor = isDarkTheme ? '#dbe6ff' : '#1f2d3d';
   const chartSubtleTextColor = isDarkTheme ? '#e7efff' : '#4b5b70';
 
-  const load = async (opts?: { panelKey?: string; showGlobalSpinner?: boolean }) => {
+  const load = async (opts?: { panelKey?: string; showGlobalSpinner?: boolean; timeWindow?: TimeWindow }) => {
     const panelKey = opts?.panelKey;
     const showGlobalSpinner = opts?.showGlobalSpinner ?? true;
     const isBackground = !!displayData;
@@ -98,7 +130,12 @@ const Dashboard: React.FC = () => {
     }
     if (panelKey) setActivePanelRefresh(panelKey);
     try {
-      let res = await fetchDashboard();
+      const windowToUse = opts?.timeWindow || activeTimeWindowRef.current;
+      let res = await fetchDashboard({
+        start_time: windowToUse.start_time,
+        end_time: windowToUse.end_time,
+        all_time: windowToUse.all_time,
+      });
       setData(res);
       // only update the displayData when we successfully fetched something
       if (res) {
@@ -163,6 +200,40 @@ const Dashboard: React.FC = () => {
   }
 
   useEffect(() => {
+    activeTimeWindowRef.current = activeTimeWindow;
+  }, [activeTimeWindow]);
+
+  useEffect(() => {
+    // Persist the selected dashboard time window across navigation/remounts.
+    try {
+      sessionStorage.setItem(TIME_WINDOW_CACHE_KEY, JSON.stringify(activeTimeWindow));
+    } catch {}
+  }, [activeTimeWindow]);
+
+  useEffect(() => {
+    // Rehydrate persisted time window before the first request.
+    let initialWindowForLoad: TimeWindow | null = null;
+    try {
+      const rawWindow = sessionStorage.getItem(TIME_WINDOW_CACHE_KEY);
+      if (rawWindow) {
+        const parsed = JSON.parse(rawWindow) as TimeWindow;
+        if (parsed && parsed.preset) {
+          initialWindowForLoad = parsed;
+          activeTimeWindowRef.current = parsed;
+          setActiveTimeWindow(parsed);
+          setTimePreset(parsed.preset);
+          setIsCustomRange(!!parsed.isCustomRange);
+          if (parsed.preset === 'custom' && parsed.start_time && parsed.end_time) {
+            const start = dayjs(parsed.start_time);
+            const end = dayjs(parsed.end_time);
+            setCustomRange([start, end]);
+            setCustomStartTimeText(start.format('HH:mm:ss'));
+            setCustomEndTimeText(end.format('HH:mm:ss'));
+          }
+        }
+      }
+    } catch {}
+
     // on mount only: read cache and perform initial loads and polling
     try {
       const raw = localStorage.getItem(CACHE_KEY);
@@ -177,8 +248,9 @@ const Dashboard: React.FC = () => {
       // ignore cache errors
     }
 
-    // initial load
-    load();
+    // initial load with current time window payload
+    const initialWindow = initialWindowForLoad || activeTimeWindowRef.current;
+    load({ timeWindow: initialWindow });
 
     const syncTheme = () => {
       try {
@@ -194,7 +266,8 @@ const Dashboard: React.FC = () => {
     // Polling: only poll when the tab is visible to avoid extra work
     const intervalFn = () => {
       if (document.visibilityState === 'visible') {
-        load();
+        // Preserve custom range in polling payload; do not recalculate to a relative window.
+        load({ timeWindow: activeTimeWindowRef.current });
       }
     };
     const id = setInterval(intervalFn, POLL_INTERVAL_MS);
@@ -202,7 +275,7 @@ const Dashboard: React.FC = () => {
     // also reload once when tab becomes visible
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        load();
+        load({ timeWindow: activeTimeWindowRef.current });
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
@@ -216,8 +289,151 @@ const Dashboard: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const getPresetLabel = (preset: TimeRangePreset) => {
+    if (preset === '1h') return 'Last 1 Hour';
+    if (preset === '24h') return 'Last 24 Hours';
+    if (preset === '7d') return 'Last 7 Days';
+    if (preset === 'all') return 'All Time';
+    return 'Custom';
+  };
+
+  const selectedRangeLabel = () => {
+    if (!isCustomRange) return getPresetLabel(timePreset);
+    if (customRange?.[0] && customRange?.[1]) {
+      return `${customRange[0].format('YYYY-MM-DD HH:mm:ss')} ~ ${customRange[1].format('YYYY-MM-DD HH:mm:ss')}`;
+    }
+    return 'Custom';
+  };
+
+  const handleSetEndToNow = () => {
+    const now = dayjs();
+    const start = customRange?.[0] ?? now.subtract(1, 'hour');
+    setCustomRange([start, now]);
+    setCustomEndTimeText(now.format('HH:mm:ss'));
+  };
+
+  const sanitizeTimeText = (raw: string) => {
+    const digits = String(raw || '').replace(/\D/g, '').slice(0, 6);
+    const h = digits.slice(0, 2);
+    const m = digits.slice(2, 4);
+    const s = digits.slice(4, 6);
+    let out = h;
+    if (m) out += `:${m}`;
+    if (s) out += `:${s}`;
+    return out;
+  };
+
+  const parseHms = (raw: string) => {
+    const parts = raw.split(':');
+    if (parts.length !== 3) return null;
+    const hh = Number(parts[0]);
+    const mm = Number(parts[1]);
+    const ss = Number(parts[2]);
+    if (!Number.isInteger(hh) || !Number.isInteger(mm) || !Number.isInteger(ss)) return null;
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return null;
+    return { hh, mm, ss };
+  };
+
+  const bindTimePart = (date: Dayjs | null, timeText: string) => {
+    if (!date) return null;
+    const hms = parseHms(timeText);
+    if (!hms) return null;
+    return date.hour(hms.hh).minute(hms.mm).second(hms.ss).millisecond(0);
+  };
+
+  const applyTimeSelection = async () => {
+    if (timePreset === 'all') {
+      const nextWindow: TimeWindow = {
+        all_time: true,
+        start_time: undefined,
+        end_time: undefined,
+        isCustomRange: false,
+        preset: 'all',
+      };
+      setIsCustomRange(false);
+      setActiveTimeWindow(nextWindow);
+      setTimePickerOpen(false);
+      await load({ timeWindow: nextWindow });
+      return;
+    }
+
+    if (timePreset === 'custom') {
+      if (!customRange?.[0] || !customRange?.[1]) {
+        message.warning('Please select both start and end time');
+        return;
+      }
+      const startWithTime = bindTimePart(customRange[0], customStartTimeText);
+      const endWithTime = bindTimePart(customRange[1], customEndTimeText);
+      if (!startWithTime || !endWithTime) {
+        message.warning('Use valid time format HH:mm:ss');
+        return;
+      }
+      if (startWithTime.isAfter(endWithTime)) {
+        message.warning('Start time must be earlier than end time');
+        return;
+      }
+      const nextWindow: TimeWindow = {
+        start_time: startWithTime.toISOString(),
+        end_time: endWithTime.toISOString(),
+        all_time: false,
+        isCustomRange: true,
+        preset: 'custom',
+      };
+      setIsCustomRange(true);
+      setActiveTimeWindow(nextWindow);
+      setTimePickerOpen(false);
+      await load({ timeWindow: nextWindow });
+      return;
+    }
+
+    const now = dayjs();
+    const relativeRange = (() => {
+      if (timePreset === '1h') return { start: now.subtract(1, 'hour'), end: now };
+      if (timePreset === '7d') return { start: now.subtract(7, 'day'), end: now };
+      return { start: now.subtract(24, 'hour'), end: now };
+    })();
+    const nextWindow: TimeWindow = {
+      start_time: relativeRange.start.toISOString(),
+      end_time: relativeRange.end.toISOString(),
+      all_time: false,
+      isCustomRange: false,
+      preset: timePreset,
+    };
+    setIsCustomRange(false);
+    setActiveTimeWindow(nextWindow);
+    setTimePickerOpen(false);
+    await load({ timeWindow: nextWindow });
+  };
+
+  const maybeAutoApplyOnClose = async (nextOpen: boolean) => {
+    if (nextOpen) {
+      setTimePickerOpen(true);
+      return;
+    }
+    // Blur/click-away auto-apply: commit automatically when the panel closes.
+    if (timePreset === 'custom') {
+      if (!customRange?.[0] || !customRange?.[1]) {
+        setTimePickerOpen(false);
+        return;
+      }
+      const startWithTime = bindTimePart(customRange[0], customStartTimeText);
+      const endWithTime = bindTimePart(customRange[1], customEndTimeText);
+      if (!startWithTime || !endWithTime || startWithTime.isAfter(endWithTime)) {
+        setTimePickerOpen(false);
+        return;
+      }
+    }
+    setTimePickerOpen(false);
+    await applyTimeSelection();
+  };
+
   const categoryBreakdown = displayData?.category_breakdown;
   const severityDistribution = displayData?.severity_distribution;
+  const renderTrendEmpty = () => (
+    <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Empty description="No trend data available" />
+    </div>
+  );
   const panelRefresh = (panelKey: string, ariaLabel = 'Refresh panel') => (
     <Button
       size="small"
@@ -235,7 +451,86 @@ const Dashboard: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <span style={{ fontSize: 16, fontWeight: 700 }}>Dashboard Overview</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            open={timePickerOpen}
+            onOpenChange={maybeAutoApplyOnClose}
+            content={
+              <div style={{ width: 360 }}>
+                <Typography.Text strong>Time Range</Typography.Text>
+                <Divider style={{ margin: '10px 0' }} />
+                <Select
+                  size="middle"
+                  value={timePreset}
+                  style={{ width: '100%' }}
+                  options={[
+                    { label: 'Last 1 Hour', value: '1h' },
+                    { label: 'Last 24 Hours', value: '24h' },
+                    { label: 'Last 7 Days', value: '7d' },
+                    { label: 'All Time', value: 'all' },
+                    { label: 'Custom', value: 'custom' },
+                  ]}
+                  onChange={(v) => setTimePreset(v as TimeRangePreset)}
+                />
+                {timePreset === 'custom' && (
+                  <div style={{ marginTop: 12 }}>
+                    <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                      <div>
+                        <Typography.Text type="secondary">Start Time</Typography.Text>
+                        <Space.Compact style={{ width: '100%', marginTop: 4 }}>
+                          <DatePicker
+                            format="YYYY-MM-DD"
+                            style={{ width: '64%' }}
+                            value={customRange?.[0] ?? null}
+                            onChange={(v) => setCustomRange([v, customRange?.[1] ?? null])}
+                          />
+                          <Input
+                            style={{ width: '36%' }}
+                            value={customStartTimeText}
+                            placeholder="HH:mm:ss"
+                            onChange={(e) => setCustomStartTimeText(sanitizeTimeText(e.target.value))}
+                          />
+                        </Space.Compact>
+                      </div>
+                      <div>
+                        <Typography.Text type="secondary">End Time</Typography.Text>
+                        <Space.Compact style={{ width: '100%', marginTop: 4 }}>
+                          <DatePicker
+                            format="YYYY-MM-DD"
+                            style={{ width: '48%' }}
+                            value={customRange?.[1] ?? null}
+                            onChange={(v) => setCustomRange([customRange?.[0] ?? null, v])}
+                          />
+                          <Input
+                            style={{ width: '32%' }}
+                            value={customEndTimeText}
+                            placeholder="HH:mm:ss"
+                            onChange={(e) => setCustomEndTimeText(sanitizeTimeText(e.target.value))}
+                          />
+                          <Button style={{ width: '20%' }} onClick={handleSetEndToNow}>Now</Button>
+                        </Space.Compact>
+                      </div>
+                    </Space>
+                  </div>
+                )}
+                <Divider style={{ margin: '12px 0' }} />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Click outside to auto-save and refresh.
+                </Typography.Text>
+              </div>
+            }
+          >
+            <Button>
+              {selectedRangeLabel()}
+            </Button>
+          </Popover>
+          {isCustomRange && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Custom window locked for auto-refresh
+            </Typography.Text>
+          )}
           {refreshing && <Spin size="small" style={{ marginLeft: 12 }} />}
         </div>
       </Space>
@@ -341,7 +636,7 @@ const Dashboard: React.FC = () => {
                 </Space>
               }
             >
-              {displayData?.alert_trend_series && displayData.alert_trend_series.length > 0 ? (
+              {hasSeriesRows(displayData?.alert_trend_series) ? (
                 <Column
                   data={bucketizeStackedSeries(displayData.alert_trend_series, trendGroupBy).map((r) => ({
                     time: r.time,
@@ -390,7 +685,7 @@ const Dashboard: React.FC = () => {
                     },
                   }}
                 />
-              ) : (displayData?.alert_trend && Object.keys(displayData.alert_trend).length > 0) ? (
+              ) : hasTrendMap(displayData?.alert_trend) ? (
                 <Column
                   data={bucketizeTimeSeries(displayData.alert_trend, trendGroupBy).map((d) => ({ time: d.time, count: d.value }))}
                   xField="time"
@@ -402,11 +697,7 @@ const Dashboard: React.FC = () => {
                   tooltip={{ showMarkers: false }}
                   axis={{ x: false }}
                 />
-              ) : (
-                <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Empty description="No trend data" />
-                </div>
-              )}
+              ) : renderTrendEmpty()}
             </Card>
           )}
         </Col>
@@ -472,7 +763,7 @@ const Dashboard: React.FC = () => {
                 </Space>
               }
             >
-              {displayData?.alert_score_trend_series && displayData.alert_score_trend_series.length > 0 ? (
+              {hasSeriesRows(displayData?.alert_score_trend_series) ? (
                 <Column
                   data={bucketizeStackedSeries(displayData.alert_score_trend_series, scoreGroupBy).map((r) => ({
                     time: r.time,
@@ -520,7 +811,7 @@ const Dashboard: React.FC = () => {
                     },
                   }}
                 />
-              ) : (displayData?.alert_score_trend && Object.keys(displayData.alert_score_trend).length > 0) ? (
+              ) : hasTrendMap(displayData?.alert_score_trend) ? (
                 <Column
                   data={bucketizeTimeSeries(displayData.alert_score_trend, scoreGroupBy).map((d) => ({ time: d.time, score: d.value }))}
                   xField="time"
@@ -532,11 +823,7 @@ const Dashboard: React.FC = () => {
                   tooltip={{ showMarkers: false }}
                   axis={{ x: false }}
                 />
-              ) : (
-                <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Empty description="No trend data" />
-                </div>
-              )}
+              ) : renderTrendEmpty()}
             </Card>
           )}
         </Col>
