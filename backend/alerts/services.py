@@ -38,11 +38,48 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
+SEVERITY_ALIASES = {
+    'critical': 'critical',
+    'crit': 'critical',
+    'fatal': 'critical',
+    'emergency': 'critical',
+    'emerg': 'critical',
+    'panic': 'critical',
+    'high': 'high',
+    'error': 'high',
+    'err': 'high',
+    'severe': 'high',
+    'medium': 'medium',
+    'med': 'medium',
+    'moderate': 'medium',
+    'warning': 'medium',
+    'warn': 'medium',
+    'low': 'low',
+    'info': 'low',
+    'informational': 'low',
+    'notice': 'low',
+    'debug': 'low',
+}
+
+
 def _looks_unresolved_template(value: object) -> bool:
-    """Detect unresolved template placeholders like `{{date}}`."""
+    """Return True when a value still contains an unresolved template token.
+
+    Some upstream alert sources and workflow templates can leak placeholder
+    strings such as ``{{date}}`` or ``{{context.alerts.0.id}}`` into raw event
+    payloads. Those values are not real timestamps, severities, or messages.
+    Detecting them early lets ingestion and dashboard code discard or replace
+    the bad value before it reaches datetime parsing or user-facing tables.
+    """
+    # Null is not an unresolved template; callers handle missing data separately.
     if value is None:
         return False
+
+    # Coerce non-string values so this helper can safely inspect any JSON scalar.
     s = str(value)
+
+    # The platform currently uses double-curly placeholders. We require both
+    # delimiters to avoid flagging ordinary text that happens to contain one brace.
     return '{{' in s and '}}' in s
 
 
@@ -199,29 +236,41 @@ def _coerce_int(value):
 
 
 def _normalize_alert_severity(value):
-    """Convert noisy source severities into compact tiers that fit the DB column."""
+    """Normalize vendor-specific severities into the SIEM severity schema.
+
+    Alert feeds are inconsistent: some send strings ("High", "warning",
+    "fatal"), some send numeric rule levels, and malformed pipelines can emit
+    blank values. This function converts those variations into the compact
+    tiers used by dashboards, correlation, and ticketing: low, medium, high,
+    and critical. Unknown non-empty values are preserved in truncated form so
+    operators can still see unusual source labels without overflowing the DB.
+    """
     if value in (None, ''):
         return None
+
     raw = str(value).strip().lower()
-    if raw in {'critical', 'crit', 'fatal', 'emergency', 'emerg', 'panic'}:
-        return 'critical'
-    if raw in {'high', 'error', 'err', 'severe'}:
-        return 'high'
-    if raw in {'medium', 'med', 'moderate', 'warning', 'warn'}:
-        return 'medium'
-    if raw in {'low', 'info', 'informational', 'notice', 'debug'}:
-        return 'low'
+    if not raw or _looks_unresolved_template(raw):
+        return None
+
+    # Fast path for common textual severities and vendor aliases.
+    alias = SEVERITY_ALIASES.get(raw)
+    if alias:
+        return alias
+
+    # Numeric feeds often use Wazuh-like levels: 12+=critical, 9+=high, 6+=medium.
     try:
         n = int(float(raw))
-        if n >= 12:
-            return 'critical'
-        if n >= 9:
-            return 'high'
-        if n >= 6:
-            return 'medium'
-        return 'low'
     except Exception:
+        # Preserve unexpected labels, bounded to the DB column width.
         return raw[:16]
+
+    if n >= 12:
+        return 'critical'
+    if n >= 9:
+        return 'high'
+    if n >= 6:
+        return 'medium'
+    return 'low'
 
 
 def _compute_alert_identity(doc: Dict, fallback_index: str | None = None) -> str | None:
@@ -847,12 +896,12 @@ class AlertService:
                         day = 'unknown'
             timeline[hour] = timeline.get(hour, 0) + 1
             daily_trend[day] = daily_trend.get(day, 0) + 1
-            # 鎸?source_index 缁熻
+            # Count alerts by source index for dashboard source-distribution widgets.
             idx = a.get('source_index')
             if not idx:
                 idx = a.get('_index', 'unknown')
             source_index_counts[idx] = source_index_counts.get(idx, 0) + 1
-            # message 鏁存潯缁熻
+            # Count repeated messages so the dashboard can surface the most common alert texts.
             msg = a.get('message', '')
             if msg:
                 message_topN[msg] = message_topN.get(msg, 0) + 1

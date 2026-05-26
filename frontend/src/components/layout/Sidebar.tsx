@@ -70,20 +70,25 @@ export default function Sidebar({
     Record<RouteKey, string>
   >;
   const routeLabel: Record<RouteKey, string> = {
+    // Singular: this route is the single global landing view.
     dashboard: 'Overview',
+    // Plural: list pages that manage multiple entities.
     alerts: 'Alerts',
     tickets: 'Tickets',
     assets: 'Assets',
     integrations: labelOverrides.integrations || 'Integrations',
-    dashboards: labelOverrides.dashboards || 'Dashboard List',
+    dashboards: labelOverrides.dashboards || 'Dashboards',
+    // Singular: platform-level engines/config domains.
     orchestrator: labelOverrides.orchestrator || 'Orchestrator',
     interfaces: labelOverrides.interfaces || 'Interfaces',
     correlation: labelOverrides.correlation || 'Correlation',
     permissions: labelOverrides.permissions || 'Access Management',
-    'registration-approvals': labelOverrides['registration-approvals'] || 'Registration Approvals',
+    // Shortened for compact enterprise sidebar wording.
+    'registration-approvals': labelOverrides['registration-approvals'] || 'Approvals',
     'audit-logs': labelOverrides['audit-logs'] || 'Audit Logs',
     workflows: labelOverrides.workflows || 'Workflows',
-    'workflow-executions': labelOverrides['workflow-executions'] || 'Workflow Executions',
+    // Shortened from "Workflow Executions" to save horizontal space.
+    'workflow-executions': labelOverrides['workflow-executions'] || 'Executions',
     'ai-assistant': labelOverrides['ai-assistant'] || 'AI Assistant',
     profile: 'Profile',
   };
@@ -91,9 +96,11 @@ export default function Sidebar({
   const navGroups: Array<{ key: string; title: string; icon: React.ReactNode; items: RouteKey[] }> = [
     {
       key: 'monitorGroup',
+      // Gerund parent for high-level monitoring domain.
       title: 'Monitoring',
       icon: <DashboardOutlined />,
-      items: ['dashboard', 'alerts'],
+      // Dashboards moved here from the deprecated "Data & Platform" section.
+      items: ['dashboard', 'dashboards', 'alerts'],
     },
     {
       key: 'investigationGroup',
@@ -102,26 +109,22 @@ export default function Sidebar({
       items: ['tickets', 'assets'],
     },
     {
-      key: 'dataPlatformGroup',
-      title: 'Data & Platform',
-      icon: <AppstoreOutlined />,
-      items: ['dashboards'],
-    },
-    {
-      key: 'setupPipelineGroup',
-      title: 'Setup Pipeline',
+      key: 'dataPipelineGroup',
+      // Renamed from "Setup Pipeline" to match SIEM/SOAR standard terminology.
+      title: 'Data Pipeline',
       icon: <DeploymentUnitOutlined />,
       items: ['integrations', 'orchestrator', 'correlation'],
     },
     {
       key: 'automationGroup',
-      title: 'Detection & Automation',
+      // Shortened to reduce truncation and redundant wording.
+      title: 'Automation',
       icon: <BranchesOutlined />,
       items: ['interfaces', 'workflows', 'workflow-executions'],
     },
     {
-      key: 'systemManagementGroup',
-      title: 'System Management',
+      key: 'administrationGroup',
+      title: 'Administration',
       icon: <LockOutlined />,
       items: ['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs'],
     },

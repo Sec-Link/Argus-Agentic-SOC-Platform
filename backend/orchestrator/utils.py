@@ -293,7 +293,6 @@ def execute_task(task: Task) -> TaskRun:
                 if existing is None:
                     Alert.objects.create(
                         alert_id=str(alert_id),
-                        source_index=source_index_value,
                         **defaults,
                     )
                     inserted += 1
