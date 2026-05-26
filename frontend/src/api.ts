@@ -1344,6 +1344,18 @@ export type DetectionRuleItem = {
   [key: string]: any;
 };
 
+export type DetectionMappingItem = {
+  id: number;
+  category?: string;
+  data_source?: string;
+  event_category?: string;
+  mapping_profile: string;
+  sigma: string;
+  splunk?: string;
+  elastic?: string;
+  [key: string]: any;
+};
+
 export async function listDetectionRules(): Promise<DetectionRuleItem[]> {
   const r = await client.get('/detections/rules/');
   return r.data;
@@ -1359,8 +1371,36 @@ export async function saveDetectionRule(id: string, yaml: string): Promise<any> 
   return r.data;
 }
 
+export async function compileDetectionRule(yaml: string): Promise<{ splunk?: string; kql?: string; profiles?: string[] }> {
+  const r = await client.post('/detections/rules/compile/', { yaml });
+  return r.data;
+}
+
 export async function deleteDetectionRule(id: string): Promise<any> {
   const r = await client.delete(`/detections/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function uploadDetectionRules(files: File[]): Promise<any> {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', f));
+  const r = await client.post('/detections/rules/upload/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return r.data;
+}
+
+export async function listDetectionMappings(): Promise<DetectionMappingItem[]> {
+  const r = await client.get('/detections/mappings/');
+  return Array.isArray(r.data) ? r.data : [];
+}
+
+export async function uploadDetectionMappings(files: File[]): Promise<any> {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', f));
+  const r = await client.post('/detections/mappings/upload/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
   return r.data;
 }
 
@@ -1378,8 +1418,8 @@ export async function testDetectionRule(payload: {
   return r.data;
 }
 
-// Kibana Detection Engine rules
-export type KibanaDetectionRule = {
+// Published detection rules (remote target)
+export type PublishedDetectionRule = {
   id: string;
   rule_id?: string;
   name: string;
@@ -1397,13 +1437,13 @@ export type KibanaDetectionRule = {
   [key: string]: any;
 };
 
-export async function listKibanaDetectionRules(params?: {
+export async function listPublishedDetectionRules(params?: {
   page?: number;
   per_page?: number;
   filter?: string;
   sort_field?: string;
   sort_order?: 'asc' | 'desc';
-}): Promise<{ data: KibanaDetectionRule[]; total: number }> {
+}): Promise<{ data: PublishedDetectionRule[]; total: number }> {
   const safePage = Number.isFinite(Number(params?.page)) && Number(params?.page) > 0
     ? Math.floor(Number(params?.page))
     : undefined;
@@ -1417,44 +1457,54 @@ export async function listKibanaDetectionRules(params?: {
   if (params?.sort_field) qp.set('sort_field', params.sort_field);
   if (params?.sort_order) qp.set('sort_order', params.sort_order);
   const q = qp.toString();
-  const r = await client.get(`/detections/kibana/rules/${q ? `?${q}` : ''}`);
+  const r = await client.get(`/detections/publish/rules/${q ? `?${q}` : ''}`);
   const body = r.data || {};
   const data = Array.isArray(body.data) ? body.data : [];
   const total = Number(body.total || data.length || 0);
   return { data, total };
 }
 
-export async function getKibanaDetectionRule(id: string): Promise<KibanaDetectionRule> {
-  const r = await client.get(`/detections/kibana/rules/${encodeURIComponent(id)}/`);
+export async function getPublishedDetectionRule(id: string): Promise<PublishedDetectionRule> {
+  const r = await client.get(`/detections/publish/rules/${encodeURIComponent(id)}/`);
   return r.data;
 }
 
-export async function createKibanaDetectionRule(payload: Record<string, any>): Promise<KibanaDetectionRule> {
-  const r = await client.post('/detections/kibana/rules/', payload);
+export async function createPublishedDetectionRule(payload: Record<string, any>): Promise<PublishedDetectionRule> {
+  const r = await client.post('/detections/publish/rules/', payload);
   return r.data;
 }
 
-export async function updateKibanaDetectionRule(id: string, payload: Record<string, any>): Promise<KibanaDetectionRule> {
-  const r = await client.put(`/detections/kibana/rules/${encodeURIComponent(id)}/`, payload);
+export async function updatePublishedDetectionRule(id: string, payload: Record<string, any>): Promise<PublishedDetectionRule> {
+  const r = await client.put(`/detections/publish/rules/${encodeURIComponent(id)}/`, payload);
   return r.data;
 }
 
-export async function patchKibanaDetectionRule(id: string, payload: Record<string, any>): Promise<KibanaDetectionRule> {
-  const r = await client.patch(`/detections/kibana/rules/${encodeURIComponent(id)}/`, payload);
+export async function patchPublishedDetectionRule(id: string, payload: Record<string, any>): Promise<PublishedDetectionRule> {
+  const r = await client.patch(`/detections/publish/rules/${encodeURIComponent(id)}/`, payload);
   return r.data;
 }
 
-export async function deleteKibanaDetectionRule(id: string): Promise<any> {
-  const r = await client.delete(`/detections/kibana/rules/${encodeURIComponent(id)}/`);
+export async function deletePublishedDetectionRule(id: string): Promise<any> {
+  const r = await client.delete(`/detections/publish/rules/${encodeURIComponent(id)}/`);
   return r.data;
 }
 
-export async function previewKibanaDetectionRule(payload: Record<string, any>): Promise<any> {
-  const r = await client.post('/detections/kibana/rules/preview/', payload);
+export async function getPublishedRuleVersions(id: string): Promise<{ id: string; current_version: number; data: any[] }> {
+  const r = await client.get(`/detections/publish/rules/${encodeURIComponent(id)}/versions/`);
   return r.data;
 }
 
-export async function listKibanaConnectors(): Promise<Array<{ id: string; name: string; connector_type_id?: string }>> {
-  const r = await client.get('/detections/kibana/connectors/');
+export async function rollbackPublishedRuleVersion(id: string, version: number): Promise<any> {
+  const r = await client.post(`/detections/publish/rules/${encodeURIComponent(id)}/rollback/`, { version });
+  return r.data;
+}
+
+export async function previewPublishedDetectionRule(payload: Record<string, any>): Promise<any> {
+  const r = await client.post('/detections/publish/rules/preview/', payload);
+  return r.data;
+}
+
+export async function listPublishedConnectors(): Promise<Array<{ id: string; name: string; connector_type_id?: string }>> {
+  const r = await client.get('/detections/publish/connectors/');
   return Array.isArray(r.data) ? r.data : [];
 }

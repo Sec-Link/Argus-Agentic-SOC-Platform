@@ -1,1134 +1,559 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
-import { App, Button, Card, Collapse, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Tabs, Tooltip } from 'antd';
+import { App, Button, Card, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import type { SorterResult } from 'antd/es/table/interface';
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
-  createKibanaDetectionRule,
-  deleteKibanaDetectionRule,
-  getKibanaDetectionRule,
-  listKibanaConnectors,
-  listKibanaDetectionRules,
-  patchKibanaDetectionRule,
-  previewKibanaDetectionRule,
-  updateKibanaDetectionRule,
-  type KibanaDetectionRule,
+  createPublishedDetectionRule,
+  deleteDetectionRule,
+  getDetectionRule,
+  getPublishedDetectionRule,
+  getPublishedRuleVersions,
+  listDetectionMappings,
+  listDetectionRules,
+  listPublishedDetectionRules,
+  rollbackPublishedRuleVersion,
+  saveDetectionRule,
+  uploadDetectionMappings,
+  uploadDetectionRules,
 } from 'services/detections';
 
-const severityColor = (s?: string) => {
-  const k = String(s || '').toLowerCase();
-  if (k === 'critical') return 'red';
-  if (k === 'high') return 'volcano';
-  if (k === 'medium') return 'gold';
-  if (k === 'low') return 'blue';
-  return 'default';
+type RuleRow = {
+  id: string;
+  name?: string;
+  version?: number;
+  level?: string;
+  status?: string;
+  logsource?: string;
+  profile?: string;
+  tags?: string[];
 };
 
-const defaultRule = {
-  name: '',
-  type: 'query',
-  enabled: false,
-  author: [],
-  risk_score: 50,
-  severity: 'medium',
-  description: '',
-  index: ['logs-*'],
-  query: '*',
-  language: 'kuery',
-  from: 'now-6m',
-  to: 'now',
-  interval: '5m',
-  tags: [],
-  references: [],
-  false_positives: [],
-  max_signals: 100,
-  license: '',
-  note: '',
-  actions: [],
-  threshold: { field: [], value: 1, cardinality: [] },
-  eql_query: '',
-  new_terms_fields: [],
-  history_window_start: 'now-7d',
-  threat_index: [],
-  threat_query: '*',
-  threat_mapping: [],
-  esql_query: '',
-};
+type LocalMapRow = { id: string | number; sigma: string; splunk: string; elastic: string; mapping_profile?: string };
+type DeployRow = { id: string; ruleId: string; target: 'splunk-dev' | 'elastic-dev'; status: 'success' | 'failed'; createdAt: string };
+const STORAGE_DEPLOY = 'detection-hub-deployments-v1';
+
+function pick(yaml: string, key: string) {
+  const line = String(yaml || '')
+    .split(/\r?\n/)
+    .find((x) => x.trim().toLowerCase().startsWith(`${key.toLowerCase()}:`));
+  if (!line) return '';
+  return line.split(':').slice(1).join(':').trim();
+}
+
+function parseYamlList(yaml: string, key: string): string[] {
+  const lines = String(yaml || '').split(/\r?\n/);
+  const start = lines.findIndex((x) => x.trim().toLowerCase() === `${key.toLowerCase()}:`);
+  if (start < 0) return [];
+  const out: string[] = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.startsWith('  ') && !line.startsWith('\t')) break;
+    const t = line.trim();
+    if (t.startsWith('- ')) out.push(t.slice(2).trim());
+  }
+  return out;
+}
+
+function section(yaml: string, name: string) {
+  const lines = String(yaml || '').split(/\r?\n/);
+  const start = lines.findIndex((x) => x.trim().toLowerCase() === `${name.toLowerCase()}:`);
+  if (start < 0) return '';
+  const out: string[] = [lines[start]];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const l = lines[i];
+    if (/^\S/.test(l)) break;
+    out.push(l);
+  }
+  return out.join('\n');
+}
 
 export default function Detections() {
-  const { message: messageApi } = App.useApp();
+  const { message } = App.useApp();
+  const [topTab, setTopTab] = useState('rules');
+  const [rules, setRules] = useState<RuleRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<KibanaDetectionRule[]>([]);
-  const [query, setQuery] = useState('');
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [sortField, setSortField] = useState<string>('enabled');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  const [search, setSearch] = useState('');
+  const [productFilter, setProductFilter] = useState<string>('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [selectedRuleIds, setSelectedRuleIds] = useState<React.Key[]>([]);
 
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<KibanaDetectionRule | null>(null);
-  const [rawJson, setRawJson] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm();
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detailRecord, setDetailRecord] = useState<KibanaDetectionRule | null>(null);
-  const [mitreThreat, setMitreThreat] = useState<any[]>([]);
-  const [connectors, setConnectors] = useState<Array<{ id: string; name: string; connector_type_id?: string }>>([]);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewJson, setPreviewJson] = useState('');
-  const [previewData, setPreviewData] = useState<any>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewRange, setPreviewRange] = useState<'5m' | '15m' | '1h' | '24h' | '7d' | 'custom'>('1h');
-  const [previewCustomFrom, setPreviewCustomFrom] = useState('now-1h');
+  const [selectedId, setSelectedId] = useState('');
+  const [yaml, setYaml] = useState('');
+  const [version, setVersion] = useState<number>(1);
+  const [versions, setVersions] = useState<any[]>([]);
+  const [detailTab, setDetailTab] = useState<'sigma' | 'splunk' | 'elastic' | 'test' | 'version'>('sigma');
 
-  const buildKibanaFilter = (text: string) => {
-    const q = String(text || '').trim();
-    if (!q) return undefined;
-    // Keep to fields that are known to exist in Kibana saved object index pattern for rules.
-    return `alert.attributes.name: *${q}*`;
-  };
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorId, setEditorId] = useState('');
+  const [editorYaml, setEditorYaml] = useState('');
+  const [compiled, setCompiled] = useState<{ splunk?: string; kql?: string; profiles?: string[] }>({});
 
-  const loadData = async (
-    nextPage = page,
-    nextPageSize = pageSize,
-    nextQuery = query,
-    nextSortField = sortField,
-    nextSortOrder = sortOrder,
-  ) => {
+  const [maps, setMaps] = useState<LocalMapRow[]>([]);
+  const [deployments, setDeployments] = useState<DeployRow[]>([]);
+  const [githubUrl, setGithubUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [mappingUploading, setMappingUploading] = useState(false);
+
+  const loadRules = async () => {
     setLoading(true);
     try {
-      // Kibana sorting on boolean `enabled` is unstable across some versions/indexes.
-      // For `enabled`, fetch all then sort locally for deterministic behavior.
-      if (nextSortField === 'enabled') {
-        const resp = await listKibanaDetectionRules({
-          page: 1,
-          per_page: 10000,
-          sort_field: 'name',
-          sort_order: 'asc',
-          filter: buildKibanaFilter(nextQuery),
-        });
-        const all = Array.isArray(resp.data) ? resp.data.slice() : [];
-        all.sort((a, b) => {
-          const av = a.enabled ? 1 : 0;
-          const bv = b.enabled ? 1 : 0;
-          return nextSortOrder === 'asc' ? av - bv : bv - av;
-        });
-        setRows(all);
-        setTotal(all.length);
-      } else {
-        const resp = await listKibanaDetectionRules({
-          page: nextPage,
-          per_page: nextPageSize,
-          sort_field: nextSortField,
-          sort_order: nextSortOrder,
-          filter: buildKibanaFilter(nextQuery),
-        });
-        setRows(Array.isArray(resp.data) ? resp.data : []);
-        setTotal(resp.total || (Array.isArray(resp.data) ? resp.data.length : 0));
-      }
+      const list = await listDetectionRules();
+      setRules(Array.isArray(list) ? (list as RuleRow[]) : []);
     } catch (e: any) {
-      messageApi.error(e?.response?.data?.detail || 'Failed to load Kibana detection rules');
-      setRows([]);
-      setTotal(0);
+      message.error(e?.response?.data?.detail || 'Failed to load rules');
     } finally {
       setLoading(false);
     }
   };
 
+  const loadMappings = async () => {
+    try {
+      const list = await listDetectionMappings();
+      const rows = (Array.isArray(list) ? list : []).map((r: any) => ({
+        id: r.id,
+        sigma: String(r.sigma || ''),
+        splunk: String(r.splunk || ''),
+        elastic: String(r.elastic || ''),
+        mapping_profile: String(r.mapping_profile || ''),
+      }));
+      setMaps(rows);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || 'Failed to load mappings');
+      setMaps([]);
+    }
+  };
+
+  const loadDetail = async (id: string) => {
+    const d = await getDetectionRule(id);
+    setSelectedId(id);
+    setYaml(String(d?.yaml || ''));
+    setVersion(Number(d?.version || 1));
+    setCompiled((d?.compiled && typeof d.compiled === 'object') ? d.compiled : {});
+    try {
+      const v = await getPublishedRuleVersions(id);
+      setVersions(Array.isArray(v?.data) ? v.data : []);
+    } catch {
+      setVersions([]);
+    }
+  };
+
   useEffect(() => {
-    loadData();
-    (async () => {
-      try {
-        const list = await listKibanaConnectors();
-        setConnectors(Array.isArray(list) ? list : []);
-      } catch {}
-    })();
+    loadRules();
+    loadMappings();
+    try {
+      setDeployments(JSON.parse(localStorage.getItem(STORAGE_DEPLOY) || '[]'));
+    } catch {
+      setDeployments([]);
+    }
   }, []);
 
   const filtered = useMemo(() => {
-    return rows.filter((r) => {
-      if (enabledFilter === 'enabled' && !r.enabled) return false;
-      if (enabledFilter === 'disabled' && r.enabled) return false;
-      if (severityFilter !== 'all' && String(r.severity || '').toLowerCase() !== severityFilter) return false;
-      if (typeFilter !== 'all' && String(r.type || '').toLowerCase() !== typeFilter) return false;
+    const q = search.trim().toLowerCase();
+    return rules.filter((r) => {
+      const name = String(r.name || r.id || '').toLowerCase();
+      const logsource = String(r.logsource || '').toLowerCase();
+      const profile = String(r.profile || '').toLowerCase();
+      const level = String(r.level || '').toLowerCase() || 'medium';
+      const status = String(r.status || '').toLowerCase() || 'draft';
+      const tags = (Array.isArray(r.tags) ? r.tags : []).join(',').toLowerCase();
+      if (q && !`${r.id} ${name} ${logsource} ${profile} ${tags}`.includes(q)) return false;
+      if (productFilter !== 'all' && !logsource.includes(productFilter.toLowerCase())) return false;
+      if (severityFilter !== 'all' && level !== severityFilter) return false;
+      if (statusFilter !== 'all' && status !== statusFilter) return false;
       return true;
     });
-  }, [rows, enabledFilter, severityFilter, typeFilter]);
+  }, [rules, search, productFilter, severityFilter, statusFilter]);
 
-  const useLocalPaging = sortField === 'enabled';
-  const pagedData = useMemo(() => {
-    if (!useLocalPaging) return filtered;
-    const start = (page - 1) * pageSize;
-    return filtered.slice(start, start + pageSize);
-  }, [useLocalPaging, filtered, page, pageSize]);
+  const productOptions = useMemo(() => {
+    const values = Array.from(new Set(rules
+      .map((r) => String(r.logsource || '').split('/')[0].trim().toLowerCase())
+      .filter(Boolean)));
+    return [{ value: 'all', label: '全部产品' }, ...values.map((v) => ({ value: v, label: v }))];
+  }, [rules]);
 
-  const typeOptions = useMemo(() => {
-    const s = new Set<string>();
-    rows.forEach((r) => {
-      const t = String(r.type || '').toLowerCase().trim();
-      if (t) s.add(t);
-    });
-    return ['all', ...Array.from(s)];
-  }, [rows]);
+  const severityOptions = useMemo(() => {
+    const values = Array.from(new Set(rules.map((r) => String(r.level || '').trim().toLowerCase()).filter(Boolean)));
+    const base = ['critical', 'high', 'medium', 'low'];
+    const ordered = [...base.filter((x) => values.includes(x)), ...values.filter((x) => !base.includes(x))];
+    return [{ value: 'all', label: '全部级别' }, ...ordered.map((v) => ({ value: v, label: v }))];
+  }, [rules]);
 
-  const openCreate = () => {
-    setEditing(null);
-    form.setFieldsValue(defaultRule);
-    setMitreThreat([]);
-    setRawJson(JSON.stringify(defaultRule, null, 2));
-    setOpen(true);
-  };
+  const statusOptions = useMemo(() => {
+    const values = Array.from(new Set(rules.map((r) => String(r.status || '').trim().toLowerCase()).filter(Boolean)));
+    return [{ value: 'all', label: '全部状态' }, ...values.map((v) => ({ value: v, label: v }))];
+  }, [rules]);
 
-  const openEdit = async (record: KibanaDetectionRule) => {
+  const parsed = useMemo(() => {
+    const title = pick(yaml, 'title') || selectedId;
+    const level = pick(yaml, 'level') || 'medium';
+    const status = pick(yaml, 'status') || 'draft';
+    const source = pick(yaml, 'product') || 'unknown';
+    const category = pick(yaml, 'category') || 'unknown';
+    const desc = pick(yaml, 'description') || '';
+    const tags = parseYamlList(yaml, 'tags').join(', ');
+    return { title, level, status, source, category, desc, tags };
+  }, [yaml, selectedId]);
+
+  const publish = async (target: 'splunk' | 'elastic') => {
+    if (!selectedId) return;
     try {
-      const detail = await getKibanaDetectionRule(record.id);
-      const normalizedActions = Array.isArray((detail as any).actions)
-        ? (detail as any).actions.map((a: any) => {
-            const actionTypeId = a?.action_type_id || a?.actionTypeId || '';
-            const frequency = a?.frequency || {};
-            const paramsObj = a?.params ?? {};
-            const connectorType = String(actionTypeId || '');
-            let paramsText = '';
-            if (connectorType === '.index') {
-              const docs = Array.isArray(paramsObj?.documents) ? paramsObj.documents : [];
-              const firstDoc = docs.length ? docs[0] : {};
-              paramsText = JSON.stringify(firstDoc || {}, null, 2);
-            } else {
-              paramsText = JSON.stringify(paramsObj || {}, null, 2);
-            }
-            const isSummary = Boolean(frequency?.summary);
-            let notifyWhen =
-              frequency?.notifyWhen ||
-              frequency?.notify_when ||
-              (isSummary ? 'onThrottleInterval' : 'onActiveAlert');
-            if (isSummary && notifyWhen === 'onActiveAlert') {
-              notifyWhen = 'onThrottleInterval';
-            }
-            return {
-              ...a,
-              action_type_id: actionTypeId,
-              params: paramsText,
-              frequency: {
-                summary: isSummary,
-                notifyWhen,
-                throttle: frequency?.throttle ?? null,
-              },
-            };
-          })
-        : [];
       const payload = {
-        ...detail,
-        index: Array.isArray(detail.index) ? detail.index : [],
-        tags: Array.isArray(detail.tags) ? detail.tags : [],
-        actions: normalizedActions,
+        name: parsed.title,
+        type: 'query',
+        enabled: true,
+        severity: parsed.level,
+        query: target === 'splunk' ? (compiled.splunk || '*') : (compiled.kql || '*'),
+        language: target === 'splunk' ? 'spl' : 'kuery',
+        tags: ['sigma', target],
       };
-      setMitreThreat(Array.isArray((detail as any).threat) ? (detail as any).threat : []);
-      setEditing(detail);
-      form.setFieldsValue(payload);
-      setRawJson(JSON.stringify(payload, null, 2));
-      setOpen(true);
-    } catch (e: any) {
-      messageApi.error(e?.response?.data?.detail || 'Failed to load rule detail');
-    }
-  };
-
-  const onFormChange = () => {
-    const v = form.getFieldsValue();
-    const payload = {
-      ...v,
-      index: Array.isArray(v.index) ? v.index : [],
-      tags: Array.isArray(v.tags) ? v.tags : [],
-      risk_score: Number(v.risk_score || 50),
-      threat: mitreThreat,
-    };
-    setRawJson(JSON.stringify(payload, null, 2));
-  };
-
-  const saveRule = async () => {
-    try {
-      const v = await form.validateFields();
-      const ruleType = String(v.type || 'query');
-      if (ruleType === 'eql' && !String(v.eql_query || '').trim()) {
-        messageApi.error('EQL rule requires eql_query');
-        return;
-      }
-      if (ruleType === 'esql' && !String(v.esql_query || '').trim()) {
-        messageApi.error('ES|QL rule requires esql_query');
-        return;
-      }
-      if (ruleType === 'threshold') {
-        const tf = v?.threshold?.field;
-        const tv = Number(v?.threshold?.value || 0);
-        if (!Array.isArray(tf) || tf.length === 0) {
-          messageApi.error('Threshold rule requires at least one group by field');
-          return;
-        }
-        if (!Number.isFinite(tv) || tv < 1) {
-          messageApi.error('Threshold rule requires threshold value >= 1');
-          return;
-        }
-      }
-      if (ruleType === 'new_terms') {
-        const nf = v?.new_terms_fields;
-        if (!Array.isArray(nf) || nf.length === 0) {
-          messageApi.error('New Terms rule requires at least one field');
-          return;
-        }
-      }
-      if (ruleType === 'threat_match') {
-        const ti = v?.threat_index;
-        const tq = String(v?.threat_query || '').trim();
-        const tm = v?.threat_mapping;
-        if (!Array.isArray(ti) || ti.length === 0) {
-          messageApi.error('Indicator Match rule requires threat index');
-          return;
-        }
-        if (!tq) {
-          messageApi.error('Indicator Match rule requires threat query');
-          return;
-        }
-        if (!tm || (typeof tm === 'string' && !tm.trim())) {
-          messageApi.error('Indicator Match rule requires threat mapping');
-          return;
-        }
-      }
-      const payload = await buildNormalizedPayload();
-      setSaving(true);
-      if (editing?.id) {
-        await updateKibanaDetectionRule(editing.id, payload);
-        messageApi.success('Rule updated');
+      const existing = await listPublishedDetectionRules({ page: 1, per_page: 100, filter: parsed.title });
+      const found = (existing?.data || []).find((x: any) => String(x?.name || '') === parsed.title);
+      if (found?.id) {
+        const full = await getPublishedDetectionRule(found.id);
+        await createPublishedDetectionRule({ ...full, ...payload, id: undefined, rule_id: undefined });
       } else {
-        await createKibanaDetectionRule(payload);
-        messageApi.success('Rule created');
+        await createPublishedDetectionRule(payload);
       }
-      setOpen(false);
-      await loadData();
-    } catch (e: any) {
-      if (!e?.errorFields) messageApi.error(e?.response?.data?.detail || e?.message || 'Failed to save rule');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const buildNormalizedPayload = async () => {
-    const v = await form.validateFields();
-    const ruleType = String(v.type || 'query');
-    const rawActions = Array.isArray((v as any).actions) ? (v as any).actions : [];
-    const normalizedActions = rawActions
-      .map((a: any) => {
-        if (!a) return null;
-        const hasAnyActionInput = Boolean(
-          a.id ||
-          a.action_type_id ||
-          (typeof a.params === 'string' && a.params.trim()) ||
-          (a.params && typeof a.params === 'object' && Object.keys(a.params).length > 0) ||
-          a.group ||
-          a.frequency
-        );
-        if (!hasAnyActionInput) return null;
-        if (!a.id) throw new Error('Connector is required when action is configured.');
-        let params = a.params;
-        if (typeof params === 'string') {
-          const txt = params.trim();
-          if (!txt) params = {};
-          else params = JSON.parse(txt);
-        }
-        const picked = connectors.find((c) => c.id === a.id);
-        const actionTypeId = String(a.action_type_id || picked?.connector_type_id || '').trim();
-        const frequency = a.frequency || {};
-        if (!actionTypeId) {
-          throw new Error('Action type ID is required. Please select a connector.');
-        }
-        const isSummary = Boolean(frequency.summary);
-        const notifyWhen = String(
-          frequency.notifyWhen ||
-          frequency.notify_when ||
-          (isSummary ? 'onThrottleInterval' : 'onActiveAlert')
-        );
-        if (actionTypeId === '.index') {
-          if (Array.isArray(params?.documents)) {
-            // keep as-is
-          } else if (params && typeof params === 'object') {
-            params = { documents: [params] };
-          } else {
-            params = { documents: [{}] };
-          }
-        }
-        return {
-          group: a.group || 'default',
-          id: a.id,
-          action_type_id: actionTypeId,
-          params: params ?? {},
-          frequency: {
-            summary: isSummary,
-            notifyWhen,
-            throttle: frequency.throttle ?? null,
-          },
-        };
-      })
-      .filter(Boolean);
-    const payload: any = {
-      ...v,
-      index: Array.isArray(v.index) ? v.index : [],
-      tags: Array.isArray(v.tags) ? v.tags : [],
-      risk_score: Number(v.risk_score || 50),
-      description: String(v.description ?? editing?.description ?? ''),
-      threat: mitreThreat,
-      actions: normalizedActions,
-    };
-    // UI does not manage rule_id; never send it to avoid id/rule_id conflicts.
-    delete payload.rule_id;
-    if (ruleType !== 'eql') delete payload.eql_query;
-    if (ruleType !== 'esql') delete payload.esql_query;
-    if (ruleType !== 'threshold') delete payload.threshold;
-    if (ruleType !== 'new_terms') {
-      delete payload.new_terms_fields;
-      delete payload.history_window_start;
-    }
-    if (ruleType !== 'threat_match') {
-      delete payload.threat_index;
-      delete payload.threat_query;
-      delete payload.threat_mapping;
-    } else if (typeof payload.threat_mapping === 'string') {
-      try { payload.threat_mapping = JSON.parse(payload.threat_mapping); } catch {}
-    }
-    if (!payload.actions?.length) delete payload.actions;
-    return payload;
-  };
-
-  const previewRule = async () => {
-    try {
-      const payload = await buildNormalizedPayload();
-      const fromMap: Record<string, string> = {
-        '5m': 'now-5m',
-        '15m': 'now-15m',
-        '1h': 'now-1h',
-        '24h': 'now-24h',
-        '7d': 'now-7d',
+      const row: DeployRow = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        ruleId: selectedId,
+        target: target === 'splunk' ? 'splunk-dev' : 'elastic-dev',
+        status: 'success',
+        createdAt: new Date().toISOString(),
       };
-      payload.from = previewRange === 'custom' ? (previewCustomFrom || 'now-1h') : fromMap[previewRange];
-      payload.to = 'now';
-      setPreviewLoading(true);
-      const result = await previewKibanaDetectionRule(payload);
-      setPreviewData(result);
-      setPreviewJson(JSON.stringify(result, null, 2));
-      setPreviewOpen(true);
+      const next = [row, ...deployments];
+      setDeployments(next);
+      localStorage.setItem(STORAGE_DEPLOY, JSON.stringify(next));
+      message.success(`Published ${target}`);
+    } catch {
+      const row: DeployRow = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        ruleId: selectedId,
+        target: target === 'splunk' ? 'splunk-dev' : 'elastic-dev',
+        status: 'failed',
+        createdAt: new Date().toISOString(),
+      };
+      const next = [row, ...deployments];
+      setDeployments(next);
+      localStorage.setItem(STORAGE_DEPLOY, JSON.stringify(next));
+      message.error(`Publish ${target} failed`);
+    }
+  };
+
+  const importGithub = async () => {
+    const url = githubUrl.trim();
+    if (!url) return message.error('GitHub raw URL is required');
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
+      const text = await resp.text();
+      const id = pick(text, 'id') || `sigma-${Date.now()}`;
+      await saveDetectionRule(id, text);
+      await loadRules();
+      await loadDetail(id);
+      setTopTab('rules');
+      message.success(`Imported ${id}`);
     } catch (e: any) {
-      if (!e?.errorFields) messageApi.error(e?.response?.data?.message || e?.response?.data?.detail || e?.message || 'Failed to preview rule');
+      message.error(e?.message || 'Import failed');
+    }
+  };
+
+  const handleUploadFiles = async (files: File[]) => {
+    if (!files.length) return;
+    setUploading(true);
+    try {
+      const res = await uploadDetectionRules(files);
+      await loadRules();
+      message.success(`上传完成: 新增 ${res?.created || 0}，更新 ${res?.updated || 0}，跳过 ${res?.skipped || 0}`);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || '上传失败');
     } finally {
-      setPreviewLoading(false);
+      setUploading(false);
     }
   };
 
-  const saveRawJson = async () => {
-    try {
-      const parsed = JSON.parse(rawJson || '{}');
-      setSaving(true);
-      if (editing?.id) {
-        await updateKibanaDetectionRule(editing.id, parsed);
-        messageApi.success('Rule updated from JSON');
-      } else {
-        await createKibanaDetectionRule(parsed);
-        messageApi.success('Rule created from JSON');
-      }
-      setOpen(false);
-      await loadData();
-    } catch (e: any) {
-      messageApi.error(e?.response?.data?.detail || e?.message || 'Invalid JSON or failed to save');
-    } finally {
-      setSaving(false);
-    }
+  const deleteSelectedRules = async () => {
+    if (!selectedRuleIds.length) return;
+    const ids = selectedRuleIds.map((x) => String(x));
+    await Promise.all(ids.map((id) => deleteDetectionRule(id)));
+    if (selectedId && ids.includes(selectedId)) setSelectedId('');
+    setSelectedRuleIds([]);
+    await loadRules();
+    message.success(`已删除 ${ids.length} 条规则`);
   };
 
-  const removeRule = async (id: string) => {
-    if (!id) return;
-    try {
-      await deleteKibanaDetectionRule(id);
-      messageApi.success('Rule deleted');
-      await loadData();
-    } catch (e: any) {
-      messageApi.error(e?.response?.data?.detail || 'Failed to delete rule');
-    }
-  };
-
-  const toggleRuleEnabled = async (record: KibanaDetectionRule, nextEnabled: boolean) => {
-    if (!record?.id) return;
-    try {
-      await patchKibanaDetectionRule(record.id, { enabled: nextEnabled });
-      messageApi.success(nextEnabled ? 'Rule enabled' : 'Rule disabled');
-      await loadData();
-    } catch (e: any) {
-      messageApi.error(e?.response?.data?.detail || e?.message || 'Failed to update enabled state');
-    }
-  };
-
-  const columns: ColumnsType<KibanaDetectionRule> = [
+  const ruleColumns: ColumnsType<RuleRow> = [
+    { title: '规则名称', dataIndex: 'name', key: 'name', render: (_, r) => <span style={{ fontWeight: 700 }}>{r.name || r.id}</span> },
     {
-      title: 'Name',
-      dataIndex: 'name',
-      key: 'name',
-      sorter: true,
-      sortOrder: sortField === 'name' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-      render: (_, r) => (
-        <div>
-          <Tooltip title={r.name || '-'}>
-            <div
-              style={{
-                fontWeight: 600,
-                maxWidth: 320,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {r.name || '-'}
-            </div>
-          </Tooltip>
-          <div style={{ fontSize: 12, color: '#888' }}>{r.id}</div>
-        </div>
-      ),
-    },
-    {
-      title: 'Type',
-      dataIndex: 'type',
-      key: 'type',
-      width: 120,
-    },
-    {
-      title: 'Enabled',
-      dataIndex: 'enabled',
-      key: 'enabled',
-      width: 84,
-      sorter: true,
-      sortOrder: sortField === 'enabled' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-      render: (v: boolean) => v ? <Tag color="green">ON</Tag> : <Tag>OFF</Tag>,
-    },
-    {
-      title: 'Severity',
-      dataIndex: 'severity',
-      key: 'severity',
-      width: 110,
-      sorter: true,
-      sortOrder: sortField === 'severity' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-      render: (v?: string) => {
-        const raw = String(v || '').toLowerCase();
-        const val = ['critical', 'high', 'medium', 'low'].includes(raw) ? raw : 'low';
-        const label = val.charAt(0).toUpperCase() + val.slice(1);
-        return <Tag color={severityColor(val)}>{label}</Tag>;
+      title: '级别',
+      key: 'level',
+      width: 100,
+      render: (_, r) => {
+        const level = String(r.level || 'medium').toLowerCase();
+        const color = level === 'critical' ? 'red' : level === 'high' ? 'volcano' : level === 'medium' ? 'gold' : 'blue';
+        return <Tag color={color}>{level}</Tag>;
       },
     },
-    {
-      title: 'Risk',
-      dataIndex: 'risk_score',
-      key: 'risk_score',
-      width: 72,
-      sorter: true,
-      sortOrder: sortField === 'risk_score' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-    },
-    {
-      title: 'Author',
-      dataIndex: 'author',
-      key: 'author',
-      width: 120,
-      ellipsis: true,
-      sorter: true,
-      sortOrder: sortField === 'author' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-      render: (v: any) => Array.isArray(v) ? v.join(', ') : (v || '-'),
-    },
-    {
-      title: 'Version',
-      dataIndex: 'version',
-      key: 'version',
-      width: 70,
-    },
-    {
-      title: 'Updated',
-      dataIndex: 'updated_at',
-      key: 'updated_at',
-      width: 150,
-      ellipsis: true,
-      sorter: true,
-      sortOrder: sortField === 'updated_at' ? (sortOrder === 'asc' ? 'ascend' : 'descend') : null,
-    },
-    {
-      title: 'Actions',
-      key: 'actions',
-      width: 260,
-      render: (_, r) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>Edit</Button>
-          {r.enabled ? (
-            <Button size="small" onClick={() => toggleRuleEnabled(r, false)}>Disable</Button>
-          ) : (
-            <Button size="small" type="primary" ghost onClick={() => toggleRuleEnabled(r, true)}>Enable</Button>
-          )}
-          <Popconfirm title={`Delete rule: ${r.name || r.id}?`} onConfirm={() => removeRule(r.id)}>
-            <Button size="small" danger icon={<DeleteOutlined />}>Delete</Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
+    { title: '状态', key: 'status', width: 100, render: (_, r) => <Tag color="orange">{r.status || 'draft'}</Tag> },
+    { title: '日志源', dataIndex: 'logsource', key: 'logsource', width: 220, render: (v) => v || '-' },
+    { title: 'Profile', dataIndex: 'profile', key: 'profile', width: 200, render: (v) => v || '-' },
+    { title: '标签', key: 'tags', render: (_, r) => Array.isArray(r.tags) && r.tags.length ? r.tags.join(', ') : '-' },
+    { title: '发布', key: 'publish', width: 100, render: () => '未发布' },
   ];
 
-  const allColumns = useMemo(() => columns, [columns]);
-  const visibleColumns = useMemo(
-    () => allColumns.filter((c: any) => c?.key !== 'type' && c?.key !== 'version'),
-    [allColumns]
-  );
+  const saveRule = async () => {
+    if (!editorId.trim() || !editorYaml.trim()) return message.error('Rule ID and YAML are required');
+    await saveDetectionRule(editorId.trim(), editorYaml);
+    setEditorOpen(false);
+    await loadRules();
+    await loadDetail(editorId.trim());
+  };
+
+  const mappingColumns: ColumnsType<LocalMapRow> = [
+    { title: 'Profile', dataIndex: 'mapping_profile', key: 'mapping_profile', width: 220 },
+    { title: 'Sigma', dataIndex: 'sigma', key: 'sigma' },
+    { title: 'Splunk', dataIndex: 'splunk', key: 'splunk' },
+    { title: 'Elastic ECS', dataIndex: 'elastic', key: 'elastic' },
+  ];
+
+  const handleUploadMappings = async (files: File[]) => {
+    if (!files.length) return;
+    setMappingUploading(true);
+    try {
+      const res = await uploadDetectionMappings(files);
+      await loadMappings();
+      message.success(`映射上传完成: 新增 ${res?.created || 0}，更新 ${res?.updated || 0}，跳过 ${res?.skipped || 0}`);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || '映射上传失败');
+    } finally {
+      setMappingUploading(false);
+    }
+  };
+
+  const deployColumns: ColumnsType<DeployRow> = [
+    { title: 'Rule', dataIndex: 'ruleId', key: 'ruleId' },
+    { title: 'Target', dataIndex: 'target', key: 'target' },
+    { title: 'Status', dataIndex: 'status', key: 'status', render: (v) => v === 'success' ? <Tag color="green">success</Tag> : <Tag color="red">failed</Tag> },
+    { title: 'Time', dataIndex: 'createdAt', key: 'createdAt' },
+  ];
+
+  const rulesContent = () => {
+    if (!selectedId) {
+      return (
+        <Card>
+          <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }} wrap>
+            <Space>
+              <Input.Search placeholder="搜索规则、标签、数据源" value={search} onChange={(e) => setSearch(e.target.value)} onSearch={loadRules} style={{ width: 560 }} />
+              <Select value={productFilter} onChange={setProductFilter} style={{ width: 160 }} options={productOptions} />
+              <Select value={severityFilter} onChange={setSeverityFilter} style={{ width: 140 }} options={severityOptions} />
+              <Select value={statusFilter} onChange={setStatusFilter} style={{ width: 140 }} options={statusOptions} />
+            </Space>
+            <Space>
+              <Typography.Text type="secondary">显示 {filtered.length} / {rules.length} 条，内置 SigmaHQ {Math.max(0, rules.length - 1)} 条</Typography.Text>
+              <Popconfirm
+                title={`确认删除选中的 ${selectedRuleIds.length} 条规则？`}
+                okText="删除"
+                cancelText="取消"
+                disabled={!selectedRuleIds.length}
+                onConfirm={deleteSelectedRules}
+              >
+                <Button danger disabled={!selectedRuleIds.length}>删除选中规则</Button>
+              </Popconfirm>
+              <Button loading={uploading} onClick={() => document.getElementById('detection-upload-files')?.click()}>上传文件</Button>
+              <Button loading={uploading} onClick={() => document.getElementById('detection-upload-folder')?.click()}>上传文件夹</Button>
+              <Button type="primary" onClick={() => { setEditorId(''); setEditorYaml(''); setEditorOpen(true); }}>新建规则</Button>
+              <input
+                id="detection-upload-files"
+                type="file"
+                accept=".yml,.yaml"
+                multiple
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files || []);
+                  await handleUploadFiles(files);
+                  e.currentTarget.value = '';
+                }}
+              />
+              <input
+                id="detection-upload-folder"
+                type="file"
+                accept=".yml,.yaml"
+                multiple
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files || []);
+                  await handleUploadFiles(files);
+                  e.currentTarget.value = '';
+                }}
+                {...({ webkitdirectory: 'true', directory: 'true' } as any)}
+              />
+            </Space>
+          </Space>
+          <Table
+            rowKey="id"
+            loading={loading}
+            dataSource={filtered}
+            columns={ruleColumns}
+            rowSelection={{
+              selectedRowKeys: selectedRuleIds,
+              onChange: (keys) => setSelectedRuleIds(keys),
+            }}
+            pagination={{ pageSize: 12 }}
+            onRow={(r) => ({ onClick: () => loadDetail(r.id) })}
+          />
+        </Card>
+      );
+    }
+
+    const tabText = detailTab === 'sigma'
+      ? section(yaml, 'detection') || yaml
+      : detailTab === 'splunk'
+      ? (compiled.splunk || '*')
+      : detailTab === 'elastic'
+      ? (compiled.kql || '*')
+      : detailTab === 'test'
+      ? '测试入口预留（可接 /detections/test）'
+      : versions.map((v) => `v${v.version} ${v.change_type || 'update'} ${v.created_at || ''}`).join('\n') || 'No versions';
+
+    return (
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+          <Button onClick={() => setSelectedId('')}>返回列表</Button>
+          <Space>
+            <Button onClick={() => { setEditorId(selectedId); setEditorYaml(yaml); setEditorOpen(true); }}>编辑</Button>
+            <Button type="primary" onClick={() => publish('splunk')}>发布 Splunk</Button>
+            <Button type="primary" onClick={() => publish('elastic')}>发布 Elastic 到 Kibana</Button>
+          </Space>
+        </div>
+
+        <Typography.Title level={2} style={{ marginTop: 0 }}>{parsed.title}</Typography.Title>
+        <Space style={{ marginBottom: 10 }}>
+          <Tag color="red">{parsed.level}</Tag>
+          <Tag color="orange">{parsed.status}</Tag>
+          <Typography.Text type="secondary">v{version}</Typography.Text>
+        </Space>
+        <Typography.Paragraph type="secondary">{parsed.desc || 'No description'}</Typography.Paragraph>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 16 }}>
+          <Card size="small" title="日志源">{parsed.source} / {parsed.category}</Card>
+          <Card size="small" title="映射 Profile">{(compiled.profiles || []).slice(0, 4).join(', ') || `${parsed.source}_${parsed.category}`}</Card>
+          <Card size="small" title="标签">{parsed.tags || '-'}</Card>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+          <Typography.Title level={3} style={{ margin: 0 }}>Detection</Typography.Title>
+          <Typography.Text type="secondary">{section(yaml, 'detection') ? '检测字段就绪' : '0 个检测字段'}</Typography.Text>
+        </div>
+
+        <Space style={{ marginBottom: 10 }}>
+          <Button type={detailTab === 'sigma' ? 'primary' : 'default'} onClick={() => setDetailTab('sigma')}>Sigma</Button>
+          <Button type={detailTab === 'splunk' ? 'primary' : 'default'} onClick={() => setDetailTab('splunk')}>Splunk SPL</Button>
+          <Button type={detailTab === 'elastic' ? 'primary' : 'default'} onClick={() => setDetailTab('elastic')}>Elastic KQL</Button>
+          <Button type={detailTab === 'test' ? 'primary' : 'default'} onClick={() => setDetailTab('test')}>测试</Button>
+          <Button type={detailTab === 'version' ? 'primary' : 'default'} onClick={() => setDetailTab('version')}>版本</Button>
+        </Space>
+
+        {detailTab === 'version' ? (
+          <Space wrap style={{ marginBottom: 10 }}>
+            {versions.map((v) => (
+              <Button key={v.version} size="small" onClick={async () => { await rollbackPublishedRuleVersion(selectedId, v.version); await loadDetail(selectedId); message.success(`已回滚到 v${v.version}`); }}>
+                回滚到 v{v.version}
+              </Button>
+            ))}
+          </Space>
+        ) : null}
+
+        <pre
+          style={{
+            margin: 0,
+            background: '#0c1733',
+            color: '#e8eefc',
+            borderRadius: 8,
+            padding: 16,
+            minHeight: 220,
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {tabText}
+        </pre>
+      </Card>
+    );
+  };
 
   return (
-    <Card
-      title={`Kibana Detection Rules (${total})`}
-      extra={
-        <Space>
-          <Input.Search
-            allowClear
-            placeholder="Rule name, id, type, severity"
-            style={{ width: 220 }}
-            onSearch={(v) => {
-              setQuery(v);
-              setPage(1);
-              loadData(1, pageSize, v);
-            }}
-            onChange={(e) => {
-              if (!e.target.value) {
-                setQuery('');
-                setPage(1);
-                loadData(1, pageSize, '');
-              }
-            }}
-          />
-          <Segmented
-            value={enabledFilter}
-            onChange={(v) => setEnabledFilter(v as any)}
-            options={[
-              { label: 'All rules', value: 'all' },
-              { label: 'Enabled', value: 'enabled' },
-              { label: 'Disabled', value: 'disabled' },
-            ]}
-          />
-          <Select
-            value={severityFilter}
-            onChange={setSeverityFilter}
-            style={{ width: 120 }}
-            options={[
-              { value: 'all', label: 'Severity: All' },
-              { value: 'critical', label: 'Critical' },
-              { value: 'high', label: 'High' },
-              { value: 'medium', label: 'Medium' },
-              { value: 'low', label: 'Low' },
-            ]}
-          />
-          <Select
-            value={typeFilter}
-            onChange={setTypeFilter}
-            style={{ width: 130 }}
-            options={typeOptions.map((t) => ({ value: t, label: t === 'all' ? 'Type: All' : t }))}
-          />
-          <Button icon={<ReloadOutlined />} onClick={() => loadData()} loading={loading}>Refresh</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Create Rule</Button>
-        </Space>
-      }
-    >
-      <Table
-        rowKey="id"
-        loading={loading}
-        columns={visibleColumns}
-        dataSource={pagedData}
-        scroll={{ x: 1200 }}
-        expandable={{
-          expandedRowRender: (record) => (
-            <Space>
-              <Button
-                size="small"
-                onClick={() => {
-                  setDetailRecord(record);
-                  setDetailOpen(true);
-                }}
-              >
-                View full details
-              </Button>
-            </Space>
-          ),
-        }}
-        rowClassName={() => 'kibana-detection-row'}
-        pagination={{
-          current: page,
-          pageSize,
-          total: useLocalPaging ? filtered.length : total,
-          showSizeChanger: true,
-          pageSizeOptions: ['20', '50', '100', '200'],
-        }}
-        onChange={(pagination, _filters, sorter) => {
-          const s = sorter as SorterResult<KibanaDetectionRule>;
-          const sf = s?.field ? String(s.field as string) : sortField;
-          const so: 'asc' | 'desc' = s?.order === 'ascend' ? 'asc' : 'desc';
-          setSortField(sf);
-          setSortOrder(so);
-          const p = pagination.current || 1;
-          const ps = pagination.pageSize || pageSize;
-          setPage(p);
-          setPageSize(ps);
-          loadData(p, ps, query, sf, so);
-        }}
-      />
-
-      <Modal
-        title={editing ? `Edit Rule: ${editing.name || editing.id}` : 'Create Rule'}
-        open={open}
-        onCancel={() => setOpen(false)}
-        width={1100}
-        footer={[
-          <Button key="cancel" onClick={() => setOpen(false)}>Cancel</Button>,
-          <Space key="preview-group">
-            <Select
-              value={previewRange}
-              style={{ width: 120 }}
-              onChange={(v) => setPreviewRange(v as any)}
-              options={[
-                { value: '5m', label: 'Last 5m' },
-                { value: '15m', label: 'Last 15m' },
-                { value: '1h', label: 'Last 1h' },
-                { value: '24h', label: 'Last 24h' },
-                { value: '7d', label: 'Last 7d' },
-                { value: 'custom', label: 'Custom' },
-              ]}
-            />
-            {previewRange === 'custom' ? (
-              <Input
-                value={previewCustomFrom}
-                onChange={(e) => setPreviewCustomFrom(e.target.value)}
-                placeholder="now-2h"
-                style={{ width: 120 }}
-              />
-            ) : null}
-            <Button key="preview" onClick={previewRule} loading={previewLoading}>Rule Preview</Button>
-          </Space>,
-          <Button key="json" onClick={saveRawJson} loading={saving}>Save JSON</Button>,
-          <Button key="save" type="primary" onClick={saveRule} loading={saving}>Save</Button>,
+    <>
+      <Tabs
+        activeKey={topTab}
+        onChange={setTopTab}
+        items={[
+          { key: 'rules', label: '规则库', children: rulesContent() },
+          {
+            key: 'mappings',
+            label: '字段映射',
+            children: (
+              <Card>
+                <Space style={{ marginBottom: 12 }}>
+                  <Button loading={mappingUploading} onClick={() => document.getElementById('detection-upload-mappings-files')?.click()}>上传映射文件</Button>
+                  <Button loading={mappingUploading} onClick={() => document.getElementById('detection-upload-mappings-folder')?.click()}>上传映射文件夹</Button>
+                  <Button onClick={loadMappings}>刷新</Button>
+                  <input
+                    id="detection-upload-mappings-files"
+                    type="file"
+                    accept=".json,.csv"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files || []);
+                      await handleUploadMappings(files);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                  <input
+                    id="detection-upload-mappings-folder"
+                    type="file"
+                    accept=".json,.csv"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files || []);
+                      await handleUploadMappings(files);
+                      e.currentTarget.value = '';
+                    }}
+                    {...({ webkitdirectory: 'true', directory: 'true' } as any)}
+                  />
+                </Space>
+                <Table rowKey="id" dataSource={maps} columns={mappingColumns} pagination={{ pageSize: 10 }} />
+              </Card>
+            ),
+          },
+          {
+            key: 'deployments',
+            label: '发布记录',
+            children: <Card><Table rowKey="id" dataSource={deployments} columns={deployColumns} pagination={{ pageSize: 10 }} /></Card>,
+          },
+          {
+            key: 'github',
+            label: 'GitHub导入',
+            children: (
+              <Card>
+                <Space>
+                  <Input placeholder="https://raw.githubusercontent.com/.../rule.yml" value={githubUrl} onChange={(e) => setGithubUrl(e.target.value)} style={{ width: 600 }} />
+                  <Button type="primary" onClick={importGithub}>导入</Button>
+                </Space>
+              </Card>
+            ),
+          },
         ]}
-      >
-        <Tabs
-          items={[
-            {
-              key: 'definition',
-              label: 'Definition',
-              children: (
-                <Form form={form} layout="vertical" onValuesChange={onFormChange} initialValues={defaultRule}>
-                  <Card size="small" title="Rule type" style={{ marginBottom: 12 }}>
-                    <Space wrap>
-                      {[
-                        { value: 'query', label: 'Custom query' },
-                        { value: 'threshold', label: 'Threshold' },
-                        { value: 'eql', label: 'Event Correlation' },
-                        { value: 'new_terms', label: 'New Terms' },
-                        { value: 'threat_match', label: 'Indicator Match' },
-                        { value: 'esql', label: 'ES|QL' },
-                      ].map((it) => {
-                        const currentType = form.getFieldValue('type') || 'query';
-                        const active = currentType === it.value;
-                        return (
-                          <Button
-                            key={it.value}
-                            type={active ? 'primary' : 'default'}
-                            onClick={() => {
-                              form.setFieldValue('type', it.value);
-                              if (it.value !== 'eql') form.setFieldValue('eql_query', '');
-                              if (it.value !== 'esql') form.setFieldValue('esql_query', '');
-                              if (it.value !== 'threshold') form.setFieldValue('threshold', { field: [], value: 1, cardinality: [] });
-                              if (it.value !== 'new_terms') {
-                                form.setFieldValue('new_terms_fields', []);
-                                form.setFieldValue('history_window_start', 'now-7d');
-                              }
-                              if (it.value !== 'threat_match') {
-                                form.setFieldValue('threat_index', []);
-                                form.setFieldValue('threat_query', '*');
-                                form.setFieldValue('threat_mapping', []);
-                              }
-                              onFormChange();
-                            }}
-                          >
-                            {it.label}
-                          </Button>
-                        );
-                      })}
-                    </Space>
-                  </Card>
-                  <Space style={{ width: '100%' }} align="start">
-                    <div style={{ width: 520 }}>
-                      <Form.Item name="name" label="Name" rules={[{ required: true }]}><Input /></Form.Item>
-                      <Form.Item name="type" label="Type" rules={[{ required: true }]}>
-                        <Select options={[{ value: 'query' }, { value: 'threshold' }, { value: 'eql' }, { value: 'esql' }, { value: 'threat_match' }, { value: 'saved_query' }, { value: 'new_terms' }]} />
-                      </Form.Item>
-                      <Form.Item name="severity" label="Severity" rules={[{ required: true }]}>
-                        <Select
-                          options={[
-                            { value: 'critical', label: 'Critical' },
-                            { value: 'high', label: 'High' },
-                            { value: 'medium', label: 'Medium' },
-                            { value: 'low', label: 'Low' },
-                          ]}
-                        />
-                      </Form.Item>
-                      <Form.Item name="risk_score" label="Risk Score" rules={[{ required: true }]}><InputNumber min={0} max={100} style={{ width: '100%' }} /></Form.Item>
-                    </div>
-                    <div style={{ width: 520 }}>
-                      <Form.Item name="index" label="Index Patterns"><Select mode="tags" tokenSeparators={[',']} /></Form.Item>
-                      <Form.Item name="language" label="Query Language"><Select options={[{ value: 'kuery' }, { value: 'lucene' }, { value: 'eql' }]} /></Form.Item>
-                      <Form.Item name="query" label="Query"><Input.TextArea rows={4} /></Form.Item>
-                      {(form.getFieldValue('type') || 'query') === 'eql' ? (
-                        <Form.Item name="eql_query" label="EQL Query"><Input.TextArea rows={5} /></Form.Item>
-                      ) : null}
-                      {(form.getFieldValue('type') || 'query') === 'esql' ? (
-                        <Form.Item name="esql_query" label="ES|QL Query"><Input.TextArea rows={5} /></Form.Item>
-                      ) : null}
-                      {(form.getFieldValue('type') || 'query') === 'threshold' ? (
-                        <Card size="small" title="Threshold" style={{ marginBottom: 8 }}>
-                          <Form.Item name={['threshold', 'field']} label="Group by field(s)">
-                            <Select mode="tags" tokenSeparators={[',']} />
-                          </Form.Item>
-                          <Form.Item name={['threshold', 'value']} label="Threshold value">
-                            <InputNumber min={1} style={{ width: '100%' }} />
-                          </Form.Item>
-                          <Form.Item name={['threshold', 'cardinality']} label="Cardinality field(s)">
-                            <Select mode="tags" tokenSeparators={[',']} />
-                          </Form.Item>
-                        </Card>
-                      ) : null}
-                      {(form.getFieldValue('type') || 'query') === 'new_terms' ? (
-                        <Card size="small" title="New terms" style={{ marginBottom: 8 }}>
-                          <Form.Item name="new_terms_fields" label="Fields">
-                            <Select mode="tags" tokenSeparators={[',']} />
-                          </Form.Item>
-                          <Form.Item name="history_window_start" label="History window start">
-                            <Input placeholder="now-7d" />
-                          </Form.Item>
-                        </Card>
-                      ) : null}
-                      {(form.getFieldValue('type') || 'query') === 'threat_match' ? (
-                        <Card size="small" title="Indicator match" style={{ marginBottom: 8 }}>
-                          <Form.Item name="threat_index" label="Threat index">
-                            <Select mode="tags" tokenSeparators={[',']} />
-                          </Form.Item>
-                          <Form.Item name="threat_query" label="Threat query">
-                            <Input.TextArea rows={3} />
-                          </Form.Item>
-                          <Form.Item name="threat_mapping" label="Threat mapping (JSON)">
-                            <Input.TextArea rows={4} placeholder='[{"entries":[{"field":"host.name","type":"mapping","value":"host.name"}]}]' />
-                          </Form.Item>
-                        </Card>
-                      ) : null}
-                    </div>
-                  </Space>
-                </Form>
-              ),
-            },
-            {
-              key: 'about',
-              label: 'About',
-              children: (
-                <Form form={form} layout="vertical" onValuesChange={onFormChange} initialValues={defaultRule}>
-                  <Space style={{ width: '100%' }} align="start">
-                    <div style={{ width: 520 }}>
-                      <Form.Item name="author" label="Author"><Select mode="tags" tokenSeparators={[',']} /></Form.Item>
-                      <Form.Item name="license" label="License"><Input /></Form.Item>
-                      <Form.Item name="description" label="Description"><Input.TextArea rows={4} /></Form.Item>
-                      <Form.Item name="note" label="Note"><Input.TextArea rows={4} /></Form.Item>
-                    </div>
-                    <div style={{ width: 520 }}>
-                      <Form.Item name="references" label="References"><Select mode="tags" tokenSeparators={[',']} /></Form.Item>
-                      <Form.Item name="false_positives" label="False Positives"><Select mode="tags" tokenSeparators={[',']} /></Form.Item>
-                      <Form.Item name="tags" label="Tags"><Select mode="tags" tokenSeparators={[',']} /></Form.Item>
-                      <Card size="small" title="MITRE ATT&CK Mapping">
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          {(mitreThreat || []).map((t, idx) => {
-                            const tactic = t?.tactic || {};
-                            const techniques = Array.isArray(t?.technique) ? t.technique : [];
-                            return (
-                              <div key={idx} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10 }}>
-                                <Space direction="vertical" style={{ width: '100%' }}>
-                                  <Input
-                                    placeholder="Tactic ID (e.g. TA0001)"
-                                    value={tactic.id || ''}
-                                    onChange={(e) => {
-                                      const next = [...mitreThreat];
-                                      next[idx] = { ...next[idx], tactic: { ...tactic, id: e.target.value } };
-                                      setMitreThreat(next);
-                                    }}
-                                  />
-                                  <Input
-                                    placeholder="Tactic Name (e.g. Initial Access)"
-                                    value={tactic.name || ''}
-                                    onChange={(e) => {
-                                      const next = [...mitreThreat];
-                                      next[idx] = { ...next[idx], tactic: { ...tactic, name: e.target.value } };
-                                      setMitreThreat(next);
-                                    }}
-                                  />
-                                  <Input
-                                    placeholder="Tactic Ref URL"
-                                    value={tactic.reference || ''}
-                                    onChange={(e) => {
-                                      const next = [...mitreThreat];
-                                      next[idx] = { ...next[idx], tactic: { ...tactic, reference: e.target.value } };
-                                      setMitreThreat(next);
-                                    }}
-                                  />
-                                  <Select
-                                    mode="tags"
-                                    style={{ width: '100%' }}
-                                    placeholder="Technique: T1110|Brute Force|https://attack.mitre.org/techniques/T1110"
-                                    value={techniques.map((x: any) => `${x.id || ''}|${x.name || ''}|${x.reference || ''}`)}
-                                    onChange={(vals: string[]) => {
-                                      const parsed = vals.map((v) => {
-                                        const [id, name, reference] = String(v).split('|');
-                                        return { id: (id || '').trim(), name: (name || '').trim(), reference: (reference || '').trim() };
-                                      });
-                                      const next = [...mitreThreat];
-                                      next[idx] = { ...next[idx], technique: parsed };
-                                      setMitreThreat(next);
-                                    }}
-                                  />
-                                  <Button
-                                    danger
-                                    onClick={() => {
-                                      setMitreThreat(mitreThreat.filter((_, i) => i !== idx));
-                                    }}
-                                  >
-                                    Remove Mapping
-                                  </Button>
-                                </Space>
-                              </div>
-                            );
-                          })}
-                          <Button
-                            onClick={() => {
-                              setMitreThreat([
-                                ...mitreThreat,
-                                { framework: 'MITRE ATT&CK', tactic: { id: '', name: '', reference: '' }, technique: [] },
-                              ]);
-                            }}
-                          >
-                            Add MITRE Mapping
-                          </Button>
-                        </Space>
-                      </Card>
-                    </div>
-                  </Space>
-                </Form>
-              ),
-            },
-            {
-              key: 'schedule',
-              label: 'Schedule',
-              children: (
-                <Form form={form} layout="vertical" onValuesChange={onFormChange} initialValues={defaultRule}>
-                  <Space style={{ width: '100%' }} align="start">
-                    <div style={{ width: 520 }}>
-                      <Form.Item name="from" label="From"><Input placeholder="now-6m" /></Form.Item>
-                      <Form.Item name="to" label="To"><Input placeholder="now" /></Form.Item>
-                      <Form.Item name="interval" label="Interval"><Input placeholder="5m" /></Form.Item>
-                    </div>
-                    <div style={{ width: 520 }}>
-                      <Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item>
-                      <Form.Item name="max_signals" label="Max Signals"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
-                    </div>
-                  </Space>
-                </Form>
-              ),
-            },
-            {
-              key: 'actions',
-              label: 'Actions',
-              children: (
-                <Form form={form} layout="vertical" onValuesChange={onFormChange} initialValues={defaultRule}>
-                  <Space style={{ width: '100%' }} align="start">
-                    <div style={{ width: 520 }}>
-                      <Card size="small" title="Actions">
-                        <Form.Item name={['actions', 0, 'group']} label="Action group" initialValue="default">
-                          <Input placeholder="default" />
-                        </Form.Item>
-                        <Form.Item name={['actions', 0, 'id']} label="Connector">
-                          <Select
-                            showSearch
-                            placeholder="Select connector"
-                            optionFilterProp="label"
-                            options={connectors.map((c) => ({
-                              value: c.id,
-                              label: `${c.name} (${c.connector_type_id || 'unknown'})`,
-                            }))}
-                            onChange={(val) => {
-                              const picked = connectors.find((c) => c.id === val);
-                              if (picked?.connector_type_id) {
-                                form.setFieldValue(['actions', 0, 'action_type_id'], picked.connector_type_id);
-                              }
-                            }}
-                          />
-                        </Form.Item>
-                        <Form.Item name={['actions', 0, 'action_type_id']} label="Action type ID">
-                          <Input placeholder=".index / .slack / .email ..." />
-                        </Form.Item>
-                        <Form.Item name={['actions', 0, 'params']} label="Document to index (JSON)">
-                          <Input.TextArea rows={8} placeholder='{"index":"alerts","body":{"title":"{{context.rule.name}}"}}' />
-                        </Form.Item>
-                        <Form.Item label="Action frequency" required>
-                          <Space.Compact style={{ width: '100%' }}>
-                            <Form.Item
-                              noStyle
-                              name={['actions', 0, 'frequency', 'summary']}
-                              initialValue={false}
-                              getValueProps={(v) => ({ value: v ? 'summary' : 'each' })}
-                              normalize={(v) => v === 'summary'}
-                            >
-                              <Select
-                                style={{ width: 180 }}
-                                options={[
-                                  { value: 'each', label: 'For each alert' },
-                                  { value: 'summary', label: 'Summary of alerts' },
-                                ]}
-                                onChange={(mode) => {
-                                  const isSummary = mode === 'summary';
-                                  const currentNotify = form.getFieldValue(['actions', 0, 'frequency', 'notifyWhen']);
-                                  if (isSummary && (!currentNotify || currentNotify === 'onActiveAlert')) {
-                                    form.setFieldValue(['actions', 0, 'frequency', 'notifyWhen'], 'onThrottleInterval');
-                                  }
-                                  if (!isSummary && !currentNotify) {
-                                    form.setFieldValue(['actions', 0, 'frequency', 'notifyWhen'], 'onActiveAlert');
-                                  }
-                                }}
-                              />
-                            </Form.Item>
-                            <Form.Item noStyle shouldUpdate>
-                              {() => {
-                                const isSummary = Boolean(form.getFieldValue(['actions', 0, 'frequency', 'summary']));
-                                return (
-                                  <Form.Item
-                                    noStyle
-                                    name={['actions', 0, 'frequency', 'notifyWhen']}
-                                    initialValue={isSummary ? 'onThrottleInterval' : 'onActiveAlert'}
-                                  >
-                                    <Select
-                                      style={{ width: 'calc(100% - 180px)' }}
-                                      options={
-                                        isSummary
-                                          ? [
-                                              { value: 'onThrottleInterval', label: 'On custom action interval' },
-                                              { value: 'onActionGroupChange', label: 'On status change' },
-                                            ]
-                                          : [
-                                              { value: 'onActiveAlert', label: 'Per rule run' },
-                                              { value: 'onThrottleInterval', label: 'On custom action interval' },
-                                              { value: 'onActionGroupChange', label: 'On status change' },
-                                            ]
-                                      }
-                                    />
-                                  </Form.Item>
-                                );
-                              }}
-                            </Form.Item>
-                          </Space.Compact>
-                        </Form.Item>
-                      </Card>
-                    </div>
-                  </Space>
-                </Form>
-              ),
-            },
-            {
-              key: 'json',
-              label: 'Raw JSON',
-              children: <Input.TextArea rows={26} value={rawJson} onChange={(e) => setRawJson(e.target.value)} />,
-            },
-          ]}
-        />
+      />
+      <Modal title={editorId ? `编辑规则 ${editorId}` : '新建规则'} open={editorOpen} onCancel={() => setEditorOpen(false)} onOk={saveRule} width={980}>
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Input placeholder="Rule ID" value={editorId} onChange={(e) => setEditorId(e.target.value)} />
+          <Input.TextArea rows={18} value={editorYaml} onChange={(e) => setEditorYaml(e.target.value)} placeholder="Paste Sigma YAML" />
+        </Space>
       </Modal>
-      <Modal
-        title="Rule Preview"
-        open={previewOpen}
-        onCancel={() => setPreviewOpen(false)}
-        footer={[<Button key="close" onClick={() => setPreviewOpen(false)}>Close</Button>]}
-        width={980}
-      >
-        <Card size="small" title="Preview Summary" style={{ marginBottom: 12 }}>
-          <Descriptions size="small" column={2}>
-            <Descriptions.Item label="Matched">
-              {String(
-                previewData?.matched ?? previewData?.total ?? previewData?.hits?.total?.value ?? previewData?.num_matches ?? '-'
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label="Window">
-              {String(previewData?.from ?? '-')} ~ {String(previewData?.to ?? '-')}
-            </Descriptions.Item>
-            <Descriptions.Item label="Took (ms)">
-              {String(previewData?.took ?? previewData?.timing?.took ?? '-')}
-            </Descriptions.Item>
-            <Descriptions.Item label="Status">
-              {String(previewData?.status ?? 'ok')}
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
-
-        <Card size="small" title="Sample Events" style={{ marginBottom: 12 }}>
-          <Table
-            size="small"
-            rowKey={(_, i) => String(i)}
-            pagination={{ pageSize: 5 }}
-            dataSource={(() => {
-              if (Array.isArray(previewData?.events)) return previewData.events;
-              if (Array.isArray(previewData?.data)) return previewData.data;
-              if (Array.isArray(previewData?.hits?.hits)) return previewData.hits.hits.map((h: any) => h?._source || h);
-              return [];
-            })()}
-            columns={[
-              {
-                title: '@timestamp',
-                dataIndex: '@timestamp',
-                key: '@timestamp',
-                width: 220,
-                render: (_: any, r: any) => r?.['@timestamp'] || r?.timestamp || '-',
-              },
-              {
-                title: 'message/title',
-                key: 'msg',
-                render: (_: any, r: any) => {
-                  const raw = r?.message || r?.title || r?.event?.original || JSON.stringify(r);
-                  const s = String(raw || '-');
-                  return s.length > 160 ? `${s.slice(0, 160)}...` : s;
-                },
-              },
-            ]}
-          />
-        </Card>
-
-        <Collapse
-          items={[
-            {
-              key: 'raw',
-              label: 'Raw Preview JSON',
-              children: <Input.TextArea rows={14} value={previewJson} readOnly />,
-            },
-          ]}
-        />
-      </Modal>
-      <Drawer
-        title={detailRecord ? `Rule Details: ${detailRecord.name || detailRecord.id}` : 'Rule Details'}
-        open={detailOpen}
-        onClose={() => setDetailOpen(false)}
-        width={760}
-      >
-        <pre style={{ margin: 0, maxHeight: 'calc(100vh - 140px)', overflow: 'auto' }}>
-          {JSON.stringify(detailRecord || {}, null, 2)}
-        </pre>
-      </Drawer>
-      <style>{`
-        .kibana-detection-row td {
-          vertical-align: top;
-        }
-      `}</style>
-    </Card>
+    </>
   );
 }
+
+
