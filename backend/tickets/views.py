@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Avg
 from datetime import datetime, time, timedelta
 from django.utils import timezone
@@ -184,6 +185,144 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(ticket)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="batch-update")
+    def batch_update(self, request):
+        """Update lifecycle state for multiple incident tickets in one request.
+
+        Frontend payload contract:
+            {
+              "ticket_ids": ["SEC2026052500001", "SEC2026052500002"],
+              "status": "Closed"
+            }
+
+        The database stores status values in lowercase (`closed`), but the UI and
+        product copy often use title case (`Closed`). Normalize here so callers
+        do not need to know the internal enum representation.
+        """
+        ticket_ids = request.data.get("ticket_ids") or []
+        requested_status = request.data.get("status")
+        notes = request.data.get("notes", "Batch status update")
+
+        if not isinstance(ticket_ids, list) or not ticket_ids:
+            return Response(
+                {"error": "ticket_ids must be a non-empty array."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Deduplicate while preserving order; this prevents duplicate work-log
+        # rows if the client accidentally submits the same selected row twice.
+        normalized_ids = []
+        seen = set()
+        for raw_id in ticket_ids:
+            ticket_id = str(raw_id or "").strip()
+            if ticket_id and ticket_id not in seen:
+                seen.add(ticket_id)
+                normalized_ids.append(ticket_id)
+
+        normalized_status = str(requested_status or "").strip().lower()
+        valid_statuses = [choice[0] for choice in EventTicket.STATUS_CHOICES]
+        if normalized_status not in valid_statuses:
+            return Response(
+                {
+                    "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}",
+                    "valid_statuses": valid_statuses,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Lock selected rows during the batch mutation so concurrent operators
+        # cannot race status transitions for the same incidents.
+        with transaction.atomic():
+            tickets = list(
+                EventTicket.objects.select_for_update().filter(
+                    ticket_number__in=normalized_ids,
+                    is_deleted=False,
+                )
+            )
+            found_ids = {ticket.ticket_number for ticket in tickets}
+            missing_ids = [ticket_id for ticket_id in normalized_ids if ticket_id not in found_ids]
+
+            updated_ids = []
+            for ticket in tickets:
+                old_status = ticket.status
+                if old_status == normalized_status:
+                    continue
+                ticket.status = normalized_status
+                # Use model save instead of a raw bulk update so existing ticket
+                # lifecycle signals still populate closed/resolved timestamps.
+                ticket.save()
+                TicketWorkLog.objects.create(
+                    ticket=ticket,
+                    log_entry=f"Status changed from '{old_status}' to '{normalized_status}': {notes}",
+                    created_by=request.user,
+                )
+                updated_ids.append(ticket.ticket_number)
+
+        return Response(
+            {
+                "updated": len(updated_ids),
+                "requested": len(normalized_ids),
+                "updated_ticket_ids": updated_ids,
+                "missing_ticket_ids": missing_ids,
+                "status": normalized_status,
+            }
+        )
+
+    @action(detail=False, methods=["post"], url_path="batch-delete")
+    def batch_delete(self, request):
+        """Soft-delete multiple incident tickets after validating the selection.
+
+        Payload contract:
+            { "ticket_ids": ["SEC2026052500001", "SEC2026052500002"] }
+
+        This intentionally performs a soft delete (`is_deleted=True`) rather
+        than physically deleting rows. Incident tickets are audit artifacts, so
+        retaining the database records is safer for forensics and compliance.
+        """
+        ticket_ids = request.data.get("ticket_ids") or []
+        if not isinstance(ticket_ids, list) or not ticket_ids:
+            return Response(
+                {"error": "ticket_ids must be a non-empty array."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        normalized_ids = []
+        seen = set()
+        for raw_id in ticket_ids:
+            ticket_id = str(raw_id or "").strip()
+            if ticket_id and ticket_id not in seen:
+                seen.add(ticket_id)
+                normalized_ids.append(ticket_id)
+
+        with transaction.atomic():
+            tickets = list(
+                EventTicket.objects.select_for_update().filter(
+                    ticket_number__in=normalized_ids,
+                    is_deleted=False,
+                )
+            )
+            found_ids = {ticket.ticket_number for ticket in tickets}
+            missing_ids = [ticket_id for ticket_id in normalized_ids if ticket_id not in found_ids]
+            deleted_ids = []
+            for ticket in tickets:
+                ticket.is_deleted = True
+                ticket.save(update_fields=["is_deleted", "updated_time"])
+                TicketWorkLog.objects.create(
+                    ticket=ticket,
+                    log_entry="Ticket soft-deleted by batch action.",
+                    created_by=request.user,
+                )
+                deleted_ids.append(ticket.ticket_number)
+
+        return Response(
+            {
+                "deleted": len(deleted_ids),
+                "requested": len(normalized_ids),
+                "deleted_ticket_ids": deleted_ids,
+                "missing_ticket_ids": missing_ids,
+            }
+        )
 
     @action(detail=True, methods=["post"])
     def resolve(self, request, ticket_number=None):

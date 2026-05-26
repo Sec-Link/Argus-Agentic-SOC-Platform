@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
-import { App, Button, Card, Col, Form, Grid, Input, Modal, Row, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
+import { App, Button, Card, Col, DatePicker, Form, Grid, Input, Modal, Row, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType, TableProps } from 'antd/es/table';
 import { Pie } from '@ant-design/plots';
-import { createSlaTicket, updateSlaTicket, updateSlaTicketStatus } from 'services/tickets';
+import { batchDeleteSlaTickets, batchUpdateSlaTickets, createSlaTicket, updateSlaTicket, updateSlaTicketStatus } from 'services/tickets';
 import { listUsers } from 'services/accounts';
 import type { SlaTicketListItem } from 'types';
 
@@ -15,7 +15,14 @@ type Props = {
 };
 
 type SlaBucket = 'n/a' | '<=1h' | '1-4h' | '>4h';
+type TimeRangeKey = '15m' | '1h' | '24h' | '7d' | '30d' | 'custom';
 type UserOption = { id: number; username: string };
+type IncidentFilters = {
+  severity: string[];
+  status: string[];
+  owner: string[];
+  sla: SlaBucket[];
+};
 
 const priorityColor = (p: string) => {
   if (p === 'critical') return 'red';
@@ -58,19 +65,6 @@ const renderStatusTag = (s?: string) => {
   const key = (s || 'unknown').toLowerCase();
   const cls = `sla-status-tag sla-status-${key}`;
   return <Tag className={cls}>{statusLabel[key] ?? s ?? 'unknown'}</Tag>;
-};
-
-const renderStatusFilterTag = (s?: string) => {
-  const raw = s || 'unknown';
-  const key = raw.toLowerCase();
-  const isAny = key === 'any';
-  const cls = isAny ? 'sla-filter-tag' : `sla-status-tag sla-status-${key}`;
-  const label = statusLabel[key] ?? raw;
-  return (
-    <Tag className={cls} style={{ cursor: 'pointer', fontSize: 12 }}>
-      {`Status: ${label}`}
-    </Tag>
-  );
 };
 
 const priorityHex: Record<string, string> = {
@@ -166,13 +160,15 @@ export default function SlaTicketListView(props: Props) {
   const [editUserId, setEditUserId] = useState<number | null>(null);
   const [editPriority, setEditPriority] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<string | null>(null);
-
-  const [filterStatus, setFilterStatus] = useState<string | null>(null);
-  const [filterPriority, setFilterPriority] = useState<string | null>(null);
-  const [filterOwner, setFilterOwner] = useState<string | null>(null);
-  const [filterSla, setFilterSla] = useState<SlaBucket | null>(null);
+  const [filters, setFilters] = useState<IncidentFilters>({
+    severity: [],
+    status: [],
+    owner: [],
+    sla: [],
+  });
   const [pageSize, setPageSize] = useState<number>(20);
-  const [quickRange, setQuickRange] = useState<string | null>(null);
+  const [quickRange, setQuickRange] = useState<TimeRangeKey | null>(null);
+  const [customRangeOpen, setCustomRangeOpen] = useState(false);
 
   const parsedQuery = useMemo(() => parseQuery(query), [query]);
 
@@ -193,13 +189,16 @@ export default function SlaTicketListView(props: Props) {
   const filtered = useMemo(() => {
     return baseFiltered.filter((t) => {
       const owner = t.assigned_user_username || 'Unassigned';
-      if (filterStatus && t.status !== filterStatus) return false;
-      if (filterPriority && t.priority !== filterPriority) return false;
-      if (filterOwner && owner !== filterOwner) return false;
-      if (filterSla && mttrBucket(t) !== filterSla) return false;
+      // Multi-select filters are intentionally OR-within-category and
+      // AND-across-categories. Example: severity in [high, medium] AND
+      // status in [new]. This mirrors common incident-response triage UX.
+      if (filters.status.length && !filters.status.includes(t.status || 'unknown')) return false;
+      if (filters.severity.length && !filters.severity.includes(t.priority || 'unknown')) return false;
+      if (filters.owner.length && !filters.owner.includes(owner)) return false;
+      if (filters.sla.length && !filters.sla.includes(mttrBucket(t))) return false;
       return true;
     });
-  }, [baseFiltered, filterStatus, filterPriority, filterOwner, filterSla]);
+  }, [baseFiltered, filters]);
 
   const stats = useMemo(() => {
     const byPriority: Record<string, number> = {};
@@ -225,8 +224,14 @@ export default function SlaTicketListView(props: Props) {
   }, [autoRefresh, onRefresh]);
 
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const selectedIds = useMemo(() => selectedRowKeys.map((key) => String(key)), [selectedRowKeys]);
+  const hasSelection = selectedIds.length > 0;
+  const disableBatchActions = bulkLoading || loading || !hasSelection;
   const rowSelection: TableProps<SlaTicketListItem>['rowSelection'] = {
     selectedRowKeys,
+    // Ant Design emits row keys from the table checkbox model. Because the
+    // table uses `rowKey="ticket_number"`, these keys are exactly the ticket
+    // IDs expected by the backend batch endpoints.
     onChange: (keys: React.Key[]) => setSelectedRowKeys(keys),
   };
 
@@ -331,29 +336,53 @@ export default function SlaTicketListView(props: Props) {
   };
 
   const confirmClose = () => {
-    if (!selectedRowKeys.length) {
+    if (!selectedIds.length) {
       message.warning('Select tickets first');
       return;
     }
     Modal.confirm({
-      title: 'Close tickets?',
-      content: `Close ${selectedRowKeys.length} tickets?`,
+      title: 'Close selected incidents?',
+      content: `Close ${selectedIds.length} selected incidents?`,
       okText: 'Close',
-      onOk: () => runBulk('Closed', (id) => updateSlaTicketStatus(id, { status: 'closed', notes: 'Bulk close' })),
+      onOk: async () => {
+        setBulkLoading(true);
+        try {
+          await batchUpdateSlaTickets({
+            ticket_ids: selectedIds,
+            status: 'Closed',
+            notes: 'Batch close from incidents table',
+          });
+          message.success(`Closed ${selectedIds.length} incidents`);
+          setSelectedRowKeys([]);
+          onRefresh();
+        } finally {
+          setBulkLoading(false);
+        }
+      },
     });
   };
 
   const confirmDelete = () => {
-    if (!selectedRowKeys.length) {
+    if (!selectedIds.length) {
       message.warning('Select tickets first');
       return;
     }
     Modal.confirm({
-      title: 'Delete tickets?',
-      content: `Delete ${selectedRowKeys.length} tickets?`,
+      title: 'Delete selected incidents?',
+      content: `Are you sure you want to delete ${selectedIds.length} selected incidents? This action cannot be undone from the UI.`,
       okText: 'Delete',
       okButtonProps: { danger: true },
-      onOk: () => runBulk('Deleted', (id) => updateSlaTicket(id, { is_deleted: true })),
+      onOk: async () => {
+        setBulkLoading(true);
+        try {
+          await batchDeleteSlaTickets({ ticket_ids: selectedIds });
+          message.success(`Deleted ${selectedIds.length} incidents`);
+          setSelectedRowKeys([]);
+          onRefresh();
+        } finally {
+          setBulkLoading(false);
+        }
+      },
     });
   };
 
@@ -447,11 +476,60 @@ export default function SlaTicketListView(props: Props) {
     return keys.filter((k) => rec[k]).map((k) => ({ type: k, value: rec[k] }));
   };
   const sumRec = (rec: Record<string, number>) => Object.values(rec).reduce((acc, v) => acc + (Number(v) || 0), 0);
+  const priorityOrder = ['critical', 'high', 'medium', 'low', 'unknown'];
+  const statusOrder = ['new', 'acknowledged', 'triaged', 'contained', 'pending', 'resolved', 'closed', 'unknown'];
+  const slaOrder: SlaBucket[] = ['<=1h', '1-4h', '>4h', 'n/a'];
+  const topOwnerKeys = Object.keys(stats.byOwner).sort((a, b) => (stats.byOwner[b] || 0) - (stats.byOwner[a] || 0)).slice(0, 10);
+  const severityData = toPieData(stats.byPriority, priorityOrder);
+  const statusData = toPieData(stats.byStatus, statusOrder);
+  const slaData = toPieData(stats.bySla, slaOrder);
+  const ownerData = toPieData(stats.byOwner, topOwnerKeys);
+  const severityOptions = severityData.map((item) => ({ value: item.type, label: `${item.type} (${item.value})` }));
+  const statusOptions = statusData.map((item) => ({ value: item.type, label: `${statusLabel[item.type] ?? item.type} (${item.value})` }));
+  const slaOptions = slaData.map((item) => ({ value: item.type, label: `${item.type} (${item.value})` }));
+  const ownerOptions = ownerData.map((item) => ({ value: item.type, label: `${item.type} (${item.value})` }));
+  const hasActiveFilters = filters.severity.length > 0 || filters.status.length > 0 || filters.owner.length > 0 || filters.sla.length > 0;
 
-  const applyQuickRange = (key: string | null) => {
+  const setFilterValues = <K extends keyof IncidentFilters>(key: K, values: IncidentFilters[K]) => {
+    // Single source of truth for dropdown-driven filtering. The chart panels
+    // and table both consume `filters`, so Select changes immediately update
+    // every dependent visual without a second synchronization layer.
+    setFilters((prev) => ({ ...prev, [key]: values }));
+  };
+
+  const toggleFilterValue = <K extends keyof IncidentFilters>(key: K, value: IncidentFilters[K][number]) => {
+    // Chart and legend clicks call this helper. It toggles the clicked segment
+    // into the same arrays used by the AntD multi-select controls, producing
+    // true bidirectional binding between chart selections and dropdown tags.
+    setFilters((prev) => {
+      const current = prev[key] as Array<IncidentFilters[K][number]>;
+      const exists = current.includes(value);
+      const next = exists ? current.filter((item) => item !== value) : [...current, value];
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const clearFilters = () => setFilters({ severity: [], status: [], owner: [], sla: [] });
+
+  const pieTooltip = {
+    showTitle: false,
+    fields: ['type', 'value'],
+    formatter: (datum: any) => ({
+      name: String(datum?.type ?? 'unknown'),
+      value: `${Number(datum?.value ?? 0)} incidents`,
+    }),
+  } as any;
+
+  const applyQuickRange = (key: TimeRangeKey | null) => {
     if (!key) {
       setQuickRange(null);
+      setCustomRangeOpen(false);
       onRefresh({});
+      return;
+    }
+    if (key === 'custom') {
+      setQuickRange('custom');
+      setCustomRangeOpen(true);
       return;
     }
     const now = dayjs();
@@ -467,11 +545,22 @@ export default function SlaTicketListView(props: Props) {
       created_to: now.toISOString(),
     });
   };
+  const applyCustomRange = (range: null | [dayjs.Dayjs | null, dayjs.Dayjs | null]) => {
+    // RangePicker emits both endpoints together. Only dispatch a backend
+    // refresh when both sides are valid, otherwise keep the dropdown in custom
+    // mode while the user finishes choosing timestamps.
+    if (!range || !range[0] || !range[1]) return;
+    setQuickRange('custom');
+    onRefresh({
+      created_from: range[0].toISOString(),
+      created_to: range[1].toISOString(),
+    });
+  };
   const isDarkTheme = typeof window !== 'undefined' && localStorage.getItem('siem_ui_theme') === 'dark';
   const legendTextColor = isDarkTheme ? '#cfe0ff' : 'rgba(0,0,0,0.85)';
   const legendValueColor = isDarkTheme ? '#9fb3d8' : 'rgba(0,0,0,0.55)';
   const legendActiveBg = isDarkTheme ? 'rgba(120, 167, 255, 0.14)' : 'rgba(15, 59, 102, 0.06)';
-  const donutHeight = screens.xxl ? 170 : screens.xl ? 156 : screens.lg ? 142 : 130;
+  const donutHeight = screens.xxl ? 144 : screens.xl ? 134 : screens.lg ? 124 : 118;
 
   const LegendList = ({
     items,
@@ -480,14 +569,14 @@ export default function SlaTicketListView(props: Props) {
     onSelect,
   }: {
     items: Array<{ type: string; value: number }>;
-    selected: string | null;
+    selected: string[];
     colorFor: (type: string) => string;
     onSelect: (type: string) => void;
   }) => {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {items.map((it) => {
-          const isActive = selected === it.type;
+          const isActive = selected.includes(it.type);
           return (
             <div
               key={it.type}
@@ -596,30 +685,90 @@ export default function SlaTicketListView(props: Props) {
         </div>
         <Space wrap>
           <Button type="primary" onClick={() => setCreateOpen(true)}>New Incident</Button>
-          <Input.Search
-            allowClear
-            placeholder="Search in Incidents (e.g. status:pending owner:alice)"
-            style={{ width: 360 }}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
           <Button onClick={() => onRefresh()} loading={loading}>Refresh</Button>
         </Space>
       </div>
 
-        <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+      <div className="incident-workspace-controls">
+        <div className="incident-filter-bar">
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            placeholder="Severity: Any"
+            value={filters.severity}
+            options={severityOptions}
+            onChange={(values) => setFilterValues('severity', values)}
+            style={{ width: 170 }}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            placeholder="Status: Any"
+            value={filters.status}
+            options={statusOptions}
+            onChange={(values) => setFilterValues('status', values)}
+            style={{ width: 170 }}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            placeholder="Owner: Any"
+            value={filters.owner}
+            options={ownerOptions}
+            onChange={(values) => setFilterValues('owner', values)}
+            style={{ width: 190 }}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            placeholder="SLA: Any"
+            value={filters.sla}
+            options={slaOptions}
+            onChange={(values) => setFilterValues('sla', values as SlaBucket[])}
+            style={{ width: 150 }}
+          />
+          <Button disabled={!hasActiveFilters} onClick={clearFilters}>
+            Clear filters
+          </Button>
           <a onClick={() => setShowChartPanel((v) => !v)}>{showChartPanel ? 'Hide Chart Panel' : 'Show Chart Panel'}</a>
-          <Space wrap>
-            <Space size={6} wrap>
-              {/* RangePicker removed to avoid React 19 ref warnings; quick ranges below stay available. */}
-              <Button size="small" type={quickRange === '15m' ? 'primary' : 'default'} onClick={() => applyQuickRange('15m')}>15m</Button>
-              <Button size="small" type={quickRange === '1h' ? 'primary' : 'default'} onClick={() => applyQuickRange('1h')}>1h</Button>
-              <Button size="small" type={quickRange === '24h' ? 'primary' : 'default'} onClick={() => applyQuickRange('24h')}>24h</Button>
-              <Button size="small" type={quickRange === '7d' ? 'primary' : 'default'} onClick={() => applyQuickRange('7d')}>7d</Button>
-              <Button size="small" type={quickRange === '30d' ? 'primary' : 'default'} onClick={() => applyQuickRange('30d')}>30d</Button>
-            </Space>
-            <span className="sla-refresh-label">Refresh every</span>
-            <Segmented
+        </div>
+
+        <Space wrap size={8} className="incident-control-right">
+          <Input.Search
+            allowClear
+            placeholder="Search in Incidents (e.g. status:pending owner:alice)"
+            style={{ width: 340 }}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <Select
+            value={quickRange || undefined}
+            placeholder="Time Range"
+            onChange={(value) => applyQuickRange(value as TimeRangeKey)}
+            style={{ width: 160 }}
+            options={[
+              { value: '15m', label: 'Last 15 Mins' },
+              { value: '1h', label: 'Last 1 Hour' },
+              { value: '24h', label: 'Last 24 Hours' },
+              { value: '7d', label: 'Last 7 Days' },
+              { value: '30d', label: 'Last 30 Days' },
+              { value: 'custom', label: 'Custom Range' },
+            ]}
+          />
+          {customRangeOpen ? (
+            <DatePicker.RangePicker
+              showTime
+              allowClear
+              onChange={(values) => applyCustomRange(values as null | [dayjs.Dayjs | null, dayjs.Dayjs | null])}
+              style={{ width: 360 }}
+            />
+          ) : null}
+          <span className="sla-refresh-label">Refresh every</span>
+          <Segmented
             size="small"
             value={autoRefresh}
             onChange={(v) => setAutoRefresh(v as any)}
@@ -643,44 +792,20 @@ export default function SlaTicketListView(props: Props) {
       </div>
 
       {showChartPanel && (
-        <div style={{ marginTop: 12 }}>
-          <Space direction="vertical" style={{ width: '100%' }} size={12}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Tag
-                className={filterPriority ? `sla-severity-tag sla-severity-${filterPriority}` : 'sla-filter-tag'}
-                onClick={() => setFilterPriority(null)}
-                style={{ cursor: 'pointer', fontSize: 12 }}
-              >
-                Severity: {filterPriority || 'Any'}
-              </Tag>
-              <span onClick={() => setFilterStatus(null)} style={{ cursor: 'pointer' }}>
-                {renderStatusFilterTag(filterStatus || 'Any')}
-              </span>
-              <Tag className="sla-filter-tag" onClick={() => setFilterOwner(null)} style={{ cursor: 'pointer', fontSize: 12 }}>
-                Owner: {filterOwner || 'Any'}
-              </Tag>
-              <Tag className="sla-filter-tag" onClick={() => setFilterSla(null)} style={{ cursor: 'pointer', fontSize: 12 }}>
-                SLA: {filterSla || 'Any'}
-              </Tag>
-              {(filterPriority || filterStatus || filterOwner || filterSla) && (
-                <Button size="small" onClick={() => { setFilterPriority(null); setFilterStatus(null); setFilterOwner(null); setFilterSla(null); }}>
-                  Clear filters
-                </Button>
-              )}
-            </div>
-
+        <div style={{ marginTop: 10 }}>
+          <Space direction="vertical" style={{ width: '100%' }} size={10}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(220px, 1fr))', gap: 12 }}>
-              <Card size="small" title="Severity" styles={{ body: { padding: 10 } }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 44%)', gap: 16, alignItems: 'center' }}>
+              <Card size="small" title="Severity" styles={{ body: { padding: '8px 12px 10px' } }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(112px, 42%)', gap: 12, alignItems: 'center' }}>
                   <LegendList
-                    items={toPieData(stats.byPriority, ['critical', 'high', 'medium', 'low', 'unknown'])}
-                    selected={filterPriority}
+                    items={severityData}
+                    selected={filters.severity}
                     colorFor={(t) => priorityHex[t] || '#8c8c8c'}
-                    onSelect={(t) => setFilterPriority((prev) => (prev === t ? null : t))}
+                    onSelect={(t) => toggleFilterValue('severity', t)}
                   />
-                  <div style={{ width: '100%', maxWidth: 180, justifySelf: 'end' }}>
+                  <div style={{ width: '100%', maxWidth: 158, justifySelf: 'end', marginTop: -8, marginBottom: -8 }}>
                     <Pie
-                      data={toPieData(stats.byPriority, ['critical', 'high', 'medium', 'low', 'unknown'])}
+                      data={severityData}
                       angleField="value"
                       colorField="type"
                       radius={1}
@@ -688,33 +813,33 @@ export default function SlaTicketListView(props: Props) {
                       legend={false}
                       autoFit
                       height={donutHeight}
-                      tooltip={{ showTitle: false }}
+                      tooltip={pieTooltip}
                       statistic={{
                         title: { content: 'Total' },
                         content: {
-                          style: { fontSize: 18, fontWeight: 700, color: '#1f2d3d' },
+                          style: { fontSize: 16, fontWeight: 700, color: isDarkTheme ? '#dbe6ff' : '#1f2d3d' },
                           formatter: () => String(sumRec(stats.byPriority)),
                         },
                       }}
                       color={(d: any) => priorityHex[String(d?.type)] || '#8c8c8c'}
                       interactions={[{ type: 'element-active' }, { type: 'element-single-selected' }]}
-                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => setFilterPriority((prev) => (prev === t ? null : t)))}
+                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => toggleFilterValue('severity', t))}
                     />
                   </div>
                 </div>
               </Card>
 
-              <Card size="small" title="Status" styles={{ body: { padding: 10 } }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 44%)', gap: 16, alignItems: 'center' }}>
+              <Card size="small" title="Status" styles={{ body: { padding: '8px 12px 10px' } }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(112px, 42%)', gap: 12, alignItems: 'center' }}>
                   <LegendList
-                    items={toPieData(stats.byStatus, ['new', 'acknowledged', 'triaged', 'contained', 'pending', 'resolved', 'closed', 'unknown'])}
-                    selected={filterStatus}
+                    items={statusData}
+                    selected={filters.status}
                     colorFor={(t) => statusHex[t] || '#8c8c8c'}
-                    onSelect={(t) => setFilterStatus((prev) => (prev === t ? null : t))}
+                    onSelect={(t) => toggleFilterValue('status', t)}
                   />
-                  <div style={{ width: '100%', maxWidth: 180, justifySelf: 'end' }}>
+                  <div style={{ width: '100%', maxWidth: 158, justifySelf: 'end', marginTop: -8, marginBottom: -8 }}>
                     <Pie
-                      data={toPieData(stats.byStatus, ['new', 'acknowledged', 'triaged', 'contained', 'pending', 'resolved', 'closed', 'unknown'])}
+                      data={statusData}
                       angleField="value"
                       colorField="type"
                       radius={1}
@@ -722,33 +847,33 @@ export default function SlaTicketListView(props: Props) {
                       legend={false}
                       autoFit
                       height={donutHeight}
-                      tooltip={{ showTitle: false }}
+                      tooltip={pieTooltip}
                       statistic={{
                         title: { content: 'Total' },
                         content: {
-                          style: { fontSize: 18, fontWeight: 700, color: '#1f2d3d' },
+                          style: { fontSize: 16, fontWeight: 700, color: isDarkTheme ? '#dbe6ff' : '#1f2d3d' },
                           formatter: () => String(sumRec(stats.byStatus)),
                         },
                       }}
                       color={(d: any) => statusHex[String(d?.type)] || '#8c8c8c'}
                       interactions={[{ type: 'element-active' }, { type: 'element-single-selected' }]}
-                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => setFilterStatus((prev) => (prev === t ? null : t)))}
+                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => toggleFilterValue('status', t))}
                     />
                   </div>
                 </div>
               </Card>
 
-              <Card size="small" title="SLA" styles={{ body: { padding: 10 } }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 44%)', gap: 16, alignItems: 'center' }}>
+              <Card size="small" title="SLA" styles={{ body: { padding: '8px 12px 10px' } }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(112px, 42%)', gap: 12, alignItems: 'center' }}>
                   <LegendList
-                    items={toPieData(stats.bySla, ['<=1h', '1-4h', '>4h', 'n/a'])}
-                    selected={filterSla}
+                    items={slaData}
+                    selected={filters.sla}
                     colorFor={(t) => slaHex[t] || '#8c8c8c'}
-                    onSelect={(t) => setFilterSla((prev) => (prev === (t as SlaBucket) ? null : (t as SlaBucket)))}
+                    onSelect={(t) => toggleFilterValue('sla', t as SlaBucket)}
                   />
-                  <div style={{ width: '100%', maxWidth: 180, justifySelf: 'end' }}>
+                  <div style={{ width: '100%', maxWidth: 158, justifySelf: 'end', marginTop: -8, marginBottom: -8 }}>
                     <Pie
-                      data={toPieData(stats.bySla, ['<=1h', '1-4h', '>4h', 'n/a'])}
+                      data={slaData}
                       angleField="value"
                       colorField="type"
                       radius={1}
@@ -756,35 +881,35 @@ export default function SlaTicketListView(props: Props) {
                       legend={false}
                       autoFit
                       height={donutHeight}
-                      tooltip={{ showTitle: false }}
+                      tooltip={pieTooltip}
                       statistic={{
                         title: { content: 'Total' },
                         content: {
-                          style: { fontSize: 18, fontWeight: 700, color: '#1f2d3d' },
+                          style: { fontSize: 16, fontWeight: 700, color: isDarkTheme ? '#dbe6ff' : '#1f2d3d' },
                           formatter: () => String(sumRec(stats.bySla)),
                         },
                       }}
                       color={(d: any) => slaHex[String(d?.type)] || '#8c8c8c'}
                       interactions={[{ type: 'element-active' }, { type: 'element-single-selected' }]}
-                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => setFilterSla((prev) => (prev === (t as SlaBucket) ? null : (t as SlaBucket))))}
+                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => toggleFilterValue('sla', t as SlaBucket))}
                     />
                   </div>
                 </div>
               </Card>
 
-              <Card size="small" title="Owner" styles={{ body: { padding: 10 } }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(120px, 44%)', gap: 16, alignItems: 'center' }}>
-                  <div style={{ maxHeight: 170, overflow: 'auto' }}>
+              <Card size="small" title="Owner" styles={{ body: { padding: '8px 12px 10px' } }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(112px, 42%)', gap: 12, alignItems: 'center' }}>
+                  <div style={{ maxHeight: 140, overflow: 'auto' }}>
                     <LegendList
-                      items={toPieData(stats.byOwner, Object.keys(stats.byOwner).sort((a, b) => (stats.byOwner[b] || 0) - (stats.byOwner[a] || 0)).slice(0, 10))}
-                      selected={filterOwner}
+                      items={ownerData}
+                      selected={filters.owner}
                       colorFor={() => '#1f6fd1'}
-                      onSelect={(t) => setFilterOwner((prev) => (prev === t ? null : t))}
+                      onSelect={(t) => toggleFilterValue('owner', t)}
                     />
                   </div>
-                  <div style={{ width: '100%', maxWidth: 180, justifySelf: 'end' }}>
+                  <div style={{ width: '100%', maxWidth: 158, justifySelf: 'end', marginTop: -8, marginBottom: -8 }}>
                     <Pie
-                      data={toPieData(stats.byOwner, Object.keys(stats.byOwner).sort((a, b) => (stats.byOwner[b] || 0) - (stats.byOwner[a] || 0)).slice(0, 10))}
+                      data={ownerData}
                       angleField="value"
                       colorField="type"
                       radius={1}
@@ -792,17 +917,17 @@ export default function SlaTicketListView(props: Props) {
                       legend={false}
                       autoFit
                       height={donutHeight}
-                      tooltip={{ showTitle: false }}
+                      tooltip={pieTooltip}
                       statistic={{
                         title: { content: 'Total' },
                         content: {
-                          style: { fontSize: 18, fontWeight: 700, color: '#1f2d3d' },
+                          style: { fontSize: 16, fontWeight: 700, color: isDarkTheme ? '#dbe6ff' : '#1f2d3d' },
                           formatter: () => String(sumRec(stats.byOwner)),
                         },
                       }}
                       color={() => '#1f6fd1'}
                       interactions={[{ type: 'element-active' }, { type: 'element-single-selected' }]}
-                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => setFilterOwner((prev) => (prev === t ? null : t)))}
+                      onEvent={(_chart, evt) => handlePieEvent(evt, (t) => toggleFilterValue('owner', t))}
                     />
                   </div>
                 </div>
@@ -813,19 +938,52 @@ export default function SlaTicketListView(props: Props) {
       )}
 
       <div style={{ marginTop: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
-          <Space wrap>
-            <Button size="small" onClick={openAssign} disabled={bulkLoading || loading}>Assign</Button>
-            <Button size="small" onClick={openEdit} disabled={bulkLoading || loading}>Edit</Button>
-            <Button size="small" onClick={exportSelected} disabled={bulkLoading || loading}>Export</Button>
-            <Button size="small" onClick={confirmClose} disabled={bulkLoading || loading}>Close</Button>
-            <Button size="small" danger onClick={confirmDelete} disabled={bulkLoading || loading}>Delete</Button>
-            <Typography.Text type="secondary">
-              {selectedRowKeys.length ? `${selectedRowKeys.length} selected` : ''}
-            </Typography.Text>
-          </Space>
-          <div />
-        </div>
+        <Space wrap style={{ padding: '8px 0' }}>
+          <Button
+            onClick={openAssign}
+            disabled={disableBatchActions}
+            style={{ borderColor: '#93c5fd', color: disableBatchActions ? undefined : '#1d4ed8', fontWeight: 600 }}
+          >
+            Assign
+          </Button>
+          <Button
+            onClick={openEdit}
+            disabled={disableBatchActions}
+            style={{ borderColor: '#cbd5e1', color: disableBatchActions ? undefined : '#334155', fontWeight: 600 }}
+          >
+            Edit
+          </Button>
+          <Button
+            onClick={exportSelected}
+            disabled={disableBatchActions}
+            style={{ borderColor: '#93c5fd', color: disableBatchActions ? undefined : '#1d4ed8', fontWeight: 600 }}
+          >
+            Export
+          </Button>
+          <Button
+            onClick={confirmClose}
+            disabled={disableBatchActions}
+            style={{ borderColor: '#f59e0b', color: disableBatchActions ? undefined : '#92400e', fontWeight: 700 }}
+          >
+            Close
+          </Button>
+          <Button
+            danger
+            onClick={confirmDelete}
+            disabled={disableBatchActions}
+            style={{
+              background: disableBatchActions ? undefined : '#fff1f2',
+              borderColor: disableBatchActions ? undefined : '#fb7185',
+              color: disableBatchActions ? undefined : '#be123c',
+              fontWeight: 800,
+            }}
+          >
+            Delete
+          </Button>
+          <Typography.Text type="secondary">
+            {hasSelection ? `${selectedIds.length} selected` : 'Select incidents to enable batch actions'}
+          </Typography.Text>
+        </Space>
 
         {viewMode === 'table' ? (
           <Table

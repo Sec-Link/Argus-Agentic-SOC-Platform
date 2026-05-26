@@ -64,6 +64,48 @@ const fixMojibake = (value: string) => {
   }
 };
 
+const renderJsonSyntax = (pretty: string) => {
+  // Lightweight JSON syntax highlighting keeps the Raw Message tab readable in
+  // dark mode without introducing a new dependency. The regex identifies JSON
+  // keys, strings, numbers, booleans, nulls, and punctuation; CSS classes then
+  // provide WCAG-friendly contrast for both light and dark themes.
+  const tokenPattern = /("(?:\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(?=\s*:))|("(?:\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false)\b|\b(null)\b|([{}\[\],:])/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let tokenIndex = 0;
+
+  for (const match of pretty.matchAll(tokenPattern)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      nodes.push(pretty.slice(lastIndex, index));
+    }
+
+    const [token, key, stringValue, numberValue, booleanValue, nullValue, punctuation] = match;
+    const className = key
+      ? 'json-token-key'
+      : stringValue
+        ? 'json-token-string'
+        : numberValue
+          ? 'json-token-number'
+          : booleanValue
+            ? 'json-token-boolean'
+            : nullValue
+              ? 'json-token-null'
+              : punctuation
+                ? 'json-token-punctuation'
+                : '';
+
+    nodes.push(<span key={`json_${tokenIndex++}`} className={className}>{token}</span>);
+    lastIndex = index + token.length;
+  }
+
+  if (lastIndex < pretty.length) {
+    nodes.push(pretty.slice(lastIndex));
+  }
+
+  return nodes;
+};
+
 const formatTicketLabels = (labels: SlaTicketLabel[] | undefined) => {
   if (!Array.isArray(labels) || labels.length === 0) return [];
   return labels
@@ -1260,15 +1302,15 @@ export default function SlaTicketDetailView(props: Props) {
                       if (parsed) {
                         const pretty = JSON.stringify(parsed, null, 2);
                         return (
-                          <details open>
-                            <summary style={{ cursor: 'pointer', color: 'rgba(0,0,0,0.65)' }}>JSON</summary>
-                            <pre style={{ marginTop: 8, background: '#f6f8fa', border: '1px solid #f0f0f0', padding: 12, borderRadius: 6, whiteSpace: 'pre-wrap' }}>
-                              {pretty}
+                          <details className="raw-message-json" open>
+                            <summary className="raw-message-json-summary">JSON</summary>
+                            <pre className="raw-message-json-pre">
+                              <code>{renderJsonSyntax(pretty)}</code>
                             </pre>
                           </details>
                         );
                       }
-                      return <div style={{ whiteSpace: 'pre-wrap' }}>{raw}</div>;
+                      return <div className="raw-message-json raw-message-plain">{raw}</div>;
                     })()
                   ) : (
                     <Empty description="No raw message" />

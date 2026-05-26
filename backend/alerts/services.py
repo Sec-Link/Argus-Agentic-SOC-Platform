@@ -176,11 +176,32 @@ def _get_source_field_value(doc: Dict, field: str):
     return cur
 
 
+def _get_alert_field(doc: Dict, *fields: str):
+    """Return the first meaningful alert field value across supported source shapes.
+
+    ES alert schemas are not consistent across connectors. Some alerts are flat
+    (`severity`, `title`, `rule_id`), while others wrap normalized fields inside
+    a nested `body` object (`body.severity`, `body.title`, `body.rule_id`). This
+    helper centralizes that alias resolution so ingestion, backfills, and API
+    serializers do not silently persist empty DB columns when the source payload
+    is nested.
+    """
+    for field in fields:
+        value = _get_source_field_value(doc, field)
+        if value in (None, ''):
+            continue
+        if _looks_unresolved_template(value):
+            continue
+        return value
+    return None
+
+
 def _extract_alert_timestamp(doc: Dict, preferred_field: str | None = None) -> datetime | None:
     fields = [
         preferred_field,
         'timestamp',
         '@timestamp',
+        'date',
         'event_time',
         'event.created',
         'event.ingested',
@@ -188,6 +209,12 @@ def _extract_alert_timestamp(doc: Dict, preferred_field: str | None = None) -> d
         'data.@timestamp',
         'source.timestamp',
         'source.@timestamp',
+        # Some orchestrator templates store the original alert object under
+        # `body`; keep these aliases before falling back to processing time.
+        'body.timestamp',
+        'body.@timestamp',
+        'body.date',
+        'body.event_time',
     ]
     seen = set()
     for field in fields:
@@ -280,23 +307,23 @@ def _compute_alert_identity(doc: Dict, fallback_index: str | None = None) -> str
     1) source alert_id if present
     2) deterministic hash of key fields + raw doc content
     """
-    raw_alert_id = doc.get('alert_id')
+    raw_alert_id = _get_alert_field(doc, 'alert_id', 'event_id', 'body.alert_id', 'body.event_id')
     if raw_alert_id not in (None, ''):
         return str(raw_alert_id)[:64]
-    raw_es_id = doc.get('_es_id')
+    raw_es_id = _get_alert_field(doc, '_es_id', 'es_id')
     if raw_es_id not in (None, ''):
         return str(raw_es_id)[:64]
 
     payload = {
-        'timestamp': doc.get('timestamp'),
-        'severity': doc.get('severity'),
-        'message': doc.get('message'),
+        'timestamp': _get_alert_field(doc, 'timestamp', '@timestamp', 'date', 'body.@timestamp', 'body.date'),
+        'severity': _get_alert_field(doc, 'severity', 'level', 'body.severity', 'body.level'),
+        'message': _get_alert_field(doc, 'message', 'title', 'body.message', 'body.title'),
         'source_index': doc.get('source_index') or fallback_index,
-        'rule_id': doc.get('rule_id'),
-        'title': doc.get('title'),
-        'status': doc.get('status'),
-        'description': doc.get('description'),
-        'category': doc.get('category'),
+        'rule_id': _get_alert_field(doc, 'rule_id', 'body.rule_id'),
+        'title': _get_alert_field(doc, 'title', 'body.title'),
+        'status': _get_alert_field(doc, 'status', 'body.status'),
+        'description': _get_alert_field(doc, 'description', 'details', 'body.description'),
+        'category': _get_alert_field(doc, 'category', 'body.category'),
         'doc': doc,
     }
     raw = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=True)
@@ -316,18 +343,28 @@ def _serialize_alert_row(row: Alert) -> Dict:
     # Keep output ES-like for the frontend.
     payload = dict(row.source_data) if isinstance(row.source_data, dict) else {}
     payload.pop('tenant_id', None)
+    # Existing rows may have been inserted before nested `body.*` aliases were
+    # mapped into DB columns. Fall back to source_data here so the UI recovers
+    # immediately, then the next sync will repair the persisted columns.
+    fallback_severity = _normalize_alert_severity(_get_alert_field(payload, 'severity', 'level', 'body.severity', 'body.level'))
+    fallback_message = _get_alert_field(payload, 'message', 'title', 'body.message', 'body.title')
+    fallback_rule_id = _get_alert_field(payload, 'rule_id', 'body.rule_id')
+    fallback_title = _get_alert_field(payload, 'title', 'body.title')
+    fallback_status = _coerce_int(_get_alert_field(payload, 'status', 'body.status'))
+    fallback_description = _get_alert_field(payload, 'description', 'details', 'body.description')
+    fallback_category = _get_alert_field(payload, 'category', 'body.category')
     payload.update(
         {
             'alert_id': row.alert_id,
             'timestamp': row.timestamp.isoformat().replace('+00:00', 'Z') if row.timestamp else None,
-            'severity': row.severity,
-            'message': row.message,
+            'severity': row.severity or fallback_severity,
+            'message': row.message or fallback_message,
             'source_index': row.source_index,
-            'rule_id': row.rule_id,
-            'title': row.title,
-            'status': row.status,
-            'description': row.description,
-            'category': row.category,
+            'rule_id': row.rule_id or fallback_rule_id,
+            'title': row.title or fallback_title,
+            'status': row.status if row.status is not None else fallback_status,
+            'description': row.description or fallback_description,
+            'category': row.category or fallback_category,
         }
     )
     return payload
@@ -350,14 +387,14 @@ def _upsert_docs_to_db(docs: List[Dict]) -> None:
             defaults = {
                 # Enforce a valid timestamp for ingestion durability.
                 'timestamp': parsed_ts or timezone.now(),
-                'severity': _normalize_alert_severity(doc.get('severity')),
-                'message': doc.get('message'),
+                'severity': _normalize_alert_severity(_get_alert_field(doc, 'severity', 'level', 'body.severity', 'body.level')),
+                'message': _get_alert_field(doc, 'message', 'title', 'body.message', 'body.title'),
                 'source_index': src_idx,
-                'rule_id': doc.get('rule_id'),
-                'title': doc.get('title'),
-                'status': _coerce_int(doc.get('status')),
-                'description': doc.get('description'),
-                'category': doc.get('category'),
+                'rule_id': _get_alert_field(doc, 'rule_id', 'body.rule_id'),
+                'title': _get_alert_field(doc, 'title', 'body.title'),
+                'status': _coerce_int(_get_alert_field(doc, 'status', 'body.status')),
+                'description': _get_alert_field(doc, 'description', 'details', 'body.description'),
+                'category': _get_alert_field(doc, 'category', 'body.category'),
                 'source_data': {**(clean_doc or {}), **doc, 'alert_id': alert_id},
             }
             with transaction.atomic():

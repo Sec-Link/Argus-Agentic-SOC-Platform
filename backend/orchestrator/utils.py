@@ -255,7 +255,11 @@ def execute_task(task: Task) -> TaskRun:
             unchanged = 0
             ticket_candidates = []
             for doc in docs:
-                alert_id = _get_field(doc, 'alert_id', 'event_id', 'es_id', '_es_id', 'body.alert_id', 'body.event_id')
+                # Prefer the original alert identity inside nested bodies before
+                # falling back to the ES document id. This keeps deduplication
+                # stable when a source wraps normalized alert fields under
+                # `body` but Elasticsearch assigns a different `_id`.
+                alert_id = _get_field(doc, 'alert_id', 'event_id', 'body.alert_id', 'body.event_id', 'es_id', '_es_id')
                 if not alert_id:
                     continue
                 alert_id = _truncate_text(alert_id, MAX_ALERT_CHAR_LENGTHS["alert_id"])
@@ -263,23 +267,34 @@ def execute_task(task: Task) -> TaskRun:
                 doc['alert_id'] = str(alert_id)
                 if doc.get('es_id') is None and doc.get('_es_id') is not None:
                     doc['es_id'] = doc.get('_es_id')
-                ts_val = _get_field(doc, 'timestamp', '@timestamp', 'event_time', 'time', 'body.@timestamp')
+                ts_val = _get_field(doc, 'timestamp', '@timestamp', 'date', 'event_time', 'time', 'body.@timestamp', 'body.date')
                 raw_severity = _get_field(doc, 'severity', 'level', 'body.severity')
+                message = _get_field(doc, 'message', 'title', 'body.title', 'body.message')
+                title = _get_field(doc, 'title', 'body.title')
+                description = _get_field(doc, 'description', 'details', 'body.description')
                 clean_doc = _sanitize_doc(doc if isinstance(doc, dict) else {})
                 parsed_ts = _parse_ts(ts_val) or timezone.now()
                 defaults = {
                     # Ensure persisted timestamp is always valid for trend aggregation.
                     'timestamp': parsed_ts,
                     'severity': _normalize_severity(raw_severity),
-                    'message': _get_field(doc, 'message', 'title', 'body.title', 'body.message'),
+                    'message': message,
                     'source_index': _truncate_text(index, MAX_ALERT_CHAR_LENGTHS["source_index"]),
                     'rule_id': _truncate_text(_get_field(doc, 'rule_id', 'body.rule_id'), MAX_ALERT_CHAR_LENGTHS["rule_id"]),
-                    'title': _truncate_text(_get_field(doc, 'title', 'body.title'), MAX_ALERT_CHAR_LENGTHS["title"]),
+                    'title': _truncate_text(title, MAX_ALERT_CHAR_LENGTHS["title"]),
                     'status': None,
-                    'description': _get_field(doc, 'description', 'details', 'body.description'),
+                    'description': description,
                     'category': _truncate_text(_get_field(doc, 'category', 'body.category'), MAX_ALERT_CHAR_LENGTHS["category"]),
                     'source_data': {**(clean_doc or {}), **doc},
                 }
+                # Normalize the in-memory candidate as well, because the later
+                # ticket/correlation code reads top-level fields from `doc`.
+                doc['severity'] = defaults['severity']
+                doc['message'] = message
+                doc['rule_id'] = defaults['rule_id']
+                doc['title'] = title
+                doc['description'] = description
+                doc['category'] = defaults['category']
                 source_index_value = _truncate_text(index, MAX_ALERT_CHAR_LENGTHS["source_index"])
                 existing = Alert.objects.filter(
                     alert_id=str(alert_id),

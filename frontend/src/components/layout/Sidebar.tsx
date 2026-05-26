@@ -179,7 +179,7 @@ export default function Sidebar({
               style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }}
             />
             <span style={{ fontWeight: 900, letterSpacing: 0.6, fontSize: 22, color: 'var(--text-primary)' }}>
-              SIEM
+              ECHO
             </span>
           </div>
           <Button

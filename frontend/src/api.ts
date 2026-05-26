@@ -328,6 +328,21 @@ export async function updateSlaTicketStatus(ticketNumber: string, payload: { sta
   return res.data;
 }
 
+export async function batchUpdateSlaTickets(payload: { ticket_ids: string[]; status: string; notes?: string }) {
+  // Batch endpoints accept the table's selected ticket numbers directly. The
+  // backend normalizes display labels such as "Closed" into stored enum values
+  // such as "closed", so callers can keep payloads human-readable.
+  const res = await client.post(`${TICKETS_BASE}/batch-update/`, payload);
+  return res.data;
+}
+
+export async function batchDeleteSlaTickets(payload: { ticket_ids: string[] }) {
+  // Use POST instead of DELETE-with-body for stronger browser/proxy
+  // compatibility. The backend performs a soft delete for audit retention.
+  const res = await client.post(`${TICKETS_BASE}/batch-delete/`, payload);
+  return res.data;
+}
+
 export async function updateSlaTicket(ticketNumber: string, payload: Partial<{
   assigned_user: number | null;
   current_assign_owner: string | null;

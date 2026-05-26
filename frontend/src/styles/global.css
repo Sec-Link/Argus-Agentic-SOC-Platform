@@ -969,6 +969,133 @@ html, body {
   box-shadow: 0 0 8px rgba(140, 140, 140, 0.35);
 }
 
+.incident-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.incident-workspace-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.incident-control-right {
+  justify-content: flex-end;
+}
+
+@media (max-width: 1200px) {
+  .incident-workspace-controls {
+    align-items: flex-start;
+  }
+
+  .incident-control-right {
+    justify-content: flex-start;
+  }
+}
+
+.raw-message-json {
+  border-radius: 10px;
+}
+
+.raw-message-json-summary {
+  cursor: pointer;
+  color: #26405f;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.raw-message-json-pre,
+.raw-message-plain {
+  margin-top: 8px;
+  padding: 14px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow: auto;
+  line-height: 1.55;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  background: #f7faff;
+  border: 1px solid #d8e6f6;
+  color: #14243b;
+}
+
+.raw-message-json-pre ::selection,
+.raw-message-plain::selection {
+  background: rgba(31, 111, 209, 0.28);
+  color: #07142a;
+}
+
+.json-token-key {
+  color: #9a5b00;
+  font-weight: 700;
+}
+
+.json-token-string {
+  color: #087443;
+}
+
+.json-token-number,
+.json-token-boolean {
+  color: #8b35c9;
+  font-weight: 700;
+}
+
+.json-token-null {
+  color: #697386;
+  font-style: italic;
+}
+
+.json-token-punctuation {
+  color: #607089;
+}
+
+.theme-dark .raw-message-json-summary {
+  color: #dbe6ff;
+}
+
+.theme-dark .raw-message-json-pre,
+.theme-dark .raw-message-plain {
+  background: #0b1329;
+  border: 1px solid rgba(101, 150, 255, 0.34);
+  color: #dbe6ff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 16px 34px rgba(0, 0, 0, 0.24);
+}
+
+.theme-dark .raw-message-json-pre ::selection,
+.theme-dark .raw-message-plain::selection {
+  background: rgba(56, 189, 248, 0.38);
+  color: #ffffff;
+}
+
+.theme-dark .json-token-key {
+  color: #facc6b;
+}
+
+.theme-dark .json-token-string {
+  color: #7dd3fc;
+}
+
+.theme-dark .json-token-number,
+.theme-dark .json-token-boolean {
+  color: #f59e0b;
+}
+
+.theme-dark .json-token-null {
+  color: #c4b5fd;
+}
+
+.theme-dark .json-token-punctuation {
+  color: #b6c7e6;
+}
+
 @keyframes slaStatusBreatheBlue {
   0% {
     box-shadow: 0 0 8px rgba(47, 124, 255, 0.35);
