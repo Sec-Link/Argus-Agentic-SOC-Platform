@@ -393,7 +393,7 @@ const Integrations: React.FC = () => {
       title: 'Elastic Stack',
       subtitle: 'ELK Connector',
       description: 'Ingest and analyze security event logs and system metrics via automated cluster pipelines.',
-      logo: '/elastic-logo.svg',
+      logo: '/elastic-logo.png',
       isInstalled: elasticInstalled,
       onConfigure: () => openFromCard(elkItems[0]),
       onUninstall: elkItems[0]?.id ? () => handleDelete(elkItems[0]) : undefined,
@@ -562,7 +562,7 @@ const Integrations: React.FC = () => {
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src="/elastic-logo.svg" alt="Elastic logo" style={{ width: 22, height: 22, objectFit: 'contain' }} />
+            <img src="/elastic-logo.png" alt="Elastic logo" style={{ width: 22, height: 22, objectFit: 'contain' }} />
             <span>Configure Elasticsearch</span>
           </div>
         }
