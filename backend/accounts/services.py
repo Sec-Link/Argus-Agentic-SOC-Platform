@@ -25,7 +25,8 @@ PANEL_APP_LABELS = [
     "es_integration",
     "dashboards",
     "tickets",
-    "datasource",
+    # The legacy "datasource" panel label was retired after the UI domain was
+    # consolidated into Integrations and Data Pipeline.
     "integrations",
     "cmdb",
     "workflows",

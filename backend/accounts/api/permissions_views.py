@@ -17,7 +17,8 @@ COMMON_APP_LABELS = {
     'integrations',
     'alerts',
     'dashboards',
-    'datasource',
+    # Legacy "datasource" permissions are intentionally hidden from the
+    # common RBAC matrix; Integrations is the current data-pipeline domain.
     'orchestrator',
     'correlation',
     'users',
@@ -156,5 +157,4 @@ class UserGroupsAPIView(APIView):
 
         user.groups.set(groups)
         return Response({'detail': 'User groups updated.', 'user_id': user.id})
-
 

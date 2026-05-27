@@ -165,13 +165,13 @@ export default function BasicLayout({
 
   // keep sensible parent open when a child is selected
   useEffect(() => {
-    if (['dashboard', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
+    if (['dashboard', 'dashboards', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
     else if (['tickets', 'assets'].includes(selectedKey)) setOpenKeys(['investigationGroup']);
-    else if (['integrations', 'datasources', 'dashboards'].includes(selectedKey)) setOpenKeys(['dataPlatformGroup']);
-    else if (['correlation', 'orchestrator', 'interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
+    else if (['integrations', 'orchestrator', 'correlation'].includes(selectedKey)) setOpenKeys(['dataPipelineGroup']);
+    else if (['interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
       setOpenKeys(['automationGroup']);
     } else if (['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs'].includes(selectedKey)) {
-      setOpenKeys(['systemManagementGroup']);
+      setOpenKeys(['administrationGroup']);
     } else {
       setOpenKeys(['monitorGroup']);
     }
@@ -187,16 +187,17 @@ export default function BasicLayout({
   const settingsItems = useMemo(
     () =>
       [
+        // Plural: this page is a collection/repository of dashboard objects.
+        { key: 'dashboards' as RouteKey, label: 'Dashboards' },
         { key: 'integrations' as RouteKey, label: 'Integrations' },
-        { key: 'dashboards' as RouteKey, label: 'Dashboard List' },
-        { key: 'datasources' as RouteKey, label: 'Data Sources' },
         { key: 'orchestrator' as RouteKey, label: 'Orchestrator' },
-        { key: 'interfaces' as RouteKey, label: 'Interfaces' },
         { key: 'correlation' as RouteKey, label: 'Correlation' },
+        { key: 'interfaces' as RouteKey, label: 'Interfaces' },
         { key: 'workflows' as RouteKey, label: 'Workflows' },
-        { key: 'workflow-executions' as RouteKey, label: 'Workflow Executions' },
+        // Shortened label for space efficiency in sidebar.
+        { key: 'workflow-executions' as RouteKey, label: 'Executions' },
         { key: 'permissions' as RouteKey, label: 'Access Management' },
-        { key: 'registration-approvals' as RouteKey, label: 'Registration Approvals' },
+        { key: 'registration-approvals' as RouteKey, label: 'Approvals' },
         { key: 'audit-logs' as RouteKey, label: 'Audit Logs' },
         { key: 'ai-assistant' as RouteKey, label: 'AI Assistant' },
       ].filter((item) => canAccess(permissionByKey[item.key])),
@@ -211,14 +212,15 @@ export default function BasicLayout({
       'Settings',
       'Monitoring',
       'Investigation',
-      'Detection & Automation',
+      'Data Pipeline',
+      'Automation',
+      'Administration',
       'Access Management',
       'Correlation',
       'Orchestrator',
       'Interfaces',
-      'Workflow Executions',
-      'Data Sources',
-      'Dashboard List',
+      'Executions',
+      'Dashboards',
       'Integrations',
     ];
     const dynamicLabels = settingsItems.map((i) => i.label);

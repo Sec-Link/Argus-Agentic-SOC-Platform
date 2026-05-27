@@ -7,7 +7,6 @@ import 'react-resizable/css/styles.css'
 import { Button, Space, Modal, DatePicker, InputNumber } from 'antd'
 import { Select, message, Input } from 'antd'
 import { queryPreview, listDashboards, createDashboard, getDashboard, updateDashboard, deleteDashboard } from 'services/dashboards'
-import { listDatasources } from 'services/datasource'
 import Panel from './Panel'
 import PanelConfigModal from './PanelConfigModal'
 import { Column, Bar, Line, Pie, Scatter } from '@ant-design/charts'
@@ -28,7 +27,6 @@ export default function DashboardEditor({ dashboardId, onBack }:{ dashboardId?:s
   const [sqlModalVisible, setSqlModalVisible] = useState(false)
   const [sqlDatasource, setSqlDatasource] = useState<string | null>(null)
   const [sqlText, setSqlText] = useState<string>('')
-  const [datasources, setDatasources] = useState<any[]>([])
   const [name, setName] = useState<string>('')
   const [description, setDescription] = useState<string>('')
   const [timestampField, setTimestampField] = useState<string | null>(null)
@@ -70,9 +68,8 @@ export default function DashboardEditor({ dashboardId, onBack }:{ dashboardId?:s
   }
 
   useEffect(()=>{
-    // Initial load: dashboards list and datasources; if dashboardId provided, load its layout and panels
+    // Initial load: dashboards list; if dashboardId provided, load its layout and panels.
     listDashboards().then(r=>setDashboards(r)).catch(()=>setDashboards([]))
-    listDatasources().then(r=>setDatasources(r)).catch(()=>setDatasources([]))
     if(dashboardId){
       getDashboard(dashboardId).then(d=>{
         // back the persisted timestamp/time selector values first
@@ -329,7 +326,6 @@ export default function DashboardEditor({ dashboardId, onBack }:{ dashboardId?:s
         <Space>
           <Button onClick={()=>setIsEditMode(m=>!m)}>{isEditMode ? 'Exit Edit' : 'Enter Edit'}</Button>
           <Button onClick={addPanel} disabled={!isEditMode}>Add Panel</Button>
-          <Button onClick={()=>{ setSqlDatasource(null); setSqlText(''); setSqlModalVisible(true) }} disabled={!isEditMode}>New Panel from SQL</Button>
           <Button type="primary" onClick={handleSave}>Save Layout</Button>
           <Button onClick={onBack}>Back to List</Button>
         </Space>
@@ -471,7 +467,6 @@ export default function DashboardEditor({ dashboardId, onBack }:{ dashboardId?:s
       >
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <Select style={{ minWidth: 240 }} allowClear placeholder="Select data source" value={sqlDatasource ?? undefined} onChange={v=>setSqlDatasource(v)}>
-            {datasources.map((d:any)=> <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
           </Select>
         </div>
         <div>

@@ -1,397 +1,750 @@
-﻿import React, { useEffect, useState } from 'react'
-import { Alert, List, Button, Modal, Form, Input, Card, Space, Tag, message, Select, Divider } from 'antd'
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  testEsIntegration,
-  testLogstashIntegration,
-  testAirflowIntegration,
-  listIntegrations,
+  Alert,
+  Button,
+  Card,
+  Col,
+  Divider,
+  Input,
+  InputNumber,
+  Modal,
+  Row,
+  Select,
+  Space,
+  Typography,
+  message,
+} from 'antd';
+import {
   createIntegration,
-  updateIntegration,
   deleteIntegration,
-} from 'services/integrations'
-import { testDbConnection } from 'api'
-import { getIsReadonly } from 'lib/auth'
-// Integrations page manages data integrations (Elasticsearch, Logstash, Airflow, PostgreSQL, MySQL).
-// Key features:
-// - List existing integrations
-// - Create/edit integrations via form
-// - Test connections and refresh target DB table lists
-// - Preview ES index mapping, edit column names/types, and create tables from mapping
-// Notes:
-// - Edited columns are stored in editedColumns. After table creation, new integrations store columns in pendingMapping,
-//   which are persisted to integration.config.columns on save. Existing integrations attempt to update config directly.
-// - This file only handles UI-level data collection and backend API calls.
-const Integrations: React.FC = () =>{
-  const [items, setItems] = useState<any[]>([])
-  const [showModal, setShowModal] = useState(false)
-  const [editingIndex, setEditingIndex] = useState<number | null>(null)
-  const [isReadonly, setIsReadonly] = useState(false)
+  listIntegrations,
+  testEsIntegration,
+  updateIntegration,
+} from 'services/integrations';
+import { getIsReadonly } from 'lib/auth';
+
+const { Title, Text } = Typography;
+
+type AuthType = 'none' | 'basic' | 'api_key';
+type ProtocolType = 'https' | 'http';
+
+type ElasticFormData = {
+  name: string;
+  protocol: ProtocolType;
+  host: string;
+  port: number;
+  authType: AuthType;
+  username: string;
+  password: string;
+  apiKey: string;
+  index: string;
+  path: string;
+};
+
+const DEFAULT_FORM: ElasticFormData = {
+  name: 'Elastic Stack (ELK)',
+  protocol: 'https',
+  host: '',
+  port: 9200,
+  authType: 'none',
+  username: '',
+  password: '',
+  apiKey: '',
+  index: 'alerts',
+  path: '/_cluster/health',
+};
+
+const HOST_PATTERN = /^(localhost|(([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+)|(\d{1,3}(\.\d{1,3}){3}))$/;
+
+const Integrations: React.FC = () => {
+  const [items, setItems] = useState<any[]>([]);
+  const [isReadonly, setIsReadonly] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<any | null>(null);
+  const [formData, setFormData] = useState<ElasticFormData>(DEFAULT_FORM);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [hostTouched, setHostTouched] = useState(false);
+  // Dynamic index fetching lifecycle states:
+  // - indicesLoading: async in-flight state for "Fetch Indices"
+  // - indicesList: fetched index options to populate combobox
+  const [indicesLoading, setIndicesLoading] = useState(false);
+  const [indicesList, setIndicesList] = useState<string[]>([]);
   const [testResult, setTestResult] = useState({
     open: false,
     ok: true,
     title: '',
     detail: '',
-  })
-  const [form] = Form.useForm()
+  });
+
+  useEffect(() => {
+    setIsReadonly(getIsReadonly());
+    fetchList();
+  }, []);
+
+  const elkItems = useMemo(
+    () => (Array.isArray(items) ? items.filter((item: any) => item?.type === 'elasticsearch') : []),
+    [items]
+  );
 
   const getErrorText = (e: any) => {
-    const detail = e?.response?.data?.detail
-    const error = e?.response?.data?.error
-    const body = e?.response?.data?.body
-    const msg = e?.message
-    if (typeof detail === 'string' && detail) return detail
-    if (typeof error === 'string' && error) return error
-    if (typeof body === 'string' && body) return body
-    if (body && typeof body === 'object') return JSON.stringify(body, null, 2)
-    if (typeof msg === 'string' && msg) return msg
-    return String(e)
-  }
+    const detail = e?.response?.data?.detail;
+    const error = e?.response?.data?.error;
+    const body = e?.response?.data?.body;
+    const msg = e?.message;
+    if (typeof detail === 'string' && detail) return detail;
+    if (typeof error === 'string' && error) return error;
+    if (typeof body === 'string' && body) return body;
+    if (body && typeof body === 'object') return JSON.stringify(body, null, 2);
+    if (typeof msg === 'string' && msg) return msg;
+    return String(e);
+  };
 
-  useEffect(()=>{ fetchList() }, [])
-  useEffect(()=>{ setIsReadonly(getIsReadonly()) }, [])
-
-  const showTestResult = (ok: boolean, detail: unknown) => {
-    setTestResult({
-      open: true,
-      ok,
-      title: ok ? 'Connection OK' : 'Connection failed',
-      detail: typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2),
-    })
-  }
-
-  const fetchList = async ()=>{
-    try{ const r = await listIntegrations(); setItems(r) }catch(e){ setItems([]) }
-  }
-
-  const isLikelyUiRouteHost = (value: string) => {
+  const fetchList = async () => {
     try {
-      const u = new URL(value)
-      return u.pathname.startsWith('/settings/') || u.pathname.startsWith('/integrations')
+      const r = await listIntegrations();
+      setItems(Array.isArray(r) ? r : []);
     } catch {
-      return false
+      setItems([]);
     }
-  }
+  };
 
-  const normalizeIntegration = (raw: any) => {
-    const config = raw?.config || {}
-    let host = raw?.host || raw?.url || config?.host || config?.url || ''
-    if (typeof host !== 'string') host = String(host || '')
-    if (host && isLikelyUiRouteHost(host)) host = ''
+  // Parse persisted integration config into UI-friendly fields.
+  const normalizeFromItem = (item: any): ElasticFormData => {
+    const cfg = item?.config || {};
+    const hostRaw = String(cfg.host || item?.host || '').trim();
+    let protocol: ProtocolType = 'https';
+    let host = '';
+    let port = 9200;
+    try {
+      const parsed = new URL(hostRaw);
+      protocol = parsed.protocol === 'http:' ? 'http' : 'https';
+      host = parsed.hostname;
+      port = parsed.port ? Number(parsed.port) : 9200;
+    } catch {
+      host = hostRaw.replace(/^https?:\/\//, '').split(':')[0] || '';
+      const maybePort = Number(hostRaw.split(':').pop());
+      port = Number.isFinite(maybePort) && maybePort > 0 ? maybePort : 9200;
+    }
+
+    const authType: AuthType = cfg.auth_type === 'basic' || cfg.auth_type === 'api_key' ? cfg.auth_type : 'none';
 
     return {
-      ...raw,
+      name: item?.name || 'Elastic Stack (ELK)',
+      protocol,
       host,
-      username: raw?.username || raw?.user || config?.username || config?.user || '',
-      password: raw?.password || config?.password || '',
-      path: raw?.path || config?.path || '/_cluster/health',
-      config,
+      port: port >= 1 && port <= 65535 ? port : 9200,
+      authType,
+      username: String(cfg.username || ''),
+      password: String(cfg.password || ''),
+      apiKey: String(cfg.api_key || ''),
+      index: String(cfg.index || 'alerts'),
+      path: String(cfg.path || '/_cluster/health'),
+    };
+  };
+
+  const resetModalState = () => {
+    setEditingItem(null);
+    setFormData(DEFAULT_FORM);
+    setHostTouched(false);
+    setTesting(false);
+    setSaving(false);
+  };
+
+  // Clicking ELK card (or edit) opens modal with existing values if available.
+  const openFromCard = (item?: any) => {
+    setHostTouched(false);
+    if (item) {
+      setEditingItem(item);
+      const normalized = normalizeFromItem(item);
+      setFormData(normalized);
+      setIndicesList(normalized.index ? [normalized.index] : []);
+    } else {
+      setEditingItem(null);
+      setFormData(DEFAULT_FORM);
+      setIndicesList([DEFAULT_FORM.index]);
     }
-  }
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    resetModalState();
+  };
+
+  const setField = <K extends keyof ElasticFormData>(key: K, value: ElasticFormData[K]) => {
+    setFormData((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const buildHostUrl = () => `${formData.protocol}://${formData.host.trim()}:${formData.port}`;
+  const hostValid = HOST_PATTERN.test(formData.host.trim());
+  const portValid = Number.isFinite(formData.port) && formData.port >= 1 && formData.port <= 65535;
+
+  const validateForm = (forTesting = false) => {
+    const host = formData.host.trim();
+    if (!host) {
+      message.warning('Host is required.');
+      return false;
+    }
+    if (!HOST_PATTERN.test(host)) {
+      message.warning('Host format is invalid.');
+      return false;
+    }
+    if (!portValid) {
+      message.warning('Port must be between 1 and 65535.');
+      return false;
+    }
+    if (!forTesting) {
+      if (!formData.index.trim()) {
+        message.warning('Target index is required.');
+        return false;
+      }
+      // Conditional auth validation is driven by selected authType.
+      if (formData.authType === 'basic') {
+        if (!formData.username.trim()) {
+          message.warning('Username is required for Basic Authentication.');
+          return false;
+        }
+        if (!formData.password.trim()) {
+          message.warning('Password is required for Basic Authentication.');
+          return false;
+        }
+      }
+      if (formData.authType === 'api_key' && !formData.apiKey.trim()) {
+        message.warning('API Key token is required for API Key authentication.');
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Serialize form into backend payload contract.
+  const toIntegrationPayload = () => {
+    const host = buildHostUrl();
+    const cfg: any = {
+      host,
+      index: formData.index.trim() || 'alerts',
+      path: formData.path.trim() || '/_cluster/health',
+      protocol: formData.protocol,
+      port: formData.port,
+      auth_type: formData.authType,
+      verify_certs: formData.protocol === 'https',
+    };
+
+    if (formData.authType === 'basic') {
+      cfg.username = formData.username.trim();
+      cfg.password = formData.password;
+      cfg.api_key = '';
+    } else if (formData.authType === 'api_key') {
+      cfg.username = '';
+      cfg.password = '';
+      cfg.api_key = formData.apiKey.trim();
+    } else {
+      cfg.username = '';
+      cfg.password = '';
+      cfg.api_key = '';
+    }
+
+    return {
+      name: formData.name.trim() || 'Elastic Stack (ELK)',
+      type: 'elasticsearch',
+      config: cfg,
+    };
+  };
+
+  // Test endpoint call without persisting configuration.
+  const handleTestConnection = async () => {
+    if (!validateForm(true)) return;
+    setTesting(true);
+    try {
+      const payload = toIntegrationPayload();
+      const testPayload: any = {
+        host: payload.config.host,
+        path: payload.config.path,
+        auth_type: payload.config.auth_type,
+        api_key: payload.config.api_key,
+      };
+      if (formData.authType === 'basic') {
+        testPayload.username = payload.config.username;
+        testPayload.password = payload.config.password;
+      }
+      const res = await testEsIntegration(testPayload);
+      setTestResult({
+        open: true,
+        ok: true,
+        title: 'Connection OK',
+        detail: typeof res === 'string' ? res : JSON.stringify(res, null, 2),
+      });
+    } catch (e: any) {
+      setTestResult({
+        open: true,
+        ok: false,
+        title: 'Connection failed',
+        detail: getErrorText(e),
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!validateForm(false)) return;
+    setSaving(true);
+    try {
+      const payload = toIntegrationPayload();
+      if (editingItem?.id) {
+        await updateIntegration(editingItem.id, payload);
+      } else {
+        await createIntegration(payload);
+      }
+      message.success('Integration saved.');
+      try {
+        window.dispatchEvent(new Event('siem_es_connector_switched'));
+      } catch {}
+      closeModal();
+      fetchList();
+    } catch (e: any) {
+      message.error(`Save failed: ${getErrorText(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Fetch live indices using current protocol/host/port/auth form state.
+  // Uses existing backend ES test proxy with _cat endpoint and maps response into dropdown options.
+  const handleFetchIndices = async () => {
+    if (!validateForm(true)) return;
+    setIndicesLoading(true);
+    try {
+      const payload = toIntegrationPayload();
+      const testPayload: any = {
+        host: payload.config.host,
+        path: '/_cat/indices?format=json&h=index',
+      };
+      if (formData.authType === 'basic') {
+        testPayload.username = payload.config.username;
+        testPayload.password = payload.config.password;
+      }
+      // API-key auth depends on backend proxy support; included for forward compatibility.
+      if (formData.authType === 'api_key') {
+        testPayload.api_key = payload.config.api_key;
+      }
+
+      const res = await testEsIntegration(testPayload);
+      let parsed: any = res?.body ?? res;
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed);
+        } catch {
+          parsed = [];
+        }
+      }
+      const extracted = Array.isArray(parsed)
+        ? parsed.map((row: any) => String(row?.index || '').trim()).filter(Boolean)
+        : [];
+      const unique = Array.from(new Set(extracted));
+      setIndicesList(unique);
+      if (unique.length > 0 && !unique.includes(formData.index)) {
+        setField('index', unique[0]);
+      }
+      if (unique.length === 0) {
+        message.info('No indices returned from the current endpoint.');
+      }
+    } catch (e: any) {
+      message.error(`Failed to fetch indices: ${getErrorText(e)}`);
+    } finally {
+      setIndicesLoading(false);
+    }
+  };
 
   const handleDelete = async (item: any) => {
-    const name = item?.name || item?.host || item?.id || 'this integration'
-    const ok = window.confirm(`Delete ${name}? This cannot be undone.`)
-    if (!ok) return
+    const name = item?.name || item?.id || 'this integration';
+    const ok = window.confirm(`Delete ${name}? This cannot be undone.`);
+    if (!ok) return;
     try {
-      await deleteIntegration(item.id)
-      message.success('Deleted')
-      fetchList()
+      await deleteIntegration(item.id);
+      message.success('Deleted');
+      fetchList();
     } catch (e: any) {
-      message.error('Delete failed: ' + getErrorText(e))
+      message.error(`Delete failed: ${getErrorText(e)}`);
     }
-  }
+  };
 
-  const testIntegration = async (info: any) => {
-    const normalized = normalizeIntegration(info)
-    const type = normalized.type || 'elasticsearch'
-    if(type === 'elasticsearch'){
-      const host = normalized.host || ''
-      const username = normalized.username || ''
-      const password = normalized.password || ''
-      const path = normalized.path || '/_cluster/health'
-      if(!host) throw new Error('Elasticsearch host required')
-      return testEsIntegration({ host, username, password, path })
-    }
-    if(type === 'logstash') return testLogstashIntegration(normalized)
-    if(type === 'airflow') return testAirflowIntegration(normalized)
-    if(type === 'postgresql' || type === 'mysql'){
-      const payload: any = { db_type: type === 'postgresql' ? 'postgres' : 'mysql' }
-      payload.user = normalized.user || normalized.username || ''
-      payload.password = normalized.password || ''
-      payload.host = normalized.host || ''
-      payload.port = normalized.port || ''
-      payload.database = normalized.dbname || normalized.database || normalized.db || ''
-      return testDbConnection(payload)
-    }
-    throw new Error('Unsupported integration type')
-  }
+  const handleSplunkSetup = () => {
+    message.info('Splunk Integration is currently in our development backlog and will be available in a future version update.');
+  };
 
-  const save = async ()=>{
-    const v = await form.validateFields()
-    try{
-      // Collect form values and build create/update integration payload.
-      const payload: any = { name: v.name, type: v.type, config: {} }
-      if(v.type === 'elasticsearch'){
-        payload.config = { host: v.host || '', username: v.username || '', password: v.password || '' }
-      }else if(v.type === 'logstash'){
-        payload.config = v.config || { inputs: [], filters: [], outputs: [] }
-      }else if(v.type === 'airflow'){
-        payload.config = { host: v.host || '', username: v.username || '', password: v.password || '', token: v.token || '', path: v.path || '' }
-      }else if(v.type === 'postgresql' || v.type === 'mysql'){
-        payload.config = {
-          conn_str: v.conn_str || undefined,
-          host: v.host || undefined,
-          port: v.port || undefined,
-          user: v.user || v.username || undefined,
-          password: v.password || undefined,
-          dbname: v.dbname || v.database || undefined,
-          django_db: v.django_db || undefined,
-          table: v.table || undefined,
+  type IntegrationCardConfig = {
+    key: 'elastic' | 'splunk';
+    title: string;
+    subtitle: string;
+    description: string;
+    logo: string;
+    isInstalled: boolean;
+    onConfigure: () => void;
+    onUninstall?: () => void;
+    onUnavailable?: () => void;
+  };
+
+  const elasticInstalled = Boolean(elkItems[0]?.id && elkItems[0]?.config?.host);
+  const integrationCards: IntegrationCardConfig[] = [
+    {
+      key: 'elastic',
+      title: 'Elastic Stack',
+      subtitle: 'ELK Connector',
+      description: 'Ingest and analyze security event logs and system metrics via automated cluster pipelines.',
+      logo: '/elastic-logo.png',
+      isInstalled: elasticInstalled,
+      onConfigure: () => openFromCard(elkItems[0]),
+      onUninstall: elkItems[0]?.id ? () => handleDelete(elkItems[0]) : undefined,
+    },
+    {
+      key: 'splunk',
+      title: 'Splunk',
+      subtitle: 'SIEM Sync Connector',
+      description: 'Synchronize raw log indices and complex correlation findings directly from Splunk deployments.',
+      logo: '/splunk-logo.svg',
+      isInstalled: false,
+      onConfigure: handleSplunkSetup,
+      onUnavailable: handleSplunkSetup,
+    },
+  ];
+
+  const renderIntegrationCard = (card: IntegrationCardConfig) => {
+    const badgeStyle: React.CSSProperties = card.isInstalled
+      ? {
+          background: '#ecfdf3',
+          border: '1px solid #86efac',
+          color: '#166534',
         }
-      }else{
-        payload.config = { ...(v.config || {}), host: v.host }
-      }
+      : {
+          background: '#f8fafc',
+          border: '1px solid #cbd5e1',
+          color: '#475569',
+        };
 
-      // Create vs update: editingIndex === null => create new integration; otherwise update existing
-      if(editingIndex === null){
-        await createIntegration(payload)
-        message.success('Integration created')
-      }else{
-        const id = items[editingIndex].id
-        await updateIntegration(id, payload)
-        message.success('Integration updated')
-      }
-      setShowModal(false)
-      setEditingIndex(null)
-      form.resetFields()
-      fetchList()
-    }catch(e:any){ message.error(String(e)) }
-  }
+    return (
+      <Card
+        key={card.key}
+        hoverable
+        onClick={card.key === 'splunk' ? card.onUnavailable : card.onConfigure}
+        style={{
+          width: '100%',
+          maxWidth: 440,
+          minHeight: 276,
+          position: 'relative',
+          borderRadius: 8,
+          border: '1px solid rgba(100,116,139,0.58)',
+          background: 'rgba(15,23,42,0.46)',
+          boxShadow: '0 1px 0 rgba(148,163,184,0.12) inset',
+          transition: 'border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease',
+        }}
+        styles={{
+          body: {
+            height: '100%',
+            padding: 24,
+            display: 'flex',
+            flexDirection: 'column',
+          },
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = 'rgba(148,163,184,0.9)';
+          e.currentTarget.style.boxShadow = '0 0 0 1px rgba(59,130,246,0.22), 0 18px 38px rgba(2,6,23,0.34)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = 'rgba(100,116,139,0.58)';
+          e.currentTarget.style.boxShadow = '0 1px 0 rgba(148,163,184,0.12) inset';
+          e.currentTarget.style.transform = 'translateY(0)';
+        }}
+      >
+        {/* Pill badge is absolutely positioned so Ant Design card layout cannot stretch it into a distorted circle. */}
+        <span
+          style={{
+            ...badgeStyle,
+            position: 'absolute',
+            top: 18,
+            right: 18,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 24,
+            padding: '2px 10px',
+            borderRadius: 999,
+            fontSize: 12,
+            fontWeight: 600,
+            lineHeight: 1,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {card.isInstalled ? 'Installed' : 'Available'}
+        </span>
 
-  const handleTestFromModal = async ()=>{
-    try{
-      const v = form.getFieldsValue()
-      const res = await testIntegration(v)
-      showTestResult(true, res)
-    }catch(e:any){
-      showTestResult(false, getErrorText(e))
-    }
-  }
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, paddingRight: 96 }}>
+          <div
+            style={{
+              width: 78,
+              height: 78,
+              borderRadius: 8,
+              border: '1px solid rgba(148,163,184,0.34)',
+              background: 'rgba(2,6,23,0.32)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <img src={card.logo} alt={`${card.title} logo`} style={{ width: 54, height: 54, objectFit: 'contain' }} />
+          </div>
+        </div>
 
-  const openNew = ()=>{ setEditingIndex(null); form.resetFields(); setShowModal(true) }
+        <div style={{ marginTop: 16 }}>
+          <Title level={4} style={{ margin: 0, fontSize: 22, lineHeight: 1.2 }}>
+            {card.title}
+          </Title>
+          <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+            {card.subtitle}
+          </Text>
+        </div>
 
-  const openEdit = (it:any, idx:number)=>{
-    setEditingIndex(idx)
-    const copy = { ...it }
-    if(!copy.config) copy.config = { inputs: [], filters: [], outputs: [] }
-    const merged: any = { ...copy }
-    if(copy.type === 'logstash') merged.config = copy.config
-    else{
-      merged.host = copy.config.host || copy.config.url || undefined
-      merged.username = copy.config.username
-      merged.password = copy.config.password
-      merged.token = copy.config.token
-      merged.path = copy.config.path
-      merged.conn_str = copy.config.conn_str || copy.config.url || undefined
-      merged.port = copy.config.port || undefined
-      merged.user = copy.config.user || copy.config.username || undefined
-      merged.dbname = copy.config.dbname || copy.config.database || undefined
-      merged.django_db = copy.config.django_db || undefined
-      merged.table = copy.config.table || undefined
-    }
-    form.setFieldsValue(merged)
-    setShowModal(true)
-  }
+        <Text style={{ display: 'block', marginTop: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+          {card.description}
+        </Text>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Conditional lifecycle actions: installed cards can be configured and uninstalled; available cards only start setup. */}
+        <Space style={{ marginTop: 18 }}>
+          <Button type="primary" onClick={(e) => { e.stopPropagation(); card.onConfigure(); }}>
+            {card.isInstalled ? 'Configure' : 'Setup Integration'}
+          </Button>
+          {card.isInstalled && card.onUninstall ? (
+            <Button danger onClick={(e) => { e.stopPropagation(); card.onUninstall?.(); }}>
+              Delete
+            </Button>
+          ) : null}
+        </Space>
+      </Card>
+    );
+  };
 
   return (
     <div style={{ padding: 12 }}>
       <Card title="Integrations">
-        {isReadonly ? (
+        {isReadonly && (
           <Alert
             type="info"
             showIcon
             style={{ marginBottom: 12 }}
             message="Read-only view"
-            description="Guest accounts can view configured integrations but cannot inspect credentials or make changes."
+            description="Guest accounts can view configured integrations but cannot edit credentials."
           />
-        ) : (
-          <Button type="primary" onClick={openNew} style={{ marginBottom: 12 }}>Add Integration</Button>
         )}
-        <List dataSource={items} renderItem={(it:any, idx)=> {
-          const n = normalizeIntegration(it)
-          const actionButtons = isReadonly ? [<Tag key="ro">Read-only</Tag>] : [
-            <Button key="test" onClick={async (e)=>{ e.stopPropagation(); try{ const res = await testIntegration(n); showTestResult(true, res) }catch(e:any){ showTestResult(false, getErrorText(e)) } }}>Test</Button>,
-            <Button key="edit" onClick={(e)=>{ e.stopPropagation(); openEdit(it, idx) }}>Edit</Button>,
-            <Button key="del" danger onClick={(e)=>{ e.stopPropagation(); handleDelete({ ...n, id: n.id || it.id }) }}>Delete</Button>
-          ]
-          return (
-          <List.Item extra={<Space>{actionButtons}</Space>}>
-            <List.Item.Meta
-              title={isReadonly ? (n.name || n.host) : <a onClick={()=>openEdit(it, idx)}>{n.name || n.host}</a>}
-              description={<div><Tag>{n.type}</Tag> {n.host}</div>}
-            />
-          </List.Item>
-        )}} />
+
+        <Text type="secondary">
+          Manage and configure your SIEM data ingestion pipelines and connectors.
+        </Text>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 440px))',
+            gap: 20,
+            marginTop: 10,
+            alignItems: 'stretch',
+            justifyContent: 'start',
+          }}
+        >
+          {integrationCards.map(renderIntegrationCard)}
+        </div>
       </Card>
 
-      <Modal open={showModal && !isReadonly} onCancel={()=>setShowModal(false)} onOk={save} title="Add Integration">
-        <Form form={form} layout="vertical" initialValues={{ type: 'elasticsearch' }}>
-          <Form.Item name="type" label="Type">
-            <Select onChange={(v:any)=>{ form.setFieldsValue({ type: v }) }}>
-              <Select.Option value="elasticsearch">Elasticsearch</Select.Option>
-              <Select.Option value="logstash">Logstash</Select.Option>
-              <Select.Option value="airflow">Airflow</Select.Option>
-              <Select.Option value="postgresql">PostgreSQL</Select.Option>
-              <Select.Option value="mysql">MySQL</Select.Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="name" label="Name" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item shouldUpdate noStyle>
-            {()=>{
-              const t = form.getFieldValue('type')
-              let hostLabel = 'Host'
-              if(t === 'elasticsearch') hostLabel = 'Host (http://...)'
-              else if(t === 'postgresql' || t === 'mysql') hostLabel = 'DB Host'
-              else if(t === 'airflow') hostLabel = 'Host (http://...)'
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src="/elastic-logo.png" alt="Elastic logo" style={{ width: 22, height: 22, objectFit: 'contain' }} />
+            <span>Configure Elasticsearch</span>
+          </div>
+        }
+        open={modalOpen && !isReadonly}
+        onCancel={closeModal}
+        footer={[
+          <Button key="cancel" onClick={closeModal} disabled={testing || saving}>
+            Cancel
+          </Button>,
+          <Button key="test" onClick={handleTestConnection} loading={testing} disabled={saving}>
+            Test Connection
+          </Button>,
+          <Button key="save" type="primary" onClick={handleSave} loading={saving} disabled={testing}>
+            Save Configuration
+          </Button>,
+        ]}
+        width={820}
+        styles={{
+          body: {
+            paddingTop: 10,
+          },
+        }}
+      >
+        {/* Controlled form state (formData) keeps all values parameterized and reactive. */}
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <div style={{ maxWidth: 420 }}>
+            <Text strong>Integration Name</Text>
+            <Input
+              value={formData.name}
+              onChange={(e) => setField('name', e.target.value)}
+              placeholder="e.g., production-logs"
+              disabled={testing || saving}
+              style={{ marginTop: 6, borderRadius: 10 }}
+            />
+          </div>
 
-              return (
-                <>
-                  <Form.Item name="host" label={hostLabel}><Input /></Form.Item>
+          <Row gutter={12}>
+            <Col xs={24} md={8}>
+              <Text strong>Connection Protocol</Text>
+              <Select
+                value={formData.protocol}
+                onChange={(v) => setField('protocol', v as ProtocolType)}
+                options={[
+                  { label: 'HTTPS', value: 'https' },
+                  { label: 'HTTP', value: 'http' },
+                ]}
+                disabled={testing || saving}
+                style={{ width: '100%', marginTop: 6 }}
+              />
+            </Col>
+            <Col xs={24} md={10}>
+              <Text strong>Host</Text>
+              <Input
+                value={formData.host}
+                onChange={(e) => setField('host', e.target.value)}
+                onBlur={() => setHostTouched(true)}
+                placeholder="e.g., localhost or 10.0.0.1"
+                disabled={testing || saving}
+                status={hostTouched && !hostValid ? 'error' : ''}
+                style={{ marginTop: 6, borderRadius: 10 }}
+              />
+              {hostTouched && !hostValid && (
+                <Text type="danger" style={{ fontSize: 12 }}>
+                  Enter a valid hostname or IPv4 address.
+                </Text>
+              )}
+            </Col>
+            <Col xs={24} md={6}>
+              <Text strong>Port</Text>
+              <InputNumber
+                min={1}
+                max={65535}
+                value={formData.port}
+                onChange={(v) => setField('port', Number(v || 9200))}
+                disabled={testing || saving}
+                style={{ width: '100%', marginTop: 6, borderRadius: 10 }}
+              />
+            </Col>
+          </Row>
 
-                  {t === 'elasticsearch' && (
-                    <>
-                      <Form.Item name="username" label="Username (optional)"><Input /></Form.Item>
-                      <Form.Item name="password" label="Password (optional)"><Input.Password /></Form.Item>
-                    </>
-                  )}
+          <Divider style={{ margin: '2px 0' }}>Authentication</Divider>
 
-                  {t === 'logstash' && (
-                    <>
-                      <Form.Item label="Logstash Config (inputs/filters/outputs)">
-                        <Divider />
-                        <Form.List name={[ 'config', 'inputs' ]}>
-                          {(fields, { add, remove }) => (
-                            <div>
-                              <h4>Inputs</h4>
-                              {fields.map(f=> (
-                                <div key={f.key} style={{ marginBottom: 8 }}>
-                                  <Form.Item name={[f.name, 'type']} rules={[{ required: true }]} style={{ display: 'inline-block', width: '30%', marginRight: 8 }}>
-                                    <Select>
-                                      <Select.Option value="file">file</Select.Option>
-                                      <Select.Option value="tcp">tcp</Select.Option>
-                                      <Select.Option value="http">http</Select.Option>
-                                    </Select>
-                                  </Form.Item>
-                                  <Form.Item name={[f.name, 'path']} style={{ display: 'inline-block', width: '60%' }}>
-                                    <Input placeholder="path or host" />
-                                  </Form.Item>
-                                  <Button danger onClick={()=>remove(f.name)}>Remove</Button>
-                                </div>
-                              ))}
-                              <Button onClick={()=>add({ type: 'file', path: '' })}>Add Input</Button>
-                            </div>
-                          )}
-                        </Form.List>
+          <Row gutter={12}>
+            <Col xs={24} md={12}>
+              <Text strong>Authentication Type</Text>
+              <Select
+                value={formData.authType}
+                onChange={(v) => setField('authType', v as AuthType)}
+                disabled={testing || saving}
+                style={{ width: '100%', marginTop: 6 }}
+                options={[
+                  { label: 'No Authentication', value: 'none' },
+                  { label: 'Basic Authentication', value: 'basic' },
+                  { label: 'API Key', value: 'api_key' },
+                ]}
+              />
+            </Col>
+          </Row>
 
-                        <Form.List name={[ 'config', 'filters' ]}>
-                          {(fields, { add, remove }) => (
-                            <div>
-                              <h4>Filters</h4>
-                              {fields.map(f=> (
-                                <div key={f.key} style={{ marginBottom: 8 }}>
-                                  <Form.Item name={[f.name, 'type']} rules={[{ required: true }]} style={{ display: 'inline-block', width: '30%', marginRight: 8 }}>
-                                    <Select>
-                                      <Select.Option value="grok">grok</Select.Option>
-                                      <Select.Option value="mutate">mutate</Select.Option>
-                                    </Select>
-                                  </Form.Item>
-                                  <Form.Item name={[f.name, 'pattern']} style={{ display: 'inline-block', width: '60%' }}>
-                                    <Input placeholder="pattern or config" />
-                                  </Form.Item>
-                                  <Button danger onClick={()=>remove(f.name)}>Remove</Button>
-                                </div>
-                              ))}
-                              <Button onClick={()=>add({ type: 'grok', pattern: '' })}>Add Filter</Button>
-                            </div>
-                          )}
-                        </Form.List>
+          {/* Conditional rendering: credentials shown only for selected auth mode. */}
+          {formData.authType === 'basic' && (
+            <Row gutter={12}>
+              <Col xs={24} md={12}>
+                <Text strong>Username</Text>
+                <Input
+                  value={formData.username}
+                  onChange={(e) => setField('username', e.target.value)}
+                  disabled={testing || saving}
+                  style={{ marginTop: 6, borderRadius: 10 }}
+                />
+              </Col>
+              <Col xs={24} md={12}>
+                <Text strong>Password</Text>
+                <Input.Password
+                  value={formData.password}
+                  onChange={(e) => setField('password', e.target.value)}
+                  disabled={testing || saving}
+                  style={{ marginTop: 6, borderRadius: 10 }}
+                />
+              </Col>
+            </Row>
+          )}
 
-                        <Form.List name={[ 'config', 'outputs' ]}>
-                          {(fields, { add, remove }) => (
-                            <div>
-                              <h4>Outputs</h4>
-                              {fields.map(f=> (
-                                <div key={f.key} style={{ marginBottom: 8 }}>
-                                  <Form.Item name={[f.name, 'type']} rules={[{ required: true }]} style={{ display: 'inline-block', width: '30%', marginRight: 8 }}>
-                                    <Select>
-                                      <Select.Option value="elasticsearch">elasticsearch</Select.Option>
-                                      <Select.Option value="postgresql">postgresql</Select.Option>
-                                    </Select>
-                                  </Form.Item>
-                                  <Form.Item name={[f.name, 'config']} style={{ display: 'inline-block', width: '60%' }}>
-                                    <Input placeholder="config or host" />
-                                  </Form.Item>
-                                  <Button danger onClick={()=>remove(f.name)}>Remove</Button>
-                                </div>
-                              ))}
-                              <Button onClick={()=>add({ type: 'elasticsearch', config: '' })}>Add Output</Button>
-                            </div>
-                          )}
-                        </Form.List>
+          {formData.authType === 'api_key' && (
+            <div>
+              <Text strong>API Key Token</Text>
+              <Input.Password
+                value={formData.apiKey}
+                onChange={(e) => setField('apiKey', e.target.value)}
+                disabled={testing || saving}
+                placeholder="Paste API key token"
+                style={{ marginTop: 6, borderRadius: 10 }}
+              />
+            </div>
+          )}
 
-                        <Button style={{ marginTop: 8 }} onClick={()=>{
-                          const vals = form.getFieldsValue()
-                          const cfg = vals.config || {}
-                          let txt = ''
-                          const ins = cfg.inputs || []
-                          ins.forEach((i:any)=>{ txt += `input { ${i.type} { ${i.path || ''} } }\n` })
-                          const fil = cfg.filters || []
-                          fil.forEach((f:any)=>{ txt += `filter { ${f.type} { ${f.pattern || ''} } }\n` })
-                          const outs = cfg.outputs || []
-                          outs.forEach((o:any)=>{ txt += `output { ${o.type} { ${o.config || ''} } }\n` })
-                          Modal.info({ title: 'Logstash config preview', width: 700, content: (<pre style={{ whiteSpace: 'pre-wrap' }}>{txt}</pre>) })
-                        }}>Preview Logstash Config</Button>
-                      </Form.Item>
-                    </>
-                  )}
+          <Divider style={{ margin: '2px 0' }}>Target Mapping</Divider>
 
-                  {t === 'airflow' && (
-                    <>
-                      <Form.Item name="username" label="Username (optional)"><Input /></Form.Item>
-                      <Form.Item name="password" label="Password (optional)"><Input.Password /></Form.Item>
-                      <Form.Item name="token" label="Bearer Token (optional)"><Input /></Form.Item>
-                      <Form.Item name="path" label="API Path (optional)"><Input placeholder="e.g. /api/v1/health" /></Form.Item>
-                    </>
-                  )}
+          <div style={{ maxWidth: 560 }}>
+            <Text strong>Target Index / Index Pattern</Text>
+            <Space.Compact style={{ width: '100%', marginTop: 6 }}>
+              <Select
+                showSearch
+                allowClear
+                value={formData.index || undefined}
+                placeholder="e.g., alerts-linux-*"
+                disabled={testing || saving}
+                loading={indicesLoading}
+                style={{ width: '100%' }}
+                options={indicesList.map((idx) => ({ label: idx, value: idx }))}
+                onChange={(v) => setField('index', String(v || ''))}
+                onSearch={(v) => setField('index', v)}
+                filterOption={(input, option) =>
+                  String(option?.label || '')
+                    .toLowerCase()
+                    .includes(input.toLowerCase())
+                }
+              />
+              <Button onClick={handleFetchIndices} loading={indicesLoading} disabled={testing || saving}>
+                Fetch Indices
+              </Button>
+            </Space.Compact>
+          </div>
 
-                  {(t === 'postgresql' || t === 'mysql') && (
-                    <>
-                      <Form.Item name="conn_str" label="Connection string (optional)"><Input placeholder="e.g. postgresql://user:pass@host:5432/dbname" /></Form.Item>
-                      <Form.Item name="port" label="Port"><Input /></Form.Item>
-                      <Form.Item name="user" label="User"><Input /></Form.Item>
-                      <Form.Item name="password" label="Password"><Input.Password /></Form.Item>
-                      <Form.Item name="dbname" label="Database"><Input /></Form.Item>
-                      <Form.Item name="django_db" label="Django DB alias (optional)"><Input placeholder="e.g. default" /></Form.Item>
-                    </>
-                  )}
-                </>
-              )
-            }}
-          </Form.Item>
-          <Form.Item name="notes" label="Notes"><Input.TextArea rows={3} /></Form.Item>
-          <Form.Item>
-            <Space>
-              <Button onClick={handleTestFromModal}>Test Connection</Button>
-              <Button type="primary" onClick={save}>Save</Button>
-            </Space>
-          </Form.Item>
-        </Form>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, opacity: 0.8 }}>
+              Preview endpoint
+            </Text>
+            <div style={{ marginTop: 6, opacity: 0.9 }}>
+              <Text code style={{ fontSize: 12, fontWeight: 500 }}>
+                {`${buildHostUrl()}${formData.path}`}
+              </Text>
+            </div>
+          </div>
+        </Space>
       </Modal>
+
       <Modal
         title={testResult.title}
         open={testResult.open}
         footer={null}
-        onCancel={()=>setTestResult(prev=>({ ...prev, open: false }))}
+        onCancel={() => setTestResult((prev) => ({ ...prev, open: false }))}
       >
         <Alert
           type={testResult.ok ? 'success' : 'error'}
@@ -399,11 +752,10 @@ const Integrations: React.FC = () =>{
           message={testResult.ok ? 'Connection succeeded' : 'Connection failed'}
           style={{ marginBottom: 12 }}
         />
-        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 360, overflow: 'auto', margin: 0 }}>
-          {testResult.detail}
-        </pre>
+        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 320, overflow: 'auto', margin: 0 }}>{testResult.detail}</pre>
       </Modal>
     </div>
-  )
-}
+  );
+};
+
 export default Integrations;

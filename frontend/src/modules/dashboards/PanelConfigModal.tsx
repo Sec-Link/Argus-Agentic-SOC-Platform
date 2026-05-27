@@ -9,7 +9,6 @@
 import React, { useEffect, useState } from 'react'
 import dayjs from 'dayjs'
 import { Modal, Form, Select, Input, Spin, Button, Alert } from 'antd'
-import { listDatasources } from 'services/datasource'
 import { queryPreview } from 'services/dashboards'
 
 export default function PanelConfigModal({ visible, panel, onCancel, onSave, dashboardTimeRange, dashboardTimestampField }:{ visible:boolean, panel:any, onCancel:Function, onSave:Function, dashboardTimeRange?: [any, any] | null, dashboardTimestampField?: string | null }){
@@ -34,7 +33,6 @@ export default function PanelConfigModal({ visible, panel, onCancel, onSave, das
   const [availableFields, setAvailableFields] = useState<any[]>([])
   // Loading and error state for UI feedback
   const [loadingFields, setLoadingFields] = useState(false)
-  const [datasources, setDatasources] = useState<any[]>([])
   const [sqlLoadError, setSqlLoadError] = useState<string | null>(null)
   const [integrationError, setIntegrationError] = useState<string | null>(null)
   // Locally saved integrations (for quick ES selection)
@@ -42,18 +40,16 @@ export default function PanelConfigModal({ visible, panel, onCancel, onSave, das
 
   useEffect(()=>{
     if(visible){
-      // Load datasources from API, fallback to empty on error
-      listDatasources().then(r=>setDatasources(r)).catch(()=>setDatasources([]))
       // Load saved integrations from localStorage for quick selection
       try{ const s = localStorage.getItem('integrations'); setSavedIntegrations(s ? JSON.parse(s) : []) }catch(e){ setSavedIntegrations([]) }
       // Pre-fill form with panel config to preserve behavior
       form.setFieldsValue({ title: panel?.config?.title || '', type: panel?.type || 'chart' })
       form.setFieldsValue({ datasource: panel?.config?.datasource || panel?.config?.datasourceId || panel?.config?.datasource, sql: panel?.config?.sql || panel?.config?.query || '' })
-      // integration type: 'datasource' or 'elasticsearch'; default to elasticsearch if esConfig exists
+      // Integration type is Elasticsearch only after datasource support was removed.
       if(panel?.config?.esConfig){
         form.setFieldsValue({ integrationType: 'elasticsearch', esHost: panel.config.esConfig.host, esIndex: panel.config.esConfig.index, esQuery: panel.config.esConfig.query || '' })
       } else {
-        form.setFieldsValue({ integrationType: 'datasource' })
+        form.setFieldsValue({ integrationType: 'elasticsearch' })
       }
       // Preload existing field bindings to avoid overwriting
       const bindings = panel?.config?.fieldBindings || {}
@@ -173,7 +169,7 @@ export default function PanelConfigModal({ visible, panel, onCancel, onSave, das
 
   return (
     <Modal open={visible} onCancel={()=>onCancel()} onOk={handleOk} title={`Configure Panel ${panel?.i}`}>
-      <Form form={form} layout="vertical" initialValues={{ integrationType: 'datasource' }}>
+      <Form form={form} layout="vertical" initialValues={{ integrationType: 'elasticsearch' }}>
         <Form.Item name="title" label="Title">
           <Input />
         </Form.Item>
@@ -186,21 +182,19 @@ export default function PanelConfigModal({ visible, panel, onCancel, onSave, das
             <Select.Option value="image">Image</Select.Option>
           </Select>
         </Form.Item>
-        <Form.Item name="datasource" label="DataSource (optional)">
+        <Form.Item name="datasource" label="Elasticsearch Integration (optional)">
           <Select allowClear onChange={(val)=>{
             // if user selected an ES integration (we store object in option value), auto-fill es fields
             if(val && typeof val === 'object' && val.type === 'elasticsearch'){
               form.setFieldsValue({ integrationType: 'elasticsearch', esHost: val.host, esIndex: form.getFieldValue('esIndex') || '', esQuery: form.getFieldValue('esQuery') || '' })
             }
           }}>
-            {datasources.map((d:any)=> <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
             {savedIntegrations.filter(i=>i.type==='elasticsearch').map((it:any,idx)=> <Select.Option key={`es-${idx}`} value={{ type: 'elasticsearch', name: it.name, host: it.host }}>{`ES: ${it.name || it.host}`}</Select.Option>)}
           </Select>
         </Form.Item>
 
         <Form.Item name="integrationType" label="Integration">
           <Select>
-            <Select.Option value="datasource">Datasource / SQL</Select.Option>
             <Select.Option value="elasticsearch">Elasticsearch</Select.Option>
           </Select>
         </Form.Item>

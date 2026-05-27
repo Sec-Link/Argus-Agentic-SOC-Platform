@@ -22,9 +22,44 @@ from django.db.models import Q
 from django.utils import timezone as django_timezone
 
 from .models import Alert, ESIntegrationConfig, AlertSyncSchedule
-from .services import _http_search, _detect_timestamp_field, _resolve_timestamp_sort_field, _ensure_alert_identity
+from .services import (
+    _http_search,
+    _detect_timestamp_field,
+    _resolve_timestamp_sort_field,
+    _ensure_alert_identity,
+    _extract_alert_timestamp,
+    _normalize_alert_severity,
+    _get_alert_field,
+)
 
 logger = logging.getLogger(__name__)
+
+def _looks_unresolved_template(value: object) -> bool:
+    if value is None:
+        return False
+    s = str(value)
+    return '{{' in s and '}}' in s
+
+
+def _sanitize_doc(doc):
+    if isinstance(doc, dict):
+        out = {}
+        for k, v in doc.items():
+            cleaned = _sanitize_doc(v)
+            if cleaned is None:
+                continue
+            out[k] = cleaned
+        return out
+    if isinstance(doc, list):
+        cleaned_list = []
+        for item in doc:
+            cleaned_item = _sanitize_doc(item)
+            if cleaned_item is not None:
+                cleaned_list.append(cleaned_item)
+        return cleaned_list
+    if _looks_unresolved_template(doc):
+        return None
+    return doc
 
 
 def _fetch_all_docs_via_scroll(
@@ -205,15 +240,15 @@ def _create_or_update_index_table(index: str, docs: List[Dict[str, Any]]) -> Dic
             continue
 
         defaults = {
-            'timestamp': _parse_es_timestamp(doc.get('timestamp')),
-            'severity': doc.get('severity'),
-            'message': doc.get('message'),
+            'timestamp': _extract_alert_timestamp(doc),
+            'severity': _normalize_alert_severity(_get_alert_field(doc, 'severity', 'level', 'body.severity', 'body.level')),
+            'message': _get_alert_field(doc, 'message', 'title', 'body.message', 'body.title'),
             'source_index': doc.get('source_index') or index_name,
-            'rule_id': doc.get('rule_id'),
-            'title': doc.get('title'),
-            'status': _coerce_int(doc.get('status')),
-            'description': doc.get('description'),
-            'category': doc.get('category'),
+            'rule_id': _get_alert_field(doc, 'rule_id', 'body.rule_id'),
+            'title': _get_alert_field(doc, 'title', 'body.title'),
+            'status': _coerce_int(_get_alert_field(doc, 'status', 'body.status')),
+            'description': _get_alert_field(doc, 'description', 'details', 'body.description'),
+            'category': _get_alert_field(doc, 'category', 'body.category'),
             'source_data': doc,
         }
         Alert.objects.update_or_create(
@@ -541,18 +576,21 @@ def sync_es_alerts_to_db(
                 alert_id = _ensure_alert_identity(doc, index_name)
                 doc['alert_id'] = alert_id
                 doc['source_index'] = index_name
+                clean_doc = _sanitize_doc(doc if isinstance(doc, dict) else {})
+                parsed_ts = _extract_alert_timestamp(clean_doc or doc, sort_field)
 
                 defaults = {
-                    'timestamp': _parse_es_timestamp(doc.get('timestamp')),
-                    'severity': doc.get('severity'),
-                    'message': doc.get('message'),
+                    # Enforce non-null valid timestamp for trend compatibility.
+                    'timestamp': parsed_ts or django_timezone.now(),
+                    'severity': _normalize_alert_severity(_get_alert_field(doc, 'severity', 'level', 'body.severity', 'body.level')),
+                    'message': _get_alert_field(doc, 'message', 'title', 'body.message', 'body.title'),
                     'source_index': index_name,
-                    'rule_id': doc.get('rule_id'),
-                    'title': doc.get('title'),
-                    'status': _coerce_int(doc.get('status')),
-                    'description': doc.get('description'),
-                    'category': doc.get('category'),
-                    'source_data': {**doc, 'alert_id': alert_id},
+                    'rule_id': _get_alert_field(doc, 'rule_id', 'body.rule_id'),
+                    'title': _get_alert_field(doc, 'title', 'body.title'),
+                    'status': _coerce_int(_get_alert_field(doc, 'status', 'body.status')),
+                    'description': _get_alert_field(doc, 'description', 'details', 'body.description'),
+                    'category': _get_alert_field(doc, 'category', 'body.category'),
+                    'source_data': {**(clean_doc or {}), **doc, 'alert_id': alert_id},
                 }
 
                 with transaction.atomic():
@@ -697,4 +735,3 @@ def run_alert_sync_by_schedule(*, force: bool = False) -> Dict[str, Any]:
         schedule.last_error = str(exc)
         schedule.save(update_fields=['last_run_at', 'last_status', 'last_error', 'updated_at'])
         raise
-
