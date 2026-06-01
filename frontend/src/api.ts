@@ -1036,6 +1036,10 @@ export interface Workflow {
   name: string;
   description: string;
   trigger_type: string;
+  // Execution engine for this workflow.
+  // - 'local'   : runs in-process via the Django engine (default).
+  // - 'prefect' : delegated to a Prefect flow run; status is polled from Prefect.
+  execution_engine?: 'local' | 'prefect';
   trigger_conditions: Record<string, any>;
   schedule_cron?: string;
   is_active: boolean;
@@ -1078,6 +1082,9 @@ export interface WorkflowExecution {
   context: Record<string, any>;
   executed_by?: number;
   executed_by_username?: string;
+  // Prefect flow run id when the parent workflow uses execution_engine='prefect'.
+  // Empty string for local-engine executions.
+  task_result_id?: string;
   step_executions?: StepExecution[];
   created_at: string;
 }
@@ -1266,6 +1273,13 @@ export async function getWorkflowExecution(id: string): Promise<WorkflowExecutio
 // Cancel execution
 export async function cancelWorkflowExecution(id: string): Promise<void> {
   await client.post(`${WORKFLOWS_BASE}/executions/${id}/cancel/`);
+}
+
+// Force-sync a Prefect-backed execution from the Prefect Server.
+// Returns the up-to-date detail payload (same shape as getWorkflowExecution).
+export async function refreshPrefectExecutionStatus(id: string): Promise<WorkflowExecution> {
+  const r = await client.post(`${WORKFLOWS_BASE}/executions/${id}/refresh-prefect-status/`);
+  return r.data;
 }
 
 // Get available actions

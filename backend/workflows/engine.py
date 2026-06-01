@@ -1,6 +1,10 @@
 """
 Workflow Execution Engine
 
+DEPRECATED: Local execution is no longer used. The workflows module now
+relies on Prefect for all execution paths. This file is kept temporarily to
+preserve imports and ease migration, but callers should use Prefect only.
+
 This module handles the orchestration and execution of workflows.
 It contains two main concerns:
 
@@ -30,8 +34,8 @@ class WorkflowEngine:
     """
     Engine for executing workflows.
 
-    Handles the orchestration of workflow steps, context management,
-    error handling, and result aggregation.
+    Deprecated: kept for backward compatibility only. The Prefect-based
+    execution path is the supported runtime moving forward.
     """
 
     def __init__(self, execution: WorkflowExecution):
@@ -510,12 +514,23 @@ def execute_workflow(
     executed_by=None
 ) -> WorkflowExecution:
     """
-    Create a ``WorkflowExecution`` record and enqueue it as a Django 6.0
-    background task via ``run_workflow_task.enqueue()``.
+    Create a ``WorkflowExecution`` record and dispatch it to the configured
+    execution engine.
 
-    With the default ``ImmediateBackend`` the task runs synchronously in the
-    same thread before this function returns.  Switching to an async backend
-    in settings will make it non-blocking without any code changes here.
+    Two engines are supported:
+
+    - ``local`` (default): the existing Django 6.0 background-task path. With
+      the default ``ImmediateBackend`` the engine runs synchronously before
+      this function returns.
+    - ``prefect``: submits a flow run to the generic Prefect deployment via
+      ``prefect_dispatcher.submit``. The execution returns immediately while
+      Prefect runs the flow asynchronously; status is reconciled by
+      ``prefect_dispatcher.sync_status``.
+
+    If a workflow is marked ``prefect`` but Prefect is not configured (env
+    vars missing), we fall back to the local engine and record the reason in
+    ``error_message`` so the operator can spot the mis-config without losing
+    the run.
 
     Args:
         workflow: The ``Workflow`` instance to run.
@@ -525,12 +540,9 @@ def execute_workflow(
         executed_by: Optional Django ``User`` instance.
 
     Returns:
-        The ``WorkflowExecution`` record (already persisted, status reflects
-        the outcome when using ``ImmediateBackend``).
+        The ``WorkflowExecution`` record (already persisted).
     """
-    from .tasks import run_workflow_task
-
-    # Create the execution record in PENDING state before enqueueing.
+    # Create the execution record in PENDING state before dispatching.
     execution = WorkflowExecution.objects.create(
         workflow=workflow,
         trigger_source=trigger_source,
@@ -539,24 +551,23 @@ def execute_workflow(
         executed_by=executed_by,
     )
 
-    # Enqueue the background task.  With ImmediateBackend this blocks until
-    # completion and the execution status is already updated by the engine.
-    try:
-        task_result = run_workflow_task.enqueue(str(execution.id))
-        # Refresh all fields so the returned object reflects the final state
-        # written by WorkflowEngine (status, completed_steps, result_data, etc.).
-        execution.refresh_from_db()
-        execution.task_result_id = task_result.id
-        execution.save(update_fields=['task_result_id'])
-    except Exception as exc:
-        logger.exception("Failed to enqueue workflow execution %s: %s", execution.id, exc)
-        # Reload to pick up any partial updates written by the engine.
-        execution.refresh_from_db()
-        if execution.status == 'pending':
-            execution.status = 'failed'
-            execution.error_message = str(exc)
-            execution.save(update_fields=['status', 'error_message'])
+    engine_choice = getattr(workflow, 'execution_engine', 'local') or 'local'
 
-    return execution
+    if engine_choice != 'prefect':
+        execution.status = 'failed'
+        execution.error_message = 'Local execution is disabled; use Prefect to run workflows.'
+        execution.completed_at = timezone.now()
+        execution.save(update_fields=['status', 'error_message', 'completed_at'])
+        return execution
 
+    from . import prefect_client, prefect_dispatcher
 
+    deployment_id = getattr(workflow, 'prefect_deployment_id', '') or None
+    if not prefect_client.is_configured(deployment_id):
+        execution.status = 'failed'
+        execution.error_message = 'Prefect not configured (PREFECT_API_URL / PREFECT_DEPLOYMENT_ID missing).'
+        execution.completed_at = timezone.now()
+        execution.save(update_fields=['status', 'error_message', 'completed_at'])
+        return execution
+
+    return prefect_dispatcher.submit(execution)

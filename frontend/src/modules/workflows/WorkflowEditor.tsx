@@ -139,6 +139,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
         name: '',
         description: '',
         trigger_type: 'manual',
+        execution_engine: 'local',
         webhook_source_id: undefined,
         is_active: false,
         is_draft: true,
@@ -157,6 +158,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
           name: data.name,
           description: data.description,
           trigger_type: data.trigger_type,
+          execution_engine: data.execution_engine || 'local',
           webhook_source_id: data.trigger_conditions?.webhook_source_id,
           schedule_cron: data.schedule_cron,
           is_active: data.is_active,
@@ -184,6 +186,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
         name: values.name,
         description: values.description || '',
         trigger_type: values.trigger_type,
+        execution_engine: values.execution_engine || 'local',
         trigger_conditions:
           values.trigger_type === 'webhook' && values.webhook_source_id
             ? { webhook_source_id: values.webhook_source_id }
@@ -444,6 +447,19 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
                     </Form.Item>
                   )
                 }
+              </Form.Item>
+
+              <Form.Item
+                name="execution_engine"
+                label="Execution Engine"
+                tooltip="Local runs in-process via Django. Prefect delegates to a Prefect flow run; requires PREFECT_API_URL and PREFECT_DEPLOYMENT_ID on the server."
+              >
+                <Select
+                  options={[
+                    { value: 'local', label: 'Local (Django)' },
+                    { value: 'prefect', label: 'Prefect' },
+                  ]}
+                />
               </Form.Item>
 
               <Form.Item name="tags" label="Tags">

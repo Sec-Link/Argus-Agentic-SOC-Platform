@@ -11,6 +11,7 @@ from .models import (
     WorkflowExecution,
     StepExecution,
     SavedWorkflowNode,
+    WorkflowSchedule,
 )
 
 
@@ -73,6 +74,31 @@ class WorkflowStepCreateSerializer(serializers.ModelSerializer):
         }
 
 
+class WorkflowScheduleSerializer(serializers.ModelSerializer):
+    workflow_name = serializers.CharField(source='workflow.name', read_only=True)
+
+    class Meta:
+        model = WorkflowSchedule
+        fields = [
+            'id', 'workflow', 'workflow_name', 'name', 'schedule_type',
+            'cron', 'interval_seconds', 'timezone', 'is_active',
+            'trigger_source', 'trigger_data', 'created_by',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        schedule_type = attrs.get('schedule_type') or getattr(self.instance, 'schedule_type', None)
+        cron_value = attrs.get('cron') if 'cron' in attrs else getattr(self.instance, 'cron', None)
+        interval_value = attrs.get('interval_seconds') if 'interval_seconds' in attrs else getattr(self.instance, 'interval_seconds', None)
+
+        if schedule_type == 'cron' and not cron_value:
+            raise serializers.ValidationError({'cron': 'Cron expression is required for cron schedules.'})
+        if schedule_type == 'interval' and not interval_value:
+            raise serializers.ValidationError({'interval_seconds': 'Interval seconds is required for interval schedules.'})
+        return attrs
+
+
 class WorkflowListSerializer(serializers.ModelSerializer):
     """Serializer for listing workflows (minimal data)."""
     created_by_username = serializers.CharField(
@@ -86,8 +112,9 @@ class WorkflowListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Workflow
         fields = [
-            'id', 'name', 'description', 'trigger_type', 'is_active',
-            'is_draft', 'version', 'tags', 'created_by', 'created_by_username',
+            'id', 'name', 'description', 'trigger_type', 'execution_engine',
+            'prefect_deployment_id',
+            'is_active', 'is_draft', 'version', 'tags', 'created_by', 'created_by_username',
             'step_count', 'execution_count', 'last_execution',
             'created_at', 'updated_at'
         ]
@@ -118,13 +145,17 @@ class WorkflowDetailSerializer(serializers.ModelSerializer):
         read_only=True
     )
     steps = WorkflowStepSerializer(many=True, read_only=True)
+    schedules = WorkflowScheduleSerializer(many=True, read_only=True)
 
     class Meta:
         model = Workflow
         fields = [
-            'id', 'name', 'description', 'trigger_type', 'trigger_conditions',
+            'id', 'name', 'description', 'trigger_type', 'execution_engine',
+            'prefect_deployment_id',
+            'trigger_conditions',
             'schedule_cron', 'is_active', 'is_draft', 'version', 'tags',
             'edges', 'created_by', 'created_by_username', 'steps',
+            'schedules',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -137,10 +168,16 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Workflow
         fields = [
-            'id', 'name', 'description', 'trigger_type', 'trigger_conditions',
+            'id', 'name', 'description', 'trigger_type', 'execution_engine',
+            'prefect_deployment_id',
+            'trigger_conditions',
             'schedule_cron', 'is_active', 'is_draft', 'version', 'tags', 'edges', 'steps'
         ]
         read_only_fields = ['id']
+
+    def validate(self, attrs):
+        attrs['execution_engine'] = 'prefect'
+        return attrs
 
     @staticmethod
     def _to_uuid_or_none(value):
@@ -305,5 +342,4 @@ class SavedWorkflowNodeSerializer(serializers.ModelSerializer):
             'created_by', 'created_by_username', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_by', 'created_by_username', 'created_at', 'updated_at']
-
 

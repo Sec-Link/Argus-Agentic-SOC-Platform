@@ -21,6 +21,7 @@ export {
   listWorkflowExecutions,
   getWorkflowExecution,
   cancelWorkflowExecution,
+  refreshPrefectExecutionStatus,
   getAvailableActions,
   getWorkflowStats,
   listSavedWorkflowNodes,

@@ -189,6 +189,17 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       ),
     },
     {
+      title: 'Engine',
+      dataIndex: 'execution_engine',
+      key: 'execution_engine',
+      width: 100,
+      render: (engine?: string) => (
+        <Tag color={engine === 'prefect' ? 'geekblue' : 'default'}>
+          {engine === 'prefect' ? 'Prefect' : 'Local'}
+        </Tag>
+      ),
+    },
+    {
       title: 'Steps',
       dataIndex: 'step_count',
       key: 'step_count',
