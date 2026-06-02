@@ -307,19 +307,19 @@ export default function Detections() {
     const values = Array.from(new Set(rules
       .map((r) => String(r.logsource || '').split('/')[0].trim().toLowerCase())
       .filter(Boolean)));
-    return [{ value: 'all', label: '全部产品' }, ...values.map((v) => ({ value: v, label: v }))];
+    return [{ value: 'all', label: 'All Products' }, ...values.map((v) => ({ value: v, label: v }))];
   }, [rules]);
 
   const severityOptions = useMemo(() => {
     const values = Array.from(new Set(rules.map((r) => String(r.level || '').trim().toLowerCase()).filter(Boolean)));
     const base = ['critical', 'high', 'medium', 'low'];
     const ordered = [...base.filter((x) => values.includes(x)), ...values.filter((x) => !base.includes(x))];
-    return [{ value: 'all', label: '全部级别' }, ...ordered.map((v) => ({ value: v, label: v }))];
+    return [{ value: 'all', label: 'All Severities' }, ...ordered.map((v) => ({ value: v, label: v }))];
   }, [rules]);
 
   const statusOptions = useMemo(() => {
     const values = Array.from(new Set(rules.map((r) => String(r.status || '').trim().toLowerCase()).filter(Boolean)));
-    return [{ value: 'all', label: '全部状态' }, ...values.map((v) => ({ value: v, label: v }))];
+    return [{ value: 'all', label: 'All Statuses' }, ...values.map((v) => ({ value: v, label: v }))];
   }, [rules]);
 
   const parsed = useMemo(() => {
@@ -439,9 +439,9 @@ export default function Detections() {
     try {
       const res = await uploadDetectionRules(files);
       await loadRules();
-      message.success(`上传完成: 新增 ${res?.created || 0}，更新 ${res?.updated || 0}，跳过 ${res?.skipped || 0}`);
+      message.success(`Upload complete: created ${res?.created || 0}, updated ${res?.updated || 0}, skipped ${res?.skipped || 0}`);
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || e?.message || '上传失败');
+      message.error(e?.response?.data?.detail || e?.message || 'Upload failed');
     } finally {
       setUploading(false);
     }
@@ -454,13 +454,13 @@ export default function Detections() {
     if (selectedId && ids.includes(selectedId)) setSelectedId('');
     setSelectedRuleIds([]);
     await loadRules();
-    message.success(`已删除 ${ids.length} 条规则`);
+    message.success(`Deleted ${ids.length} rules`);
   };
 
   const ruleColumns: ColumnsType<RuleRow> = [
-    { title: '规则名称', dataIndex: 'name', key: 'name', render: (_, r) => <span style={{ fontWeight: 700 }}>{r.name || r.id}</span> },
+    { title: 'Rule Name', dataIndex: 'name', key: 'name', render: (_, r) => <span style={{ fontWeight: 700 }}>{r.name || r.id}</span> },
     {
-      title: '级别',
+      title: 'Severity',
       key: 'level',
       width: 100,
       render: (_, r) => {
@@ -469,19 +469,19 @@ export default function Detections() {
         return <Tag color={color}>{level}</Tag>;
       },
     },
-    { title: '状态', key: 'status', width: 100, render: (_, r) => <Tag color="orange">{r.status || 'draft'}</Tag> },
-    { title: '日志源', dataIndex: 'logsource', key: 'logsource', width: 220, render: (v) => v || '-' },
+    { title: 'Status', key: 'status', width: 100, render: (_, r) => <Tag color="orange">{r.status || 'draft'}</Tag> },
+    { title: 'Log Source', dataIndex: 'logsource', key: 'logsource', width: 220, render: (v) => v || '-' },
     { title: 'Profile', dataIndex: 'profile', key: 'profile', width: 200, render: (v) => v || '-' },
-    { title: '标签', key: 'tags', render: (_, r) => Array.isArray(r.tags) && r.tags.length ? r.tags.join(', ') : '-' },
+    { title: 'Tags', key: 'tags', render: (_, r) => Array.isArray(r.tags) && r.tags.length ? r.tags.join(', ') : '-' },
     {
-      title: '发布',
+      title: 'Published',
       key: 'publish',
       width: 120,
       render: (_, r) => {
         if (r.publish_status === 'published') {
-          return <Tag color={r.kibana_enabled ? 'green' : 'gold'}>{r.kibana_enabled ? 'Kibana启用' : 'Kibana已发布'}</Tag>;
+          return <Tag color={r.kibana_enabled ? 'green' : 'gold'}>{r.kibana_enabled ? 'Kibana Enabled' : 'Published to Kibana'}</Tag>;
         }
-        return <Tag>未发布</Tag>;
+        return <Tag>Not Published</Tag>;
       },
     },
   ];
@@ -496,7 +496,7 @@ export default function Detections() {
       await loadRules();
       await loadDetail(editorId.trim());
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || e?.message || '保存规则失败');
+      message.error(e?.response?.data?.detail || e?.message || 'Failed to save rule');
     }
   };
 
@@ -507,16 +507,16 @@ export default function Detections() {
       const indexPatterns = parseIndexPatterns(elasticIndexPatternsText);
       await saveDetectionRule(selectedId, yaml, { elastic_actions: actions, elastic_index_patterns: indexPatterns, kibana_metadata: kibanaMetadata });
       await loadDetail(selectedId);
-      message.success('Elastic Action 配置已保存');
+      message.success('Elastic action configuration saved');
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || e?.message || '保存 Elastic Action 配置失败');
+      message.error(e?.response?.data?.detail || e?.message || 'Failed to save Elastic action configuration');
     }
   };
 
   const syncKibanaEnabled = async (enabled: boolean) => {
     if (!selectedId) return;
     const remoteId = String(kibanaMetadata.remote_id || '').trim();
-    if (!remoteId) return message.error('Kibana 规则尚未发布');
+    if (!remoteId) return message.error('The Kibana rule has not been published yet');
     try {
       const full = await getPublishedDetectionRule(remoteId);
       const updated = await patchPublishedDetectionRule(remoteId, { ...full, enabled });
@@ -537,16 +537,16 @@ export default function Detections() {
       setKibanaMetadata(nextMetadata);
       await loadRules();
       await loadDetail(selectedId);
-      message.success(enabled ? 'Kibana 规则已启用' : 'Kibana 规则已禁用');
+      message.success(enabled ? 'Kibana rule enabled' : 'Kibana rule disabled');
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || e?.message || '更新 Kibana 规则失败');
+      message.error(e?.response?.data?.detail || e?.message || 'Failed to update the Kibana rule');
     }
   };
 
   const deleteKibanaRule = async () => {
     if (!selectedId) return;
     const remoteId = String(kibanaMetadata.remote_id || '').trim();
-    if (!remoteId) return message.error('Kibana 规则尚未发布');
+    if (!remoteId) return message.error('The Kibana rule has not been published yet');
     try {
       await deletePublishedDetectionRule(remoteId);
       const nextMetadata: KibanaMetadata = {
@@ -565,9 +565,9 @@ export default function Detections() {
       setKibanaMetadata(nextMetadata);
       await loadRules();
       await loadDetail(selectedId);
-      message.success('Kibana 规则已删除');
+      message.success('Kibana rule deleted');
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || e?.message || '删除 Kibana 规则失败');
+      message.error(e?.response?.data?.detail || e?.message || 'Failed to delete the Kibana rule');
     }
   };
 
@@ -591,7 +591,7 @@ export default function Detections() {
       setSelectedActionIndex(Math.max(current.length - 1, 0));
       setSelectedActionParamsText(formatJson(current[current.length - 1]?.params || {}));
     } catch (e: any) {
-      message.error(e?.message || '当前 Action JSON 格式不正确');
+      message.error(e?.message || 'The current action JSON is invalid');
     }
   };
 
@@ -610,16 +610,16 @@ export default function Detections() {
   const applySelectedActionParams = () => {
     try {
       const actions = parseElasticActions(elasticActionsText);
-      if (!actions.length) throw new Error('当前还没有 action');
+      if (!actions.length) throw new Error('There is no action yet');
       const nextParams = JSON.parse(selectedActionParamsText || '{}');
       actions[selectedActionIndex] = {
         ...actions[selectedActionIndex],
         params: nextParams,
       };
       setElasticActionsText(formatJson(actions));
-      message.success('已写入当前 action 的 params');
+      message.success('Wrote params back to the current action');
     } catch (e: any) {
-      message.error(e?.message || '更新 action params 失败');
+      message.error(e?.message || 'Failed to update action params');
     }
   };
 
@@ -654,9 +654,9 @@ export default function Detections() {
     try {
       const res = await uploadDetectionMappings(files);
       await loadMappings();
-      message.success(`映射上传完成: 新增 ${res?.created || 0}，更新 ${res?.updated || 0}，跳过 ${res?.skipped || 0}`);
+      message.success(`Mapping upload complete: created ${res?.created || 0}, updated ${res?.updated || 0}, skipped ${res?.skipped || 0}`);
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || e?.message || '映射上传失败');
+      message.error(e?.response?.data?.detail || e?.message || 'Mapping upload failed');
     } finally {
       setMappingUploading(false);
     }
@@ -675,25 +675,25 @@ export default function Detections() {
         <Card>
           <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }} wrap>
             <Space>
-              <Input.Search placeholder="搜索规则、标签、数据源" value={search} onChange={(e) => setSearch(e.target.value)} onSearch={loadRules} style={{ width: 560 }} />
+              <Input.Search placeholder="Search rules, tags, or data sources" value={search} onChange={(e) => setSearch(e.target.value)} onSearch={loadRules} style={{ width: 560 }} />
               <Select value={productFilter} onChange={setProductFilter} style={{ width: 160 }} options={productOptions} />
               <Select value={severityFilter} onChange={setSeverityFilter} style={{ width: 140 }} options={severityOptions} />
               <Select value={statusFilter} onChange={setStatusFilter} style={{ width: 140 }} options={statusOptions} />
             </Space>
             <Space>
-              <Typography.Text type="secondary">显示 {filtered.length} / {rules.length} 条，内置 SigmaHQ {Math.max(0, rules.length - 1)} 条</Typography.Text>
+              <Typography.Text type="secondary">Showing {filtered.length} / {rules.length} rules, including {Math.max(0, rules.length - 1)} built-in SigmaHQ rules</Typography.Text>
               <Popconfirm
-                title={`确认删除选中的 ${selectedRuleIds.length} 条规则？`}
-                okText="删除"
-                cancelText="取消"
+                title={`Delete ${selectedRuleIds.length} selected rules?`}
+                okText="Delete"
+                cancelText="Cancel"
                 disabled={!selectedRuleIds.length}
                 onConfirm={deleteSelectedRules}
               >
-                <Button danger disabled={!selectedRuleIds.length}>删除选中规则</Button>
+                <Button danger disabled={!selectedRuleIds.length}>Delete Selected Rules</Button>
               </Popconfirm>
-              <Button loading={uploading} onClick={() => document.getElementById('detection-upload-files')?.click()}>上传文件</Button>
-              <Button loading={uploading} onClick={() => document.getElementById('detection-upload-folder')?.click()}>上传文件夹</Button>
-              <Button type="primary" onClick={() => { setEditorId(''); setEditorYaml(''); setElasticActionsText('[]'); setElasticIndexPatternsText('logs-*'); setSelectedActionIndex(0); setSelectedActionParamsText('{}'); setKibanaMetadata({}); setEditorOpen(true); }}>新建规则</Button>
+              <Button loading={uploading} onClick={() => document.getElementById('detection-upload-files')?.click()}>Upload Files</Button>
+              <Button loading={uploading} onClick={() => document.getElementById('detection-upload-folder')?.click()}>Upload Folder</Button>
+              <Button type="primary" onClick={() => { setEditorId(''); setEditorYaml(''); setElasticActionsText('[]'); setElasticIndexPatternsText('logs-*'); setSelectedActionIndex(0); setSelectedActionParamsText('{}'); setKibanaMetadata({}); setEditorOpen(true); }}>New Rule</Button>
               <input
                 id="detection-upload-files"
                 type="file"
@@ -744,17 +744,17 @@ export default function Detections() {
       : detailTab === 'elastic'
       ? (compiled.kql || '*')
       : detailTab === 'test'
-      ? '测试入口预留（可接 /detections/test）'
+      ? 'Test entry reserved (can be wired to /detections/test)'
       : versions.map((v) => `v${v.version} ${v.change_type || 'update'} ${v.created_at || ''}`).join('\n') || 'No versions';
 
     return (
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
-          <Button onClick={() => setSelectedId('')}>返回列表</Button>
+          <Button onClick={() => setSelectedId('')}>Back to List</Button>
           <Space>
-            <Button onClick={() => { setEditorId(selectedId); setEditorYaml(yaml); setEditorOpen(true); }}>编辑</Button>
-            <Button type="primary" onClick={() => publish('splunk')}>发布 Splunk</Button>
-            <Button type="primary" onClick={() => publish('elastic')}>发布 Elastic 到 Kibana</Button>
+            <Button onClick={() => { setEditorId(selectedId); setEditorYaml(yaml); setEditorOpen(true); }}>Edit</Button>
+            <Button type="primary" onClick={() => publish('splunk')}>Publish to Splunk</Button>
+            <Button type="primary" onClick={() => publish('elastic')}>Publish to Kibana</Button>
           </Space>
         </div>
 
@@ -767,45 +767,45 @@ export default function Detections() {
         <Typography.Paragraph type="secondary">{parsed.desc || 'No description'}</Typography.Paragraph>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 16 }}>
-          <Card size="small" title="日志源">{parsed.source} / {parsed.category}</Card>
-          <Card size="small" title="映射 Profile">{(compiled.profiles || []).slice(0, 4).join(', ') || `${parsed.source}_${parsed.category}`}</Card>
-          <Card size="small" title="标签">{parsed.tags || '-'}</Card>
+          <Card size="small" title="Log Source">{parsed.source} / {parsed.category}</Card>
+          <Card size="small" title="Mapping Profile">{(compiled.profiles || []).slice(0, 4).join(', ') || `${parsed.source}_${parsed.category}`}</Card>
+          <Card size="small" title="Tags">{parsed.tags || '-'}</Card>
         </div>
         <Card
           size="small"
-          title="Kibana 检测规则"
+          title="Kibana Detection Rule"
           style={{ marginBottom: 16 }}
-          extra={kibanaMetadata.published ? <Tag color={kibanaMetadata.enabled ? 'green' : 'gold'}>{kibanaMetadata.enabled ? '已启用' : '已发布未启用'}</Tag> : <Tag>未发布</Tag>}
+          extra={kibanaMetadata.published ? <Tag color={kibanaMetadata.enabled ? 'green' : 'gold'}>{kibanaMetadata.enabled ? 'Enabled' : 'Published but Disabled'}</Tag> : <Tag>Not Published</Tag>}
         >
           <Space wrap>
             <Typography.Text type="secondary">Rule ID: {kibanaMetadata.rule_id || '-'}</Typography.Text>
             <Typography.Text type="secondary">Remote ID: {kibanaMetadata.remote_id || '-'}</Typography.Text>
-            <Button size="small" disabled={!kibanaMetadata.published || Boolean(kibanaMetadata.enabled)} onClick={() => syncKibanaEnabled(true)}>启用</Button>
-            <Button size="small" disabled={!kibanaMetadata.published || !Boolean(kibanaMetadata.enabled)} onClick={() => syncKibanaEnabled(false)}>禁用</Button>
-            <Popconfirm title="确认删除 Kibana 中的检测规则？" okText="删除" cancelText="取消" onConfirm={deleteKibanaRule}>
-              <Button size="small" danger disabled={!kibanaMetadata.published}>删除 Kibana 规则</Button>
+            <Button size="small" disabled={!kibanaMetadata.published || Boolean(kibanaMetadata.enabled)} onClick={() => syncKibanaEnabled(true)}>Enable</Button>
+            <Button size="small" disabled={!kibanaMetadata.published || !Boolean(kibanaMetadata.enabled)} onClick={() => syncKibanaEnabled(false)}>Disable</Button>
+            <Popconfirm title="Delete the detection rule from Kibana?" okText="Delete" cancelText="Cancel" onConfirm={deleteKibanaRule}>
+              <Button size="small" danger disabled={!kibanaMetadata.published}>Delete Kibana Rule</Button>
             </Popconfirm>
           </Space>
         </Card>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
           <Typography.Title level={3} style={{ margin: 0 }}>Detection</Typography.Title>
-          <Typography.Text type="secondary">{section(yaml, 'detection') ? '检测字段就绪' : '0 个检测字段'}</Typography.Text>
+          <Typography.Text type="secondary">{section(yaml, 'detection') ? 'Detection fields ready' : '0 detection fields'}</Typography.Text>
         </div>
 
         <Space style={{ marginBottom: 10 }}>
           <Button type={detailTab === 'sigma' ? 'primary' : 'default'} onClick={() => setDetailTab('sigma')}>Sigma</Button>
           <Button type={detailTab === 'splunk' ? 'primary' : 'default'} onClick={() => setDetailTab('splunk')}>Splunk SPL</Button>
           <Button type={detailTab === 'elastic' ? 'primary' : 'default'} onClick={() => setDetailTab('elastic')}>Elastic KQL</Button>
-          <Button type={detailTab === 'test' ? 'primary' : 'default'} onClick={() => setDetailTab('test')}>测试</Button>
-          <Button type={detailTab === 'version' ? 'primary' : 'default'} onClick={() => setDetailTab('version')}>版本</Button>
+          <Button type={detailTab === 'test' ? 'primary' : 'default'} onClick={() => setDetailTab('test')}>Test</Button>
+          <Button type={detailTab === 'version' ? 'primary' : 'default'} onClick={() => setDetailTab('version')}>Versions</Button>
         </Space>
 
         {detailTab === 'version' ? (
           <Space wrap style={{ marginBottom: 10 }}>
             {versions.map((v) => (
-              <Button key={v.version} size="small" onClick={async () => { await rollbackPublishedRuleVersion(selectedId, v.version); await loadDetail(selectedId); message.success(`已回滚到 v${v.version}`); }}>
-                回滚到 v{v.version}
+              <Button key={v.version} size="small" onClick={async () => { await rollbackPublishedRuleVersion(selectedId, v.version); await loadDetail(selectedId); message.success(`Rolled back to v${v.version}`); }}>
+                Roll Back to v{v.version}
               </Button>
             ))}
           </Space>
@@ -817,7 +817,7 @@ export default function Detections() {
               <Card size="small" title="Elastic KQL">
                 <Space direction="vertical" style={{ width: '100%' }} size={10}>
                   <Typography.Text type="secondary">
-                    Index patterns 属于 Elastic KQL 规则本身，会作为 detection rule 的 `index` 字段提交。
+                    Index patterns belong to the Elastic KQL rule itself and will be submitted as the detection rule `index` field.
                   </Typography.Text>
                   <Input.TextArea
                     value={elasticIndexPatternsText}
@@ -845,15 +845,15 @@ export default function Detections() {
             <Card
               size="small"
               title="Kibana Detection Actions"
-              extra={<Button size="small" onClick={saveElasticActions}>保存配置</Button>}
+              extra={<Button size="small" onClick={saveElasticActions}>Save Configuration</Button>}
             >
               <Space direction="vertical" style={{ width: '100%' }} size={10}>
                 <Typography.Text type="secondary">
-                  这里仅配置 `actions`。Action frequency 默认按 `For each alert` 发送。
+                  Configure only `actions` here. Action frequency defaults to `For each alert`.
                 </Typography.Text>
                 <Space wrap>
                   <Select
-                    placeholder="选择 Connector 生成模板"
+                    placeholder="Select a connector template"
                     value={connectorDraftId || undefined}
                     onChange={setConnectorDraftId}
                     style={{ width: 260 }}
@@ -862,12 +862,12 @@ export default function Detections() {
                       label: `${c.name}${c.connector_type_id ? ` (${c.connector_type_id})` : ''}`,
                     }))}
                   />
-                  <Button onClick={insertConnectorTemplate} disabled={!connectorDraftId}>插入模板</Button>
-                  <Button onClick={loadConnectors}>刷新 Connectors</Button>
+                  <Button onClick={insertConnectorTemplate} disabled={!connectorDraftId}>Insert Template</Button>
+                  <Button onClick={loadConnectors}>Refresh Connectors</Button>
                 </Space>
                 <Space wrap style={{ width: '100%' }}>
                   <Select
-                    placeholder="选择要填写的 Action"
+                    placeholder="Select an action to edit"
                     value={(() => {
                       try {
                         const actions = parseElasticActions(elasticActionsText);
@@ -889,7 +889,7 @@ export default function Detections() {
                       }
                     })()}
                   />
-                  <Button onClick={applySelectedActionParams}>写回当前 Params</Button>
+                  <Button onClick={applySelectedActionParams}>Apply Current Params</Button>
                 </Space>
                 <Input.TextArea
                   value={selectedActionParamsText}
@@ -932,16 +932,16 @@ export default function Detections() {
         activeKey={topTab}
         onChange={setTopTab}
         items={[
-          { key: 'rules', label: '规则库', children: rulesContent() },
+          { key: 'rules', label: 'Rule Library', children: rulesContent() },
           {
             key: 'mappings',
-            label: '字段映射',
+            label: 'Field Mappings',
             children: (
               <Card>
                 <Space style={{ marginBottom: 12 }}>
-                  <Button loading={mappingUploading} onClick={() => document.getElementById('detection-upload-mappings-files')?.click()}>上传映射文件</Button>
-                  <Button loading={mappingUploading} onClick={() => document.getElementById('detection-upload-mappings-folder')?.click()}>上传映射文件夹</Button>
-                  <Button onClick={loadMappings}>刷新</Button>
+                  <Button loading={mappingUploading} onClick={() => document.getElementById('detection-upload-mappings-files')?.click()}>Upload Mapping Files</Button>
+                  <Button loading={mappingUploading} onClick={() => document.getElementById('detection-upload-mappings-folder')?.click()}>Upload Mapping Folder</Button>
+                  <Button onClick={loadMappings}>Refresh</Button>
                   <input
                     id="detection-upload-mappings-files"
                     type="file"
@@ -974,24 +974,24 @@ export default function Detections() {
           },
           {
             key: 'deployments',
-            label: '发布记录',
+            label: 'Publish History',
             children: <Card><Table rowKey="id" dataSource={deployments} columns={deployColumns} pagination={{ pageSize: 10 }} /></Card>,
           },
           {
             key: 'github',
-            label: 'GitHub导入',
+            label: 'GitHub Import',
             children: (
               <Card>
                 <Space>
                   <Input placeholder="https://raw.githubusercontent.com/.../rule.yml" value={githubUrl} onChange={(e) => setGithubUrl(e.target.value)} style={{ width: 600 }} />
-                  <Button type="primary" onClick={importGithub}>导入</Button>
+                  <Button type="primary" onClick={importGithub}>Import</Button>
                 </Space>
               </Card>
             ),
           },
         ]}
       />
-      <Modal title={editorId ? `编辑规则 ${editorId}` : '新建规则'} open={editorOpen} onCancel={() => setEditorOpen(false)} onOk={saveRule} width={980}>
+      <Modal title={editorId ? `Edit Rule ${editorId}` : 'New Rule'} open={editorOpen} onCancel={() => setEditorOpen(false)} onOk={saveRule} width={980}>
         <Space direction="vertical" style={{ width: '100%' }}>
           <Input placeholder="Rule ID" value={editorId} onChange={(e) => setEditorId(e.target.value)} />
           <Input.TextArea rows={18} value={editorYaml} onChange={(e) => setEditorYaml(e.target.value)} placeholder="Paste Sigma YAML" />
