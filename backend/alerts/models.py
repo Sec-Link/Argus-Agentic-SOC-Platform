@@ -18,7 +18,7 @@ class Alert(models.Model):
 
     alert_id = models.CharField(max_length=64, null=True, blank=True)
     timestamp = models.DateTimeField(null=True, blank=True)
-    severity = models.CharField(max_length=16, null=True, blank=True)
+    severity = models.CharField(max_length=64, null=True, blank=True)
     message = models.TextField(null=True, blank=True)
     source_index = models.CharField(max_length=64, null=True, blank=True)
 
@@ -57,17 +57,6 @@ class ESIntegrationConfig(models.Model):
 
     def __str__(self):
         return f"ESConfig({self.id})"
-
-
-class WebhookConfig(models.Model):
-    """Stores webhook configuration used to notify external systems."""
-    url = models.CharField(max_length=1024)
-    method = models.CharField(max_length=8, default='POST')
-    headers = models.JSONField(default=dict, blank=True)
-    active = models.BooleanField(default=True)
-
-    def __str__(self):
-        return f"WebhookConfig({self.id})"
 
 
 class ESIntegrationConfigHistory(models.Model):
@@ -121,4 +110,3 @@ class DashboardStats(models.Model):
 If you still need SQLAlchemy for a separate pipeline, create a dedicated module
 and keep Django models isolated here.
 """
-

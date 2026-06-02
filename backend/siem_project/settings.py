@@ -52,7 +52,7 @@ INSTALLED_APPS = [
     'tickets',
     'cmdb',
     'ai_assistant',
-    'orchestrator',
+    'orchestrator.apps.OrchestratorConfig',
     'workflows',
     'workflow_interfaces',
     'detections',

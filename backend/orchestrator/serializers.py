@@ -12,9 +12,15 @@ from .models import Task, TaskRun, TaskRequestLog
 
 
 class TaskRunSerializer(serializers.ModelSerializer):
+    task_name = serializers.SerializerMethodField()
+
     class Meta:
         model = TaskRun
         fields = '__all__'
+
+    def get_task_name(self, obj):
+        task = getattr(obj, 'task', None)
+        return task.name if task else 'Deleted task'
 
 
 class TaskSerializer(serializers.ModelSerializer):

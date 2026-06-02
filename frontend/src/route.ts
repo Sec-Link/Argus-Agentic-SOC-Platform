@@ -5,7 +5,6 @@ export type RouteKey =
   | 'assets'
   | 'integrations'
   | 'dashboards'
-  | 'datasources'
   | 'orchestrator'
   | 'interfaces'
   | 'correlation'
@@ -25,7 +24,6 @@ export const permissionByKey: Record<RouteKey, string | undefined> = {
   assets: 'cmdb.view_asset',
   integrations: 'integrations.view_integration',
   dashboards: 'dashboards.view_dashboard',
-  datasources: 'datasource.view_datasource',
   orchestrator: 'orchestrator.view_task',
   interfaces: 'workflow_interfaces.view_interfaceendpoint',
   correlation: 'correlation.view_correlationpolicy',
@@ -46,7 +44,6 @@ export const keyToPath: Record<RouteKey, string> = {
   assets: '/cmdb/assets',
   integrations: '/settings/integrations',
   dashboards: '/settings/dashboards',
-  datasources: '/settings/datasources',
   orchestrator: '/settings/orchestrator',
   interfaces: '/settings/interfaces',
   correlation: '/settings/correlation',
@@ -80,7 +77,6 @@ export function resolveRouteKey(pathname: string): { key: RouteKey; ticketNumber
 
   if (p === '/settings/integrations') return { key: 'integrations' };
   if (p === '/settings/dashboards') return { key: 'dashboards' };
-  if (p === '/settings/datasources') return { key: 'datasources' };
   if (p === '/settings/orchestrator') return { key: 'orchestrator' };
   if (p === '/settings/interfaces') return { key: 'interfaces' };
   if (p === '/settings/correlation') return { key: 'correlation' };

@@ -25,7 +25,8 @@ PANEL_APP_LABELS = [
     "es_integration",
     "dashboards",
     "tickets",
-    "datasource",
+    # The legacy "datasource" panel label was retired after the UI domain was
+    # consolidated into Integrations and Data Pipeline.
     "integrations",
     "cmdb",
     "workflows",
@@ -667,6 +668,20 @@ class OtpService:
         return True, "ok"
 
 
+def is_user_readonly(user) -> bool:
+    """Return True if the user is an authenticated readonly (guest) account.
+
+    Superusers and staff are never treated as readonly even if a stray profile
+    flag is set.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+        return False
+    profile = UserAuthProfile.objects.filter(user=user).first()
+    return bool(profile and profile.is_readonly)
+
+
 def should_deny_write_for_readonly_user(user: User, path: str, method: str) -> bool:
     if not user or not getattr(user, "is_authenticated", False):
         return False
@@ -681,11 +696,11 @@ def should_deny_write_for_readonly_user(user: User, path: str, method: str) -> b
 
     # Allow OTP authentication endpoints for readonly users.
     allowed = {
-        "/api/v1/auth/otp/request/",
-        "/api/v1/auth/otp/request",
-        "/api/v1/auth/otp/verify/",
-        "/api/v1/auth/otp/verify",
-        "/api/v1/auth/logout/",
-        "/api/v1/auth/logout",
+        "/api/v1/accounts/auth/otp/request/",
+        "/api/v1/accounts/auth/otp/request",
+        "/api/v1/accounts/auth/otp/verify/",
+        "/api/v1/accounts/auth/otp/verify",
+        "/api/v1/accounts/auth/logout/",
+        "/api/v1/accounts/auth/logout",
     }
     return path not in allowed

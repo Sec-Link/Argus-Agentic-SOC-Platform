@@ -7,3 +7,7 @@ export function getStoredAccessToken() {
 export function getStoredUsername() {
   return safeGetStorage('siem_username');
 }
+
+export function getIsReadonly(): boolean {
+  return safeGetStorage('siem_is_readonly') === '1';
+}

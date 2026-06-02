@@ -28,12 +28,14 @@ def execute_task_async(task_id: str):
 _SCHEDULE_INTERVAL = max(1, int(getattr(settings, "ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS", 30)))
 
 
-@periodic_task(
-    interval=timedelta(seconds=_SCHEDULE_INTERVAL),
-    name="orchestrator.run_due_tasks",
-)
+# Keep decorator args compatible across django-scheduled-tasks versions.
+@periodic_task(interval=timedelta(seconds=_SCHEDULE_INTERVAL))
 @task
 def run_due_tasks():
+    return run_due_tasks_sync()
+
+
+def run_due_tasks_sync():
     if croniter is None:
         logger.error("run_due_tasks: croniter not installed")
         return {"status": "error", "message": "croniter not installed"}

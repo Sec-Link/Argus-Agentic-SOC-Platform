@@ -1,5 +1,8 @@
 from rest_framework import serializers
+from accounts.services import is_user_readonly
 from ai_assistant.models import ExternalMCPServer, SkillConfig
+
+REDACTED_VALUE = "***"
 
 
 class AIAssistantRequestSerializer(serializers.Serializer):
@@ -111,6 +114,14 @@ class ExternalMCPServerSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request') if hasattr(self, 'context') else None
+        user = getattr(request, 'user', None) if request else None
+        if is_user_readonly(user) and data.get("token"):
+            data["token"] = REDACTED_VALUE
+        return data
 
     def validate_skills(self, value):
         if value is None:

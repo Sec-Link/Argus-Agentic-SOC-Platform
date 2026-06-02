@@ -6,7 +6,4 @@ export {
   integrationsPreviewEsMapping,
   previewEsIntegration,
   testEsIntegration,
-  testLogstashIntegration,
-  testAirflowIntegration,
-  testDatasource,
 } from '../../api';

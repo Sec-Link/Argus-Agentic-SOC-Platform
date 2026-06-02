@@ -65,10 +65,18 @@ export function clearAccessToken() {
   } catch (e) {}
 }
 
+function resolveApiBase() {
+  const raw = (typeof process !== 'undefined' && (process as any).env && (process as any).env.NEXT_PUBLIC_API_BASE)
+    ? String((process as any).env.NEXT_PUBLIC_API_BASE).trim()
+    : '';
+  if (!raw) return '/api/v1';
+  // Guard against accidental UI/page URLs being used as API base.
+  if (raw.includes('/settings/')) return '/api/v1';
+  return raw.replace(/\/+$/, '');
+}
+
 const client = axios.create({
-  baseURL: (typeof process !== 'undefined' && (process as any).env && (process as any).env.NEXT_PUBLIC_API_BASE)
-    ? String((process as any).env.NEXT_PUBLIC_API_BASE)
-    : '/api/v1',
+  baseURL: resolveApiBase(),
   withCredentials: true,
   xsrfCookieName: 'csrftoken',
   xsrfHeaderName: 'X-CSRFToken',
@@ -76,7 +84,7 @@ const client = axios.create({
 const addAuthHeader = (config: InternalAxiosRequestConfig) => {
   const method = String(config.method || 'get').toUpperCase();
   const url = String(config.url || '');
-  const readonlyAllowedPaths = ['/auth/logout/', '/auth/otp/request/', '/auth/otp/verify/'];
+  const readonlyAllowedPaths = ['/accounts/auth/logout/', '/accounts/auth/otp/request/', '/accounts/auth/otp/verify/'];
   if (typeof window !== 'undefined') {
     let isReadonly = false;
     try {
@@ -105,7 +113,7 @@ client.interceptors.request.use(addAuthHeader);
 const TICKETS_BASE = '/tickets';
 
 export async function login(username: string, password: string) {
-  const res = await client.post('/auth/login/', { username, password });
+  const res = await client.post('/accounts/auth/login/', { username, password });
   setAccessToken(res.data.token);
   try {
     // persist token for page reloads
@@ -128,7 +136,7 @@ export async function register(
   password: string,
   passwordConfirm: string
 ) {
-  const res = await client.post('/auth/register/', {
+  const res = await client.post('/accounts/auth/register/', {
     username,
     email,
     password,
@@ -146,12 +154,12 @@ export async function register(
 }
 
 export async function registerEmail(email: string) {
-  const res = await client.post('/auth/register-email/', { email });
+  const res = await client.post('/accounts/auth/register-email/', { email });
   return res.data;
 }
 
 export async function getGuestEmailStatus(email: string) {
-  const res = await client.post('/auth/guest-email-status/', { email });
+  const res = await client.post('/accounts/auth/guest-email-status/', { email });
   return res.data as {
     email: string;
     is_registered_readonly: boolean;
@@ -160,12 +168,12 @@ export async function getGuestEmailStatus(email: string) {
 }
 
 export async function requestOtp(email: string) {
-  const res = await client.post('/auth/otp/request/', { email });
+  const res = await client.post('/accounts/auth/otp/request/', { email });
   return res.data;
 }
 
 export async function verifyOtp(email: string, otp: string) {
-  const res = await client.post('/auth/otp/verify/', { email, otp });
+  const res = await client.post('/accounts/auth/otp/verify/', { email, otp });
   setAccessToken(res.data.token);
   try {
     localStorage.setItem('siem_access_token', res.data.token);
@@ -253,8 +261,13 @@ export async function fetchAlerts(
   return res.data;
 }
 
-export async function fetchDashboard() {
-  const res = await client.get(`/alerts/dashboard/?_ts=${Date.now()}`);
+export async function fetchDashboard(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+  const qp = new URLSearchParams();
+  qp.set('_ts', String(Date.now()));
+  if (params?.all_time) qp.set('all_time', 'true');
+  if (params?.start_time) qp.set('start_time', params.start_time);
+  if (params?.end_time) qp.set('end_time', params.end_time);
+  const res = await client.get(`/alerts/dashboard/?${qp.toString()}`);
   return res.data;
 }
 
@@ -312,6 +325,21 @@ export async function updateSlaTicketStatus(ticketNumber: string, payload: { sta
     `${TICKETS_BASE}/${encodeURIComponent(ticketNumber)}/update_status/`,
     payload
   );
+  return res.data;
+}
+
+export async function batchUpdateSlaTickets(payload: { ticket_ids: string[]; status: string; notes?: string }) {
+  // Batch endpoints accept the table's selected ticket numbers directly. The
+  // backend normalizes display labels such as "Closed" into stored enum values
+  // such as "closed", so callers can keep payloads human-readable.
+  const res = await client.post(`${TICKETS_BASE}/batch-update/`, payload);
+  return res.data;
+}
+
+export async function batchDeleteSlaTickets(payload: { ticket_ids: string[] }) {
+  // Use POST instead of DELETE-with-body for stronger browser/proxy
+  // compatibility. The backend performs a soft delete for audit retention.
+  const res = await client.post(`${TICKETS_BASE}/batch-delete/`, payload);
   return res.data;
 }
 
@@ -571,7 +599,7 @@ export async function fetchAiAssistantMcpMonitor(params?: {
 }
 
 export async function fetchAiAssistantInternalMcpTools() {
-  const res = await client.get('/mcp/tools/');
+  const res = await client.get('/ai-assistant/mcp/tools/');
   return res.data;
 }
 
@@ -731,26 +759,6 @@ export async function resolveSlaTicket(
   return res.data;
 }
 
-export async function getESConfig() {
-  const res = await client.get('/alerts/config/es/');
-  return res.data;
-}
-
-export async function setESConfig(payload: any) {
-  const res = await client.post('/alerts/config/es/', payload);
-  return res.data;
-}
-
-export async function getWebhookConfig() {
-  const res = await client.get('/alerts/config/webhook/');
-  return res.data;
-}
-
-export async function setWebhookConfig(payload: any) {
-  const res = await client.post('/alerts/config/webhook/', payload);
-  return res.data;
-}
-
 export async function fetchTicketPolicies() {
   const res = await client.get('/ticket-policies/');
   return res.data;
@@ -771,16 +779,6 @@ export async function deleteTicketPolicy(id: string) {
   return res.data;
 }
 
-export async function getDatasourceFields(table: string){
-  const r = await client.get(`/datasource/fields?table=${encodeURIComponent(table)}`)
-  return r.data
-}
-
-export async function listDatasources(){
-  const r = await client.get('/datasources/')
-  return r.data
-}
-
 // Dataset APIs removed — use DataSource + SQL preview instead
 
 export async function queryPreview(payload:any){
@@ -788,38 +786,13 @@ export async function queryPreview(payload:any){
   return r.data
 }
 
-export async function createDatasource(payload:any){
-  const r = await client.post('/datasources/', payload)
-  return r.data
-}
-
-export async function updateDatasource(id:string, payload:any){
-  const r = await client.put(`/datasources/${id}/`, payload)
-  return r.data
-}
-
-export async function deleteDatasource(id:string){
-  const r = await client.delete(`/datasources/${id}/`)
-  return r.data
-}
-
-export async function testDatasource(payload:any){
-  const r = await client.post('/datasource/test', payload)
+export async function testIntegrationById(id: string){
+  const r = await client.post(`/integrations/${encodeURIComponent(id)}/test/`, {})
   return r.data
 }
 
 export async function testEsIntegration(payload:any){
   const r = await client.post('/integrations/test_es', payload)
-  return r.data
-}
-
-export async function testLogstashIntegration(payload:any){
-  const r = await client.post('/integrations/test_logstash', payload)
-  return r.data
-}
-
-export async function testAirflowIntegration(payload:any){
-  const r = await client.post('/integrations/test_airflow', payload)
   return r.data
 }
 

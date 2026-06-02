@@ -3,6 +3,8 @@ export {
   fetchSlaTicket,
   createSlaTicket,
   updateSlaTicketStatus,
+  batchUpdateSlaTickets,
+  batchDeleteSlaTickets,
   updateSlaTicket,
   fetchSlaTicketAttachments,
   fetchSlaTicketTimeline,

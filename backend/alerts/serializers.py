@@ -1,16 +1,10 @@
 from rest_framework import serializers
-from .models import ESIntegrationConfig, WebhookConfig, AlertSyncSchedule, ESIntegrationConfigHistory
+from .models import ESIntegrationConfig, AlertSyncSchedule, ESIntegrationConfigHistory
 
 class ESIntegrationConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = ESIntegrationConfig
         fields = ['enabled', 'hosts', 'index', 'username', 'password', 'use_ssl', 'verify_certs']
-
-class WebhookConfigSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = WebhookConfig
-        fields = ['url', 'method', 'headers', 'active']
-
 
 class AlertSyncScheduleSerializer(serializers.ModelSerializer):
     class Meta:

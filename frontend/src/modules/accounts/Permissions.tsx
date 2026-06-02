@@ -199,7 +199,6 @@ const Permissions: React.FC = () => {
       dashboards: 'Dashboards',
       integrations: 'Integrations',
       alerts: 'Alerts',
-      datasource: 'Data Sources',
       orchestrator: 'Orchestrator',
       correlation: 'Correlation',
       accounts: 'Accounts',
@@ -1223,4 +1222,3 @@ const Permissions: React.FC = () => {
 }
 
 export default Permissions
-

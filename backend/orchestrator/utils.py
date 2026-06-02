@@ -1,7 +1,9 @@
 import json
 import os
 import requests
+import traceback
 import secrets
+import hashlib
 from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone, dateparse
@@ -12,16 +14,30 @@ from correlation.models import CorrelationPolicy, CorrelationEvent
 from tickets.models import EventTicket, TicketWorkLog
 
 DEST_TABLE = "alerts_alert"
+MAX_ALERT_CHAR_LENGTHS = {
+    "alert_id": 64,
+    "severity": 16,
+    "source_index": 64,
+    "rule_id": 100,
+    "title": 256,
+    "category": 100,
+    "ticket_number": 64,
+}
 
 # -----------------------------
-# 中文注释：
-# 本模块提供任务执行的工具函数，当前仅包含 `execute_task`：
-# - `execute_task(task)` 同步执行给定 Task 的逻辑并创建/更新对应的 TaskRun 记录
-# - 当 Task 配置中指定 `sync: 'es_to_db'` 时，会调用 `sync_es_to_db` 将 Elasticsearch 中的数据导入目标数据库
-# - 执行过程中会记录日志行到 TaskRun.logs 字段，并在完成后设置状态（success/failed）与结束时间
+# English notes:
+# This module provides task execution utilities and currently centers on
+# `execute_task`.
+# - `execute_task(task)` runs a Task synchronously and creates/updates the
+#   corresponding TaskRun record.
+# - When Task config specifies `sync: 'es_to_db'`, the function performs
+#   Elasticsearch-to-database ingestion using the configured source/destination.
+# - During execution, log lines are written into `TaskRun.logs`, and final run
+#   status (`success`/`failed`/`partial`) plus completion timestamp are set.
 #
-# 该函数被 API（TaskViewSet.run）和调度器（management command scheduler）复用，方便在多种执行环境下保持一致的行为。
-# 注意：本文件仅添加注释，不修改已有行为。
+# The function is shared by both API-triggered runs (`TaskViewSet.run`) and
+# scheduler-triggered runs, so behavior stays consistent across environments.
+# This comment update does not change runtime behavior.
 # -----------------------------
 
 
@@ -33,6 +49,81 @@ def execute_task(task: Task) -> TaskRun:
     run = TaskRun.objects.create(task=task, started_at=timezone.now(), status='running')
     cfg = task.config or {}
     log_lines = []
+
+    def _truncate_text(value, max_length: int):
+        """Return a database-safe string while preserving None/blank semantics."""
+        if value in (None, ''):
+            return None
+        text = str(value)
+        if len(text) <= max_length:
+            return text
+        return text[:max_length]
+
+    def _normalize_severity(value):
+        """Normalize noisy vendor severity values before saving to alerts_alert.
+
+        The alert table is used by dashboard aggregations, so preserving a
+        compact severity tier is more useful than storing a very long vendor
+        label that can overflow the DB column.
+        """
+        if value in (None, ''):
+            return None
+        text = str(value).strip()
+        lower = text.lower()
+        if lower in {'critical', 'crit', 'fatal', 'emergency', 'emerg', 'panic'}:
+            return 'critical'
+        if lower in {'high', 'error', 'err', 'severe'}:
+            return 'high'
+        if lower in {'medium', 'med', 'moderate', 'warning', 'warn'}:
+            return 'medium'
+        if lower in {'low', 'info', 'informational', 'notice', 'debug'}:
+            return 'low'
+        try:
+            numeric = int(float(text))
+            if numeric >= 12:
+                return 'critical'
+            if numeric >= 9:
+                return 'high'
+            if numeric >= 6:
+                return 'medium'
+            return 'low'
+        except Exception:
+            return _truncate_text(text.lower(), MAX_ALERT_CHAR_LENGTHS["severity"])
+
+    def _stable_fingerprint(payload: dict) -> str:
+        """Build a deterministic hash for dedup/change detection."""
+        try:
+            normalized = json.dumps(payload or {}, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+        except Exception:
+            normalized = str(payload)
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+    def _looks_unresolved_template(value) -> bool:
+        if value is None:
+            return False
+        s = str(value)
+        return '{{' in s and '}}' in s
+
+    def _sanitize_doc(doc):
+        if isinstance(doc, dict):
+            out = {}
+            for k, v in doc.items():
+                cleaned = _sanitize_doc(v)
+                if cleaned is None:
+                    continue
+                out[k] = cleaned
+            return out
+        if isinstance(doc, list):
+            cleaned_list = []
+            for item in doc:
+                cleaned_item = _sanitize_doc(item)
+                if cleaned_item is not None:
+                    cleaned_list.append(cleaned_item)
+            return cleaned_list
+        if _looks_unresolved_template(doc):
+            return None
+        return doc
+    had_nonfatal_errors = False
     try:
         if cfg.get('sync') == 'es_to_db':
             src_id = cfg.get('source_integration')
@@ -104,6 +195,8 @@ def execute_task(task: Task) -> TaskRun:
             def _parse_ts(value):
                 if not value:
                     return None
+                if _looks_unresolved_template(value):
+                    return None
                 if isinstance(value, (int, float)):
                     try:
                         return timezone.datetime.fromtimestamp(float(value), tz=timezone.utc)
@@ -159,36 +252,87 @@ def execute_task(task: Task) -> TaskRun:
             docs = _fetch_es_docs(es_cfg)
             inserted = 0
             updated = 0
+            unchanged = 0
+            ticket_candidates = []
             for doc in docs:
-                alert_id = _get_field(doc, 'alert_id', 'event_id', 'es_id', '_es_id', 'body.alert_id', 'body.event_id')
+                # Prefer the original alert identity inside nested bodies before
+                # falling back to the ES document id. This keeps deduplication
+                # stable when a source wraps normalized alert fields under
+                # `body` but Elasticsearch assigns a different `_id`.
+                alert_id = _get_field(doc, 'alert_id', 'event_id', 'body.alert_id', 'body.event_id', 'es_id', '_es_id')
                 if not alert_id:
                     continue
+                alert_id = _truncate_text(alert_id, MAX_ALERT_CHAR_LENGTHS["alert_id"])
                 # ensure downstream logic (ticket creation) can read alert_id/es_id
                 doc['alert_id'] = str(alert_id)
                 if doc.get('es_id') is None and doc.get('_es_id') is not None:
                     doc['es_id'] = doc.get('_es_id')
-                ts_val = _get_field(doc, 'timestamp', '@timestamp', 'event_time', 'time', 'body.@timestamp')
+                ts_val = _get_field(doc, 'timestamp', '@timestamp', 'date', 'event_time', 'time', 'body.@timestamp', 'body.date')
+                raw_severity = _get_field(doc, 'severity', 'level', 'body.severity')
+                message = _get_field(doc, 'message', 'title', 'body.title', 'body.message')
+                title = _get_field(doc, 'title', 'body.title')
+                description = _get_field(doc, 'description', 'details', 'body.description')
+                clean_doc = _sanitize_doc(doc if isinstance(doc, dict) else {})
+                parsed_ts = _parse_ts(ts_val) or timezone.now()
                 defaults = {
-                    'timestamp': _parse_ts(ts_val),
-                    'severity': _get_field(doc, 'severity', 'level', 'body.severity'),
-                    'message': _get_field(doc, 'message', 'title', 'body.title', 'body.message'),
-                    'source_index': index,
-                    'rule_id': _get_field(doc, 'rule_id', 'body.rule_id'),
-                    'title': _get_field(doc, 'title', 'body.title'),
+                    # Ensure persisted timestamp is always valid for trend aggregation.
+                    'timestamp': parsed_ts,
+                    'severity': _normalize_severity(raw_severity),
+                    'message': message,
+                    'source_index': _truncate_text(index, MAX_ALERT_CHAR_LENGTHS["source_index"]),
+                    'rule_id': _truncate_text(_get_field(doc, 'rule_id', 'body.rule_id'), MAX_ALERT_CHAR_LENGTHS["rule_id"]),
+                    'title': _truncate_text(title, MAX_ALERT_CHAR_LENGTHS["title"]),
                     'status': None,
-                    'description': _get_field(doc, 'description', 'details', 'body.description'),
-                    'category': _get_field(doc, 'category', 'body.category'),
-                    'source_data': doc,
+                    'description': description,
+                    'category': _truncate_text(_get_field(doc, 'category', 'body.category'), MAX_ALERT_CHAR_LENGTHS["category"]),
+                    'source_data': {**(clean_doc or {}), **doc},
                 }
-                obj, created = Alert.objects.update_or_create(
+                # Normalize the in-memory candidate as well, because the later
+                # ticket/correlation code reads top-level fields from `doc`.
+                doc['severity'] = defaults['severity']
+                doc['message'] = message
+                doc['rule_id'] = defaults['rule_id']
+                doc['title'] = title
+                doc['description'] = description
+                doc['category'] = defaults['category']
+                source_index_value = _truncate_text(index, MAX_ALERT_CHAR_LENGTHS["source_index"])
+                existing = Alert.objects.filter(
                     alert_id=str(alert_id),
-                    source_index=index,
-                    defaults=defaults,
-                )
-                inserted += 1 if created else 0
-                updated += 0 if created else 1
+                    source_index=source_index_value,
+                ).first()
 
-            log_lines.append(f"Sync result (alerts ORM): fetched={len(docs)} inserted={inserted} updated={updated}")
+                incoming_fp = _stable_fingerprint(doc)
+                existing_fp = _stable_fingerprint((existing.source_data or {})) if existing else None
+                changed = existing is None or existing_fp != incoming_fp
+
+                if existing is None:
+                    Alert.objects.create(
+                        alert_id=str(alert_id),
+                        **defaults,
+                    )
+                    inserted += 1
+                    ticket_candidates.append(doc)
+                else:
+                    # Always refresh seen-time; only mark as ticket candidate when changed.
+                    existing.timestamp = defaults.get('timestamp')
+                    existing.severity = defaults.get('severity')
+                    existing.message = defaults.get('message')
+                    existing.rule_id = defaults.get('rule_id')
+                    existing.title = defaults.get('title')
+                    existing.status = defaults.get('status')
+                    existing.description = defaults.get('description')
+                    existing.category = defaults.get('category')
+                    existing.source_data = defaults.get('source_data')
+                    existing.save()
+                    updated += 1
+                    if changed:
+                        ticket_candidates.append(doc)
+                    else:
+                        unchanged += 1
+
+            log_lines.append(
+                f"Sync result (alerts ORM): fetched={len(docs)} inserted={inserted} updated={updated} unchanged={unchanged}"
+            )
             res = {'status': 'ok', 'inserted_es_ids': [], 'docs': docs, 'docs_with_ids': None}
             # if sync produced a log file, try to include its contents
             try:
@@ -225,7 +369,7 @@ def execute_task(task: Task) -> TaskRun:
 
                 if should_create_tickets:
                     inserted_es_ids = res.get('inserted_es_ids') or []
-                    docs = res.get('docs')
+                    docs = list(ticket_candidates)
                     docs_with_ids = res.get('docs_with_ids')
                     if isinstance(docs_with_ids, list):
                         docs = [d.get('source') for d in docs_with_ids if d.get('es_id') in inserted_es_ids]
@@ -324,6 +468,23 @@ def execute_task(task: Task) -> TaskRun:
                         return 'medium'
 
                     def build_correlation_key(doc):
+                        # Enforce policy-defined keys strictly when configured.
+                        if policy_match_keys:
+                            parts = []
+                            for key in policy_match_keys:
+                                val = get_field(doc, key)
+                                if val is None or val == '':
+                                    return ''
+                                if isinstance(val, (dict, list)):
+                                    try:
+                                        val = json.dumps(val, ensure_ascii=True, sort_keys=True)
+                                    except Exception:
+                                        val = str(val)
+                                else:
+                                    val = str(val)
+                                parts.append(val if len(policy_match_keys) == 1 else f"{key}={val}")
+                            return "|".join(parts)
+
                         parts = []
                         for key in policy_match_keys:
                             val = get_field(doc, key)
@@ -369,6 +530,14 @@ def execute_task(task: Task) -> TaskRun:
                             skipped_count += 1
                             continue
                         matched_count += 1
+                        correlation_key = build_correlation_key(doc)
+                        if policy_match_keys and not correlation_key:
+                            skipped_count += 1
+                            log_lines.append(
+                                f"Skipped alert for ticketing: missing one or more correlation keys {policy_match_keys}"
+                            )
+                            continue
+
                         payload = {
                             'event_siem_id': doc.get('alert_id') or doc.get('event_id') or doc.get('es_id'),
                             'title': doc.get('title') or doc.get('message') or 'SIEM Alert',
@@ -383,7 +552,6 @@ def execute_task(task: Task) -> TaskRun:
                             occurred_at = timezone.now()
                             if correlation_enabled and correlation_window:
                                 window_start = occurred_at - timedelta(minutes=int(correlation_window))
-                                correlation_key = build_correlation_key(doc)
                                 match_keys_label = policy_match_keys or ['title']
                                 if correlation_key:
                                     log_lines.append(
@@ -448,23 +616,31 @@ def execute_task(task: Task) -> TaskRun:
                         except Exception as e:
                             log_lines.append(f"Ticket API request failed: {str(e)}")
                             skipped_count += 1
+                            had_nonfatal_errors = True
                     log_lines.append(
                         f"Ticket creation summary matched={matched_count} created={created_count} attached={attached_count} skipped={skipped_count}"
                     )
+                    if matched_count > 0 and created_count == 0 and skipped_count > 0:
+                        had_nonfatal_errors = True
             except Exception as e:
                 log_lines.append(f"Ticket creation failed: {str(e)}")
+                had_nonfatal_errors = True
         else:
             log_lines.append(f"Executing task {task.id}")
             log_lines.append(f"Config: {json.dumps(task.config)}")
 
         run.logs = "\n".join(log_lines)
-        run.status = 'success'
+        run.status = 'partial' if had_nonfatal_errors else 'success'
         run.finished_at = timezone.now()
         run.save()
         return run
     except Exception as e:
         run.status = 'failed'
-        run.logs = str(e)
+        run.logs = "\n".join([
+            *log_lines,
+            f"Task failed: {str(e)}",
+            traceback.format_exc(),
+        ])
         run.finished_at = timezone.now()
         run.save()
         return run

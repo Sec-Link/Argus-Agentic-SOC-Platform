@@ -12,7 +12,8 @@ COMMON_APP_LABELS = {
     "integrations",
     "alerts",
     "dashboards",
-    "datasource",
+    # Legacy "datasource" permissions are intentionally not exposed here.
+    # Data ingestion ownership now lives under Integrations and Data Pipeline.
     "orchestrator",
     "correlation",
 }
@@ -66,4 +67,3 @@ class AppPermissionMatrixAPIView(APIView):
                 }
             )
         return JsonResponse({"apps": data})
-

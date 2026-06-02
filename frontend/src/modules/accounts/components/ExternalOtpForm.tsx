@@ -95,8 +95,31 @@ const ExternalOtpForm: React.FC<Props> = ({ onLoginSuccess }) => {
     }
     setSending(true);
     try {
-      await registerEmail(normalizedEmail);
-      openMailHint('A confirmation email has been sent. Please check your inbox and follow the instructions.');
+      const result = await registerEmail(normalizedEmail);
+      if (result?.status === 'active') {
+        setNextAction('send_otp');
+        try {
+          await requestOtp(normalizedEmail);
+          setStep('verify');
+          setSecondsLeft(RESEND_SECONDS);
+          openMailHint('Your account is active. A verification code has been sent to your email.');
+        } catch (e: any) {
+          const retryAfter = Number(e?.response?.data?.retry_after_seconds || 0);
+          if (e?.response?.status === 429 && retryAfter > 0) {
+            setStep('verify');
+            setSecondsLeft(retryAfter);
+            message.warning(e?.response?.data?.message || `Too many requests. Retry in ${retryAfter}s.`);
+          } else {
+            message.error(
+              e?.response?.data?.detail ||
+                e?.response?.data?.message ||
+                'Registered, but failed to send OTP. Please try again.',
+            );
+          }
+        }
+      } else {
+        openMailHint('A confirmation email has been sent. Please check your inbox and follow the instructions.');
+      }
     } catch (e: any) {
       message.error(e?.response?.data?.detail || 'Registration submit failed');
     } finally {
