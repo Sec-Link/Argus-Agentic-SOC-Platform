@@ -61,6 +61,7 @@ def _rule_to_legacy_item(rule: LocalDetectionRule) -> dict:
     payload = dict(rule.payload or {})
     yaml_text = payload.get("yaml") or ""
     meta = _extract_rule_meta(yaml_text)
+    kibana_meta = payload.get("kibana_metadata") if isinstance(payload.get("kibana_metadata"), dict) else {}
     return {
         "id": rule.rule_uuid,
         "name": meta.get("title") or rule.name,
@@ -72,6 +73,9 @@ def _rule_to_legacy_item(rule: LocalDetectionRule) -> dict:
         "type": "file",
         "version": rule.version,
         "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
+        "publish_status": "published" if kibana_meta.get("published") else "unpublished",
+        "kibana_enabled": bool(kibana_meta.get("enabled", False)),
+        "kibana_rule_id": str(kibana_meta.get("rule_id") or ""),
     }
 
 
@@ -411,6 +415,15 @@ class DetectionRuleDetailView(APIView):
         yaml_text = request.data.get("yaml")
         if not isinstance(yaml_text, str) or not yaml_text.strip():
             return Response({"detail": "Field 'yaml' is required."}, status=400)
+        elastic_actions = request.data.get("elastic_actions", None)
+        if elastic_actions is not None and not isinstance(elastic_actions, list):
+            return Response({"detail": "Field 'elastic_actions' must be a list."}, status=400)
+        elastic_index_patterns = request.data.get("elastic_index_patterns", None)
+        if elastic_index_patterns is not None and not isinstance(elastic_index_patterns, list):
+            return Response({"detail": "Field 'elastic_index_patterns' must be a list."}, status=400)
+        kibana_metadata = request.data.get("kibana_metadata", None)
+        if kibana_metadata is not None and not isinstance(kibana_metadata, dict):
+            return Response({"detail": "Field 'kibana_metadata' must be an object."}, status=400)
 
         actor = _user_name(request)
         with transaction.atomic():
@@ -426,6 +439,12 @@ class DetectionRuleDetailView(APIView):
                     "risk_score": 50,
                     "yaml": yaml_text,
                 }
+                if elastic_actions is not None:
+                    payload["elastic_actions"] = elastic_actions
+                if elastic_index_patterns is not None:
+                    payload["elastic_index_patterns"] = elastic_index_patterns
+                if kibana_metadata is not None:
+                    payload["kibana_metadata"] = kibana_metadata
                 rule = LocalDetectionRule.objects.create(
                     rule_uuid=payload["id"],
                     name=payload["name"],
@@ -449,6 +468,12 @@ class DetectionRuleDetailView(APIView):
             else:
                 payload = dict(rule.payload or {})
                 payload["yaml"] = yaml_text
+                if elastic_actions is not None:
+                    payload["elastic_actions"] = elastic_actions
+                if elastic_index_patterns is not None:
+                    payload["elastic_index_patterns"] = elastic_index_patterns
+                if kibana_metadata is not None:
+                    payload["kibana_metadata"] = kibana_metadata
                 payload["id"] = rule.rule_uuid
                 payload.setdefault("rule_id", rule.rule_uuid)
                 payload.setdefault("name", rule.name)

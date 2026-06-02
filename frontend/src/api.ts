@@ -1366,8 +1366,8 @@ export async function getDetectionRule(id: string): Promise<{ yaml?: string; [ke
   return r.data;
 }
 
-export async function saveDetectionRule(id: string, yaml: string): Promise<any> {
-  const r = await client.post(`/detections/rules/${encodeURIComponent(id)}/`, { yaml });
+export async function saveDetectionRule(id: string, yaml: string, extras?: Record<string, any>): Promise<any> {
+  const r = await client.post(`/detections/rules/${encodeURIComponent(id)}/`, { yaml, ...(extras || {}) });
   return r.data;
 }
 

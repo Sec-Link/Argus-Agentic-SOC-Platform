@@ -112,6 +112,30 @@ def _append_version(rule: LocalDetectionRule, *, version: int, payload: dict, ch
     )
 
 
+def _is_kibana_rule_payload(payload: dict) -> bool:
+    return str(payload.get("language") or "").strip().lower() == "kuery"
+
+
+def _rule_lookup_params(payload: dict) -> dict:
+    rule_id = str(payload.get("rule_id") or "").strip()
+    rule_obj_id = str(payload.get("id") or "").strip()
+    if rule_id:
+        return {"rule_id": rule_id}
+    if rule_obj_id:
+        return {"id": rule_obj_id}
+    return {}
+
+
+def _sanitize_kibana_rule_payload(payload: dict) -> dict:
+    data = dict(payload or {})
+    rule_id = str(data.get("rule_id") or "").strip()
+    rule_obj_id = str(data.get("id") or "").strip()
+    if rule_id and rule_obj_id:
+        # Kibana requires exactly one of id or rule_id in request body.
+        data.pop("id", None)
+    return data
+
+
 class KibanaDetectionRulesView(APIView):
     permission_classes = [IsAuthenticated, HasDjangoPermissions]
     required_permissions = {
@@ -169,7 +193,7 @@ class KibanaDetectionRulesView(APIView):
             # Keep a stable rule_id so republish can update same Kibana rule.
             payload.setdefault("rule_id", rid)
             payload.setdefault("name", str(payload.get("name") or rid))
-            kibana_resp = _proxy("POST", "/api/detection_engine/rules", payload=payload)
+            kibana_resp = _proxy("POST", "/api/detection_engine/rules", payload=_sanitize_kibana_rule_payload(payload))
             status_code = int(getattr(kibana_resp, "status_code", 500) or 500)
             if status_code >= 400:
                 return kibana_resp
@@ -243,6 +267,20 @@ class KibanaDetectionRuleDetailView(APIView):
         if rid != rule_id:
             return Response({"detail": "Rule id in payload does not match URL"}, status=400)
 
+        if _is_kibana_rule_payload(payload):
+            kibana_resp = _proxy("PUT", "/api/detection_engine/rules", payload=_sanitize_kibana_rule_payload(payload))
+            status_code = int(getattr(kibana_resp, "status_code", 500) or 500)
+            if status_code >= 400:
+                return kibana_resp
+            remote = getattr(kibana_resp, "data", {}) or {}
+            if isinstance(remote, dict):
+                remote_id = str(remote.get("id") or "").strip()
+                remote_rule_id = str(remote.get("rule_id") or "").strip()
+                if remote_id:
+                    payload["id"] = remote_id
+                if remote_rule_id:
+                    payload["rule_id"] = remote_rule_id
+
         actor = _user_name(request)
         with transaction.atomic():
             rule.version += 1
@@ -261,6 +299,15 @@ class KibanaDetectionRuleDetailView(APIView):
         rule = self._get_rule(rule_id)
         if not rule:
             return Response({"detail": "Rule not found"}, status=404)
+        payload = dict(rule.payload or {})
+        if _is_kibana_rule_payload(payload):
+            params = _rule_lookup_params(payload)
+            if not params:
+                return Response({"detail": "Kibana rule identifier is missing"}, status=400)
+            kibana_resp = _proxy("DELETE", "/api/detection_engine/rules", params=params)
+            status_code = int(getattr(kibana_resp, "status_code", 500) or 500)
+            if status_code >= 400:
+                return kibana_resp
         actor = _user_name(request)
         with transaction.atomic():
             rule.is_deleted = True
@@ -314,6 +361,20 @@ class KibanaDetectionRuleVersionsView(APIView):
         rid, payload = _normalize_rule_payload(payload, fallback_id=rule_id)
         if rid != rule_id:
             return Response({"detail": "Version payload id mismatch"}, status=409)
+
+        if _is_kibana_rule_payload(payload):
+            kibana_resp = _proxy("PUT", "/api/detection_engine/rules", payload=_sanitize_kibana_rule_payload(payload))
+            status_code = int(getattr(kibana_resp, "status_code", 500) or 500)
+            if status_code >= 400:
+                return kibana_resp
+            remote = getattr(kibana_resp, "data", {}) or {}
+            if isinstance(remote, dict):
+                remote_id = str(remote.get("id") or "").strip()
+                remote_rule_id = str(remote.get("rule_id") or "").strip()
+                if remote_id:
+                    payload["id"] = remote_id
+                if remote_rule_id:
+                    payload["rule_id"] = remote_rule_id
 
         actor = _user_name(request)
         with transaction.atomic():
