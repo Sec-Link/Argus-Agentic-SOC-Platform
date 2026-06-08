@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
-import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Popover, Divider, Typography, Input } from 'antd';
+import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Popover, Divider, Typography, Input, Tabs } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { fetchDashboard } from 'services/alerts';
 import type { DashboardData } from 'types';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
+import AlertFunnelChart from './AlertFunnelChart';
+import AlertSankeyChart from './AlertSankeyChart';
 
 type TimeRangePreset = '1h' | '24h' | '7d' | 'all' | 'custom';
 type TimeWindow = {
@@ -26,23 +28,23 @@ const Dashboard: React.FC = () => {
   const [activePanelRefresh, setActivePanelRefresh] = useState<string | null>(null);
 
   const CACHE_KEY = 'siem_dashboard_cache_v1';
-  const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v2';
+  const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v3';
   const POLL_INTERVAL_MS = 10 * 1000;
   const [loading, setLoading] = useState(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
-  const [timePreset, setTimePreset] = useState<TimeRangePreset>('24h');
+  const [timePreset, setTimePreset] = useState<TimeRangePreset>('all');
   const [customRange, setCustomRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [customStartTimeText, setCustomStartTimeText] = useState('00:00:00');
   const [customEndTimeText, setCustomEndTimeText] = useState('23:59:59');
   const [isCustomRange, setIsCustomRange] = useState(false);
   const [activeTimeWindow, setActiveTimeWindow] = useState<TimeWindow>(() => {
-    const now = dayjs();
+    // Default dashboard scope is all-time unless the user restores a saved window.
     return {
-      start_time: now.subtract(24, 'hour').toISOString(),
-      end_time: now.toISOString(),
-      all_time: false,
+      start_time: undefined,
+      end_time: undefined,
+      all_time: true,
       isCustomRange: false,
-      preset: '24h',
+      preset: 'all',
     };
   });
   const activeTimeWindowRef = React.useRef<TimeWindow>(activeTimeWindow);
@@ -445,6 +447,34 @@ const Dashboard: React.FC = () => {
     />
   );
 
+  const animatedRecentAlerts = useAnimatedNumber((displayData?.recent_1h_alerts ?? 0) as number, 600);
+  const animatedTotalAlerts = useAnimatedNumber(displayData?.total ?? 0, 600);
+  const animatedDataSources = useAnimatedNumber((displayData?.data_source_count ?? 0) as number, 600);
+  const animatedEnabledRules = useAnimatedNumber((displayData?.enabled_siem_rule_count ?? 0) as number, 600);
+  const animatedDetections = useAnimatedNumber((displayData?.siem_rule_detected_count_1h ?? 0) as number, 600);
+
+  const renderOverviewMetricCard = (title: string, value: number, panelKey: string, ariaLabel: string) => (
+    // Shared card renderer keeps all overview KPI cards visually symmetric.
+    <Card
+      title={title}
+      extra={panelRefresh(panelKey, ariaLabel)}
+      style={{ width: '100%', minWidth: 0 }}
+      styles={{ body: { minHeight: 78 } }}
+    >
+      <Statistic
+        value={value}
+        loading={!displayData && loading}
+        valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
+      />
+    </Card>
+  );
+
+  const timeParams = {
+    start_time: activeTimeWindow.start_time,
+    end_time: activeTimeWindow.end_time,
+    all_time: activeTimeWindow.all_time,
+  };
+
   return (
   <>
       <Space style={{ display: 'flex', justifyContent: 'space-between', marginTop: 0, marginBottom: 6, width: '100%' }}>
@@ -535,44 +565,23 @@ const Dashboard: React.FC = () => {
         </div>
       </Space>
 
+      <Tabs
+        defaultActiveKey="overview"
+        style={{ marginTop: 8 }}
+        items={[
+          {
+            key: 'overview',
+            label: 'Overview',
+            children: (
+              <>
       {/* Keep 5 KPI cards in one row with equal widths that auto-shrink together. */}
       <div style={{ marginTop: 10, width: '100%', paddingBottom: 2 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 16, width: '100%' }}>
-          <Card title="Alerts in Last Hour" extra={panelRefresh('kpi_last_hour', 'Refresh Alerts in Last Hour')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.recent_1h_alerts ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Total Alerts" extra={panelRefresh('kpi_total_alerts', 'Refresh Total Alerts')}>
-            <Statistic
-              value={useAnimatedNumber(displayData?.total ?? 0, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Data Sources" extra={panelRefresh('kpi_data_sources', 'Refresh Data Sources')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.data_source_count ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Enabled SIEM Rules" extra={panelRefresh('kpi_enabled_rules', 'Refresh Enabled SIEM Rules')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.enabled_siem_rule_count ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Detections (Last Hour)" extra={panelRefresh('kpi_detections_1h', 'Refresh Detections in Last Hour')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.siem_rule_detected_count_1h ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
+          {renderOverviewMetricCard('Alerts in Last Hour', animatedRecentAlerts, 'kpi_last_hour', 'Refresh Alerts in Last Hour')}
+          {renderOverviewMetricCard('Total Alerts', animatedTotalAlerts, 'kpi_total_alerts', 'Refresh Total Alerts')}
+          {renderOverviewMetricCard('Data Sources', animatedDataSources, 'kpi_data_sources', 'Refresh Data Sources')}
+          {renderOverviewMetricCard('Enabled SIEM Rules', animatedEnabledRules, 'kpi_enabled_rules', 'Refresh Enabled SIEM Rules')}
+          {renderOverviewMetricCard('Detections (Last Hour)', animatedDetections, 'kpi_detections_1h', 'Refresh Detections in Last Hour')}
         </div>
       </div>
 
@@ -915,6 +924,30 @@ const Dashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+              </>
+            ),
+          },
+          {
+            key: 'conversion',
+            label: 'Alert Conversion',
+            children: (
+              <AlertFunnelChart
+                startTime={timeParams.start_time}
+                endTime={timeParams.end_time}
+                allTime={timeParams.all_time}
+              />
+            ),
+          },
+          {
+            key: 'correlation',
+            label: 'Alert Correlation',
+            children: (
+              <AlertSankeyChart startTime={timeParams.start_time} endTime={timeParams.end_time} />
+            ),
+          },
+        ]}
+      />
 
       <Modal title={`Raw dashboard data ${debugKey ? ` - ${debugKey}` : ''}`} open={debugModalVisible} onCancel={() => setDebugModalVisible(false)} footer={<Button onClick={() => setDebugModalVisible(false)}>Close</Button>} width={800}>
         <pre style={{ maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{getDebugContent()}</pre>

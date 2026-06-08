@@ -20,4 +20,6 @@ export {
   clearSlaTicketAiChatHistory,
   fetchSlaTicketFieldChoices,
   resolveSlaTicket,
+  fetchTicketConversionStats,
+  fetchTicketSankeyStats,
 } from '../../api';
