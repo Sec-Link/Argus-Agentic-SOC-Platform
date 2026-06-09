@@ -1,4 +1,6 @@
-﻿from django.db import models
+import uuid
+
+from django.db import models
 
 
 class LocalDetectionRule(models.Model):
@@ -29,6 +31,7 @@ class LocalDetectionRuleVersion(models.Model):
     version = models.IntegerField()
     change_type = models.CharField(max_length=20, default="update")
     payload = models.JSONField(default=dict)
+    change_summary = models.JSONField(default=list)
     changed_by = models.CharField(max_length=150, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -58,3 +61,27 @@ class LocalDetectionFieldMapping(models.Model):
     class Meta:
         db_table = "detection_field_mapping"
         unique_together = ("mapping_profile", "sigma_field")
+
+
+class LocalDetectionDeployment(models.Model):
+    """Persisted detection publish/deployment audit record."""
+
+    deployment_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    rule = models.ForeignKey(LocalDetectionRule, on_delete=models.CASCADE, related_name="deployments")
+    rule_name = models.CharField(max_length=255, blank=True, default="")
+    target = models.CharField(max_length=64, db_index=True)
+    action = models.CharField(max_length=64, db_index=True)
+    status = models.CharField(max_length=32, db_index=True)
+    remote_id = models.CharField(max_length=128, blank=True, default="")
+    remote_rule_id = models.CharField(max_length=128, blank=True, default="")
+    message = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict)
+    created_by = models.CharField(max_length=150, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "detection_deployment"
+        indexes = [
+            models.Index(fields=["rule", "-created_at"]),
+            models.Index(fields=["target", "status"]),
+        ]

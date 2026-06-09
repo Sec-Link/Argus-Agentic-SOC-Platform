@@ -1344,6 +1344,38 @@ export type DetectionRuleItem = {
   [key: string]: any;
 };
 
+export type DetectionRuleMeta = {
+  title?: string;
+  level?: string;
+  status?: string;
+  description?: string;
+  product?: string;
+  service?: string;
+  category?: string;
+  logsource?: string;
+  profile?: string;
+  tags?: string[];
+  detection_preview?: string;
+};
+
+export type DetectionRuleDetail = {
+  id: string;
+  name?: string;
+  version?: number;
+  yaml?: string;
+  payload?: Record<string, any>;
+  meta?: DetectionRuleMeta;
+  compiled?: {
+    lucene?: string;
+    eql?: string;
+    esql?: string;
+    splunk?: string;
+    kql?: string;
+    error?: string;
+    profiles?: string[];
+  };
+};
+
 export type DetectionMappingItem = {
   id: number;
   category?: string;
@@ -1361,7 +1393,7 @@ export async function listDetectionRules(): Promise<DetectionRuleItem[]> {
   return r.data;
 }
 
-export async function getDetectionRule(id: string): Promise<{ yaml?: string; [key: string]: any }> {
+export async function getDetectionRule(id: string): Promise<DetectionRuleDetail> {
   const r = await client.get(`/detections/rules/${encodeURIComponent(id)}/`);
   return r.data;
 }
@@ -1371,7 +1403,9 @@ export async function saveDetectionRule(id: string, yaml: string, extras?: Recor
   return r.data;
 }
 
-export async function compileDetectionRule(yaml: string): Promise<{ splunk?: string; kql?: string; profiles?: string[] }> {
+export async function compileDetectionRule(
+  yaml: string,
+): Promise<{ lucene?: string; eql?: string; esql?: string; splunk?: string; kql?: string; error?: string; profiles?: string[] }> {
   const r = await client.post('/detections/rules/compile/', { yaml });
   return r.data;
 }
@@ -1390,9 +1424,24 @@ export async function uploadDetectionRules(files: File[]): Promise<any> {
   return r.data;
 }
 
+export async function exportDetectionRules(ids?: string[]): Promise<any> {
+  const r = await client.post('/detections/rules/export/', { ids: Array.isArray(ids) ? ids : [] });
+  return r.data;
+}
+
 export async function listDetectionMappings(): Promise<DetectionMappingItem[]> {
   const r = await client.get('/detections/mappings/');
   return Array.isArray(r.data) ? r.data : [];
+}
+
+export async function createDetectionMapping(payload: Record<string, any>): Promise<any> {
+  const r = await client.post('/detections/mappings/', payload);
+  return r.data;
+}
+
+export async function deleteDetectionMappings(ids: Array<string | number>): Promise<any> {
+  const r = await client.delete('/detections/mappings/', { data: { ids: ids.map((item) => String(item)) } });
+  return r.data;
 }
 
 export async function uploadDetectionMappings(files: File[]): Promise<any> {
@@ -1404,17 +1453,47 @@ export async function uploadDetectionMappings(files: File[]): Promise<any> {
   return r.data;
 }
 
-export async function testDetectionRule(payload: {
-  rule: string;
-  options?: {
-    testType?: 'all' | 'schemaOnly' | 'countOnly';
-    days?: string | number;
-    alert?: boolean;
-    format?: 'json' | string;
-    maxResults?: number;
-  };
-}): Promise<any> {
-  const r = await client.post('/detections/test/', payload);
+export async function exportDetectionMappings(ids?: Array<string | number>): Promise<Blob> {
+  const r = await client.post('/detections/mappings/export/', { ids: Array.isArray(ids) ? ids.map((item) => String(item)) : [] }, {
+    responseType: 'blob',
+  });
+  return r.data;
+}
+
+export type DetectionDeploymentRecord = {
+  id: string;
+  rule_id: string;
+  rule_name?: string;
+  target: string;
+  action: string;
+  status: string;
+  remote_id?: string;
+  remote_rule_id?: string;
+  message?: string;
+  payload?: Record<string, any>;
+  created_by?: string;
+  created_at: string;
+};
+
+export async function listDetectionDeployments(ruleId?: string): Promise<DetectionDeploymentRecord[]> {
+  const qp = new URLSearchParams();
+  if (ruleId) qp.set('rule_id', ruleId);
+  const query = qp.toString();
+  const r = await client.get(`/detections/deployments/${query ? `?${query}` : ''}`);
+  return Array.isArray(r.data) ? r.data : [];
+}
+
+export async function createDetectionDeployment(payload: {
+  rule_id: string;
+  target: string;
+  action: string;
+  status: string;
+  remote_id?: string;
+  remote_rule_id?: string;
+  message?: string;
+  payload?: Record<string, any>;
+}): Promise<DetectionDeploymentRecord> {
+  const r = await client.post('/detections/deployments/', payload);
   return r.data;
 }
 

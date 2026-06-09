@@ -195,9 +195,6 @@ TASKS = {
 # Orchestrator schedule polling window (seconds).
 ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS = int(os.getenv('ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS', '30'))
 
-# ElastAlert2 Server proxy settings
-ELASTALERT2_SERVER_BASE_URL = os.getenv('ELASTALERT2_SERVER_BASE_URL', 'http://localhost:3030').rstrip('/')
-
 # Kibana Detection Engine proxy settings
 KIBANA_BASE_URL = os.getenv('KIBANA_BASE_URL', '').rstrip('/')
 KIBANA_API_KEY = os.getenv('KIBANA_API_KEY', '')
