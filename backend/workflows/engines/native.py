@@ -11,12 +11,12 @@ from typing import TYPE_CHECKING, Dict, Any
 from .base import BaseEngine
 
 if TYPE_CHECKING:
-    from workflows.models import WorkflowExecution
+    from ..models import WorkflowExecution
 
 
 class NativeEngine(BaseEngine):
     name = 'native'
 
     def run(self, execution: "WorkflowExecution") -> Dict[str, Any]:
-        from workflows.engine import WorkflowEngine
+        from ..engine import WorkflowEngine
         return WorkflowEngine(execution).run()

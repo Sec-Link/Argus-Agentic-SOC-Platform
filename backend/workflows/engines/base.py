@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Dict, Any
 
 if TYPE_CHECKING:
-    from workflows.models import WorkflowExecution
+    from ..models import WorkflowExecution
 
 
 class BaseEngine(ABC):

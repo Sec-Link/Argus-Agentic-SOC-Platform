@@ -3,6 +3,7 @@ Workflow API Views
 
 REST API endpoints for managing workflows, executions, and actions.
 """
+import os
 import re
 import logging
 from typing import Any, Dict
@@ -156,31 +157,17 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         return queryset
 
     def _prefect_flow_name(self, workflow: Workflow) -> str:
-        return f"soar-{slugify(workflow.name) or workflow.id}"
+        return "soar-generic"
 
     def _ensure_prefect_deployment(self, workflow: Workflow) -> None:
         if workflow.execution_engine != 'prefect':
             return
-        if not prefect_client.has_api():
+        deployment_id = (workflow.prefect_deployment_id or '').strip()
+        if deployment_id:
             return
-        if (workflow.prefect_deployment_id or '').strip():
-            return
-
-        try:
-            flow_id = prefect_client.get_or_create_flow_id(self._prefect_flow_name(workflow))
-            created = prefect_client.create_deployment(
-                flow_id=flow_id,
-                name=self._prefect_flow_name(workflow),
-                entrypoint='backend/workflows/prefect_flow.py:run_soar_workflow',
-                parameters={},
-                tags=(workflow.tags or []) + [f'workflow:{workflow.id}'],
-            )
-            deployment_id = created.get('id') or created.get('deployment_id')
-            if deployment_id:
-                workflow.prefect_deployment_id = str(deployment_id)
-                workflow.save(update_fields=['prefect_deployment_id'])
-        except prefect_client.PrefectAPIError as exc:
-            logger.warning('Prefect deployment auto-create failed for workflow %s: %s', workflow.id, exc)
+        if prefect_client.is_configured(None):
+            workflow.prefect_deployment_id = prefect_client.resolve_deployment_id(None)
+            workflow.save(update_fields=['prefect_deployment_id'])
 
     @staticmethod
     def _prefect_schedule_payload(schedule: WorkflowSchedule | None) -> Dict[str, Any] | None:
@@ -197,6 +184,8 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         if not prefect_client.is_configured(deployment_id):
             return
         schedule_payload = self._prefect_schedule_payload(schedule)
+        if schedule_payload is None:
+            return
         try:
             prefect_client.update_deployment_schedule(
                 deployment_id=prefect_client.resolve_deployment_id(deployment_id),
@@ -229,26 +218,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         self._sync_prefect_schedule(schedule, workflow)
 
     def _sync_prefect_deployment(self, workflow: Workflow) -> None:
-        if workflow.execution_engine != 'prefect':
-            return
-        deployment_id = (workflow.prefect_deployment_id or '').strip() or None
-        if not deployment_id:
-            return
-        if not prefect_client.is_configured(deployment_id):
-            return
-
-        payload = {
-            'name': workflow.name,
-            'description': workflow.description or '',
-            'tags': (workflow.tags or []) + [f'workflow:{workflow.id}'],
-        }
-        try:
-            prefect_client.update_deployment(
-                deployment_id=prefect_client.resolve_deployment_id(deployment_id),
-                payload=payload,
-            )
-        except prefect_client.PrefectAPIError as exc:
-            logger.warning('Prefect deployment sync failed for workflow %s: %s', workflow.id, exc)
+        return
 
     def perform_create(self, serializer):
         workflow = serializer.save(created_by=self.request.user)
@@ -610,4 +580,122 @@ class WorkflowStatsView(APIView):
                 'status_breakdown': {item['status']: item['count'] for item in status_counts},
                 'recent_executions': WorkflowExecutionListSerializer(recent_executions, many=True).data,
             }
+        )
+
+
+class WorkflowPublishView(APIView):
+    """Publish a Django workflow to persistent Prefect flow files and deployment."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk=None):
+        try:
+            workflow = Workflow.objects.get(pk=pk)
+        except Workflow.DoesNotExist:
+            return Response({'error': 'Workflow not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not workflow.steps.filter(is_active=True).exists():
+            return Response(
+                {'error': 'Cannot publish a workflow with no active steps.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        register_deployment = str(request.data.get('register_deployment', 'true')).lower() == 'true'
+
+        from .publisher import publish_workflow
+        try:
+            result = publish_workflow(workflow, register_deployment=register_deployment)
+        except Exception as exc:
+            logger.exception('Workflow publish failed for workflow %s', workflow.id)
+            return Response(
+                {'error': f'Workflow publish failed: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            'status': 'published',
+            'workflow_id': str(workflow.id),
+            'workflow_name': workflow.name,
+            **result,
+        }, status=status.HTTP_200_OK)
+
+
+class WorkflowPublishedListView(APIView):
+    """List all published workflow manifests available for import."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .publisher import list_published_manifests
+        manifests = list_published_manifests()
+        return Response({'manifests': manifests})
+
+
+class WorkflowImportView(APIView):
+    """Import a workflow from a published manifest file or uploaded JSON."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .publisher import import_workflow_from_manifest, import_workflow_from_json_payload
+
+        update_existing = str(request.data.get('update_existing', 'true')).lower() == 'true'
+
+        uploaded_file = request.FILES.get('file')
+        if uploaded_file:
+            import json
+            try:
+                content = uploaded_file.read().decode('utf-8')
+                payload = json.loads(content)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return Response(
+                    {'error': f'Invalid JSON file: {exc}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            workflow = import_workflow_from_json_payload(
+                payload,
+                created_by=request.user,
+                update_existing=update_existing,
+            )
+            return Response({
+                'status': 'imported',
+                'source': 'upload',
+                'workflow_id': str(workflow.id),
+                'workflow_name': workflow.name,
+            }, status=status.HTTP_201_CREATED)
+
+        filename = request.data.get('filename')
+        if filename:
+            try:
+                workflow = import_workflow_from_manifest(
+                    filename,
+                    created_by=request.user,
+                    update_existing=update_existing,
+                )
+            except FileNotFoundError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                'status': 'imported',
+                'source': 'manifest',
+                'workflow_id': str(workflow.id),
+                'workflow_name': workflow.name,
+            }, status=status.HTTP_201_CREATED)
+
+        workflow_definition = request.data.get('workflow_definition')
+        if isinstance(workflow_definition, dict):
+            workflow = import_workflow_from_json_payload(
+                workflow_definition,
+                created_by=request.user,
+                update_existing=update_existing,
+            )
+            return Response({
+                'status': 'imported',
+                'source': 'payload',
+                'workflow_id': str(workflow.id),
+                'workflow_name': workflow.name,
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(
+            {'error': 'Provide one of: file upload, filename, or workflow_definition payload.'},
+            status=status.HTTP_400_BAD_REQUEST,
         )

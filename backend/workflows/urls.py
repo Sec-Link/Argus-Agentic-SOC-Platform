@@ -14,6 +14,9 @@ from .views import (
     WorkflowStepViewSet,
     WorkflowExecutionViewSet,
     WorkflowStatsView,
+    WorkflowPublishView,
+    WorkflowPublishedListView,
+    WorkflowImportView,
     SavedWorkflowNodeViewSet,
     WorkflowScheduleViewSet,
 )
@@ -33,4 +36,7 @@ urlpatterns = [
     path('stats/', WorkflowStatsView.as_view(), name='workflow-stats'),
     path('prefect/deployments/', PrefectDeploymentListView.as_view(), name='prefect-deployments'),
     path('prefect/sync/', PrefectDeploymentSyncView.as_view(), name='prefect-sync'),
+    path('workflows/<uuid:pk>/publish/', WorkflowPublishView.as_view(), name='workflow-publish'),
+    path('publish/manifests/', WorkflowPublishedListView.as_view(), name='workflow-published-list'),
+    path('import/', WorkflowImportView.as_view(), name='workflow-import'),
 ]

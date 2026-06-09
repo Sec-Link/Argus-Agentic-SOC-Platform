@@ -31,7 +31,7 @@ def normalize_action_result(result: Any) -> Dict[str, Any]:
 def execute_action(action_type: str, action_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     """Execute an action via ActionRegistry and return a normalized dict."""
     ensure_django_ready()
-    from workflows.actions import ActionRegistry
+    from ..actions import ActionRegistry
 
     action = ActionRegistry.get_action(action_type)
     result = action.execute(action_config or {}, context or {})

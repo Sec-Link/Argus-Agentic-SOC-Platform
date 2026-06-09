@@ -53,7 +53,7 @@ INSTALLED_APPS = [
     'cmdb',
     'ai_assistant',
     'orchestrator.apps.OrchestratorConfig',
-    'workflows',
+    'workflows.apps.WorkflowsConfig',
     'workflow_interfaces',
     'django_scheduled_tasks',
 ]
@@ -219,11 +219,20 @@ AUDIT_LOG_RETENTION_DAYS = int(os.getenv('AUDIT_LOG_RETENTION_DAYS', '90'))
 
 # Email delivery settings
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = os.getenv('EMAIL_HOST', '')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.feishu.cn')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'customer@seclink.info')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', 'PQWCPj6HdNKB9Uu8')
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'true').lower() in ('true', '1', 'yes')
 EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'false').lower() in ('true', '1', 'yes')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'noreply@localhost')
 EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '15'))
+
+
+# Prefect Workflow Engine
+# PREFECT_API_URL: Prefect Server API endpoint (required for Prefect execution engine)
+PREFECT_API_URL = os.getenv('PREFECT_API_URL', 'http://127.0.0.1:4200/api')
+# PREFECT_DEPLOYMENT_ID: Default shared deployment ID for generic SOAR workflows
+PREFECT_DEPLOYMENT_ID = os.getenv('PREFECT_DEPLOYMENT_ID', '')
+# PREFECT_API_KEY: Optional API key for authentication with Prefect Cloud or self-hosted server
+PREFECT_API_KEY = os.getenv('PREFECT_API_KEY', '')

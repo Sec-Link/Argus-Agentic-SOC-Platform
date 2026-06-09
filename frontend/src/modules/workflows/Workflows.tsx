@@ -26,6 +26,8 @@ import {
   SyncOutlined,
   BranchesOutlined,
   HistoryOutlined,
+  CloudUploadOutlined,
+  ImportOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -34,6 +36,10 @@ import {
   executeWorkflow,
   cloneWorkflow,
   getWorkflowStats,
+  publishWorkflow,
+  listPublishedManifests,
+  importWorkflowFromManifest,
+  importWorkflowFromFile,
   Workflow,
   WorkflowStats,
 } from 'services/workflows';
@@ -165,6 +171,97 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     }
   };
 
+  // Publish workflow to Prefect (persistent flow files + deployment)
+  const handlePublish = async (id: string) => {
+    try {
+      const result = await publishWorkflow(id);
+      if (result.deployment_registered) {
+        message.success(`Workflow "${result.workflow_name}" manifest published and registered`);
+      } else {
+        message.success(`Workflow "${result.workflow_name}" manifest published`);
+      }
+      fetchWorkflows();
+    } catch (err: any) {
+      const detail = err?.response?.data?.error || 'Failed to publish workflow';
+      message.error(detail);
+    }
+  };
+
+  // Import workflow from uploaded JSON file
+  const handleImport = async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e: any) => {
+      const file = e.target?.files?.[0];
+      if (!file) return;
+      try {
+        const result = await importWorkflowFromFile(file);
+        message.success(`Workflow "${result.workflow_name}" imported successfully`);
+        fetchWorkflows();
+        fetchStats();
+      } catch (err: any) {
+        const detail = err?.response?.data?.error || 'Failed to import workflow';
+        message.error(detail);
+      }
+    };
+    input.click();
+  };
+
+  // Import workflow from a published manifest already stored on the server
+  const handleImportPublished = async () => {
+    try {
+      const result = await listPublishedManifests();
+      const manifests = Array.isArray(result.manifests) ? result.manifests : [];
+      if (manifests.length === 0) {
+        message.info('No published workflow manifests are available');
+        return;
+      }
+
+      const selectedFilename = await new Promise<string | null>((resolve) => {
+        let nextFilename = manifests[0]?.filename || '';
+        const instance = modal.confirm({
+          title: 'Import Published Workflow',
+          content: (
+            <div>
+              <p>Select a published workflow manifest to import into Django.</p>
+              <Select
+                defaultValue={nextFilename}
+                style={{ width: '100%' }}
+                onChange={(value) => {
+                  nextFilename = value;
+                }}
+                options={manifests.map((manifest) => ({
+                  value: manifest.filename,
+                  label: `${manifest.name} (${manifest.filename})`,
+                }))}
+              />
+            </div>
+          ),
+          okText: 'Import',
+          cancelText: 'Cancel',
+          onOk: async () => {
+            resolve(nextFilename || null);
+          },
+          onCancel: async () => {
+            resolve(null);
+          },
+        });
+        void instance;
+      });
+
+      if (!selectedFilename) return;
+
+      const imported = await importWorkflowFromManifest(selectedFilename);
+      message.success(`Workflow "${imported.workflow_name}" imported from published manifest`);
+      fetchWorkflows();
+      fetchStats();
+    } catch (err: any) {
+      const detail = err?.response?.data?.error || 'Failed to import published workflow';
+      message.error(detail);
+    }
+  };
+
   const columns: ColumnsType<Workflow> = [
     {
       title: 'Name',
@@ -175,7 +272,10 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
           <a onClick={() => onVisualEditWorkflow?.(record.id)} style={{ fontWeight: 500 }}>
             {name}
           </a>
-          <span style={{ fontSize: 12, color: '#888' }}>v{record.version}</span>
+          <span style={{ fontSize: 12, color: '#888' }}>
+            draft v{record.version}
+            {record.published_version ? ` | published v${record.published_version}` : ''}
+          </span>
         </Space>
       ),
     },
@@ -212,7 +312,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       key: 'status',
       width: 120,
       render: (_: any, record: Workflow) => (
-        <Space>
+        <Space wrap>
           {record.is_draft ? (
             <Tag color="orange">Draft</Tag>
           ) : record.is_active ? (
@@ -220,6 +320,8 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
           ) : (
             <Tag color="default">Inactive</Tag>
           )}
+          {record.published_version ? <Tag color="blue">Published v{record.published_version}</Tag> : <Tag>Unpublished</Tag>}
+          {record.has_unpublished_changes ? <Tag color="red">Unpublished Changes</Tag> : null}
         </Space>
       ),
     },
@@ -281,6 +383,13 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
               size="small"
               icon={<CopyOutlined />}
               onClick={() => handleClone(record.id)}
+            />
+          </Tooltip>
+          <Tooltip title="Publish to Prefect">
+            <Button
+              size="small"
+              icon={<CloudUploadOutlined />}
+              onClick={() => handlePublish(record.id)}
             />
           </Tooltip>
           <Popconfirm
@@ -385,6 +494,18 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
           </Col>
           <Col>
             <Space>
+              <Button
+                icon={<ImportOutlined />}
+                onClick={handleImport}
+              >
+                Import Workflow
+              </Button>
+              <Button
+                icon={<CloudUploadOutlined />}
+                onClick={handleImportPublished}
+              >
+                Import Published
+              </Button>
               <Button
                 icon={<HistoryOutlined />}
                 onClick={() => onNavigate?.('/settings/workflows/executions')}

@@ -13,6 +13,7 @@ from .models import (
     SavedWorkflowNode,
     WorkflowSchedule,
 )
+from .publisher import get_published_state
 
 
 class ActionTemplateSerializer(serializers.ModelSerializer):
@@ -108,13 +109,17 @@ class WorkflowListSerializer(serializers.ModelSerializer):
     step_count = serializers.SerializerMethodField()
     execution_count = serializers.SerializerMethodField()
     last_execution = serializers.SerializerMethodField()
+    published_version = serializers.SerializerMethodField()
+    published_at = serializers.SerializerMethodField()
+    has_unpublished_changes = serializers.SerializerMethodField()
 
     class Meta:
         model = Workflow
         fields = [
             'id', 'name', 'description', 'trigger_type', 'execution_engine',
             'prefect_deployment_id',
-            'is_active', 'is_draft', 'version', 'tags', 'created_by', 'created_by_username',
+            'is_active', 'is_draft', 'version', 'published_version', 'published_at', 'has_unpublished_changes',
+            'tags', 'created_by', 'created_by_username',
             'step_count', 'execution_count', 'last_execution',
             'created_at', 'updated_at'
         ]
@@ -137,6 +142,15 @@ class WorkflowListSerializer(serializers.ModelSerializer):
             }
         return None
 
+    def get_published_version(self, obj):
+        return get_published_state(obj).get('published_version')
+
+    def get_published_at(self, obj):
+        return get_published_state(obj).get('published_at')
+
+    def get_has_unpublished_changes(self, obj):
+        return get_published_state(obj).get('has_unpublished_changes')
+
 
 class WorkflowDetailSerializer(serializers.ModelSerializer):
     """Serializer for workflow detail view (includes steps)."""
@@ -146,6 +160,9 @@ class WorkflowDetailSerializer(serializers.ModelSerializer):
     )
     steps = WorkflowStepSerializer(many=True, read_only=True)
     schedules = WorkflowScheduleSerializer(many=True, read_only=True)
+    published_version = serializers.SerializerMethodField()
+    published_at = serializers.SerializerMethodField()
+    has_unpublished_changes = serializers.SerializerMethodField()
 
     class Meta:
         model = Workflow
@@ -153,12 +170,21 @@ class WorkflowDetailSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'trigger_type', 'execution_engine',
             'prefect_deployment_id',
             'trigger_conditions',
-            'schedule_cron', 'is_active', 'is_draft', 'version', 'tags',
+            'schedule_cron', 'is_active', 'is_draft', 'version', 'published_version', 'published_at', 'has_unpublished_changes', 'tags',
             'edges', 'created_by', 'created_by_username', 'steps',
             'schedules',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_published_version(self, obj):
+        return get_published_state(obj).get('published_version')
+
+    def get_published_at(self, obj):
+        return get_published_state(obj).get('published_at')
+
+    def get_has_unpublished_changes(self, obj):
+        return get_published_state(obj).get('has_unpublished_changes')
 
 
 class WorkflowCreateSerializer(serializers.ModelSerializer):
@@ -176,7 +202,7 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
     def validate(self, attrs):
-        attrs['execution_engine'] = 'prefect'
+        attrs['execution_engine'] = attrs.get('execution_engine') or getattr(self.instance, 'execution_engine', 'local')
         return attrs
 
     @staticmethod

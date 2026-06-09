@@ -133,7 +133,7 @@ const alertTriggerFieldOptions = [
   { value: 'message', label: 'Message' },
 ];
 
-const hiddenSystemActionCategories = new Set(['containment', 'release']);
+const hiddenSystemActionCategories = new Set<string>();
 
 const defaultNodeCategoryOptions = [
   { value: 'notification', label: 'Actions' },
@@ -300,6 +300,7 @@ const nodesToSteps = (nodes: Node[], edges: Edge[]): WorkflowStep[] => {
         timeout_seconds: node.data.timeout || 300,
         on_failure: node.data.onFailure || 'stop',
         retry_count: node.data.retryCount || 0,
+        retry_delay_seconds: node.data.retryDelaySeconds || 30,
         condition: node.data.condition || {},
         next_step_true: trueEdge?.target,
         next_step_false: falseEdge?.target,
@@ -566,6 +567,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         name: '',
         description: '',
         trigger_type: 'manual',
+        execution_engine: 'local',
         webhook_source_id: undefined,
         alert_filters: [],
         alert_filter_logic: 'AND',
@@ -596,6 +598,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
           name: data.name,
           description: data.description,
           trigger_type: data.trigger_type,
+          execution_engine: data.execution_engine || 'local',
           webhook_source_id: data.trigger_conditions?.webhook_source_id,
           alert_filters: Array.isArray(data.trigger_conditions?.alert_filters) ? data.trigger_conditions.alert_filters : [],
           alert_filter_logic: data.trigger_conditions?.alert_filter_logic === 'OR' ? 'OR' : 'AND',
@@ -744,6 +747,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
             timeout: template.timeout_seconds,
             onFailure: template.on_failure,
             retryCount: template.retry_count,
+            retryDelaySeconds: template.retry_delay_seconds,
             isActive: template.is_active,
           },
         };
@@ -798,6 +802,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         timeout_seconds: node.data.timeout || 300,
         on_failure: node.data.onFailure || 'stop',
         retry_count: node.data.retryCount || 0,
+        retry_delay_seconds: node.data.retryDelaySeconds || 30,
         is_active: node.data.isActive !== false,
       });
     } else {
@@ -807,6 +812,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         timeout_seconds: node.data.timeout || 300,
         on_failure: node.data.onFailure || 'stop',
         retry_count: node.data.retryCount || 0,
+        retry_delay_seconds: node.data.retryDelaySeconds || 30,
         is_active: node.data.isActive !== false,
       });
     }
@@ -860,6 +866,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                 timeout: values.timeout_seconds,
                 onFailure: values.on_failure,
                 retryCount: values.retry_count,
+                retryDelaySeconds: values.retry_delay_seconds,
                 isActive: values.is_active,
               },
             };
@@ -959,6 +966,8 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         name: values.name,
         description: values.description || '',
         trigger_type: values.trigger_type,
+        // Controls whether the workflow runs locally or through Prefect.
+        execution_engine: values.execution_engine || 'local',
         trigger_conditions: buildTriggerConditions(values),
         schedule_cron: values.schedule_cron || null,
         is_active: activate || values.is_active,
@@ -1015,7 +1024,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         timeout_seconds: values.timeout_seconds || 300,
         on_failure: values.on_failure || 'stop',
         retry_count: values.retry_count || 0,
-        retry_delay_seconds: 30,
+        retry_delay_seconds: values.retry_delay_seconds || 30,
         condition: currentNode.data.condition || {},
         is_active: values.is_active !== false,
       });
@@ -1044,6 +1053,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       timeout_seconds: 300,
       on_failure: 'stop',
       retry_count: 0,
+      retry_delay_seconds: 30,
       is_active: true,
     });
     setSavedNodeFormVisible(true);
@@ -1059,6 +1069,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       timeout_seconds: node.timeout_seconds,
       on_failure: node.on_failure,
       retry_count: node.retry_count,
+      retry_delay_seconds: node.retry_delay_seconds,
       is_active: node.is_active,
     });
     setSavedNodeFormVisible(true);
@@ -1075,7 +1086,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         timeout_seconds: values.timeout_seconds || 300,
         on_failure: values.on_failure || 'stop',
         retry_count: values.retry_count || 0,
-        retry_delay_seconds: 30,
+        retry_delay_seconds: values.retry_delay_seconds || 30,
         action_config: editingSavedNode?.action_config || {},
         condition: editingSavedNode?.condition || {},
         is_active: values.is_active !== false,
@@ -1211,6 +1222,18 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                 <Select
                   options={triggerTypes}
                   onChange={handleTriggerTypeChange}
+                />
+              </Form.Item>
+              <Form.Item
+                name="execution_engine"
+                label="Execution Engine"
+                tooltip="Choose whether this workflow executes in Django or through Prefect."
+              >
+                <Select
+                  options={[
+                    { value: 'local', label: 'Local (Django)' },
+                    { value: 'prefect', label: 'Prefect' },
+                  ]}
                 />
               </Form.Item>
               <Form.Item noStyle shouldUpdate={(prev, curr) => prev.trigger_type !== curr.trigger_type}>
@@ -1539,6 +1562,9 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                 <Form.Item name="retry_count" label="Retry Count">
                   <InputNumber min={0} max={5} style={{ width: '100%' }} />
                 </Form.Item>
+                <Form.Item name="retry_delay_seconds" label="Retry Delay (s)">
+                  <InputNumber min={0} max={3600} style={{ width: '100%' }} />
+                </Form.Item>
               </>
             )}
 
@@ -1730,6 +1756,11 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
             <Col span={8}>
               <Form.Item name="retry_count" label="Retry">
                 <InputNumber min={0} max={5} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="retry_delay_seconds" label="Retry Delay (s)">
+                <InputNumber min={0} max={3600} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={8}>

@@ -28,4 +28,9 @@ export {
   createSavedWorkflowNode,
   updateSavedWorkflowNode,
   deleteSavedWorkflowNode,
+  // Publish & Import
+  publishWorkflow,
+  listPublishedManifests,
+  importWorkflowFromManifest,
+  importWorkflowFromFile,
 } from '../../api';

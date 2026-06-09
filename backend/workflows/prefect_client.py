@@ -233,6 +233,8 @@ def update_deployment(
         raise PrefectAPIError(
             f'Prefect update_deployment returned {resp.status_code}: {resp.text[:500]}'
         )
+    if not resp.text.strip():
+        return {}
     return resp.json()
 
 
@@ -282,6 +284,11 @@ def create_deployment(
     entrypoint: str,
     parameters: Dict[str, Any] | None = None,
     tags: list[str] | None = None,
+    work_pool_name: Optional[str] = None,
+    work_queue_name: Optional[str] = None,
+    job_variables: Dict[str, Any] | None = None,
+    path: Optional[str] = None,
+    pull_steps: list[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """Create a Prefect deployment for the given flow."""
     url = f"{_api_base()}/deployments/"
@@ -294,6 +301,16 @@ def create_deployment(
         payload['parameters'] = parameters
     if tags:
         payload['tags'] = list(tags)
+    if work_pool_name:
+        payload['work_pool_name'] = str(work_pool_name)
+    if work_queue_name:
+        payload['work_queue_name'] = str(work_queue_name)
+    if job_variables:
+        payload['job_variables'] = dict(job_variables)
+    if path:
+        payload['path'] = str(path)
+    if pull_steps is not None:
+        payload['pull_steps'] = list(pull_steps)
     resp = requests.post(url, json=payload, headers=_headers(), timeout=_timeout())
     if resp.status_code >= 400:
         raise PrefectAPIError(

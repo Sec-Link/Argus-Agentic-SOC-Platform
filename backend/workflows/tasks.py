@@ -34,9 +34,9 @@ def run_workflow_task(execution_id: str) -> dict:
     Execute a WorkflowExecution identified by *execution_id*.
 
     This function is the single entry-point used by both the manual ``execute``
-    API action and the automatic signal-based triggers.  Keeping execution
-    logic inside ``WorkflowEngine`` (``engine.py``) means this wrapper stays
-    thin and easy to test.
+    API action and the automatic signal-based triggers.  It delegates to the
+    appropriate engine (native or Prefect) based on the workflow's
+    ``execution_engine`` field via ``engines.run_execution()``.
 
     Args:
         execution_id: String UUID of the ``WorkflowExecution`` record to run.
@@ -48,11 +48,11 @@ def run_workflow_task(execution_id: str) -> dict:
 
     Raises:
         WorkflowExecution.DoesNotExist: If no record matches *execution_id*.
-        Exception: Re-raised from ``WorkflowEngine.run()`` on failure (the
-            engine already marks the execution as ``failed`` before raising).
+        Exception: Re-raised from the engine on failure (the engine already
+            marks the execution as ``failed`` before raising).
     """
     from .models import WorkflowExecution
-    from .engine import WorkflowEngine
+    from .engines import run_execution
 
     logger.info("Background task: starting workflow execution %s", execution_id)
 
@@ -60,12 +60,9 @@ def run_workflow_task(execution_id: str) -> dict:
         id=execution_id
     )
 
-    engine = WorkflowEngine(execution)
     try:
-        engine.run()
+        run_execution(execution)
     except Exception as exc:
-        # WorkflowEngine.run() already persists the failed status.
-        # Log here so the task backend captures the traceback as well.
         logger.exception(
             "Background task: workflow execution %s failed: %s", execution_id, exc
         )
@@ -87,7 +84,8 @@ def trigger_workflows_for_event_task(
     executed_by_id: Optional[int] = None,
 ) -> dict:
     """
-    Find all active workflows matching *trigger_type* and enqueue them.
+    Find all active workflows matching *trigger_type* and execute them through
+    the standard ``execute_workflow`` service.
 
     This task is invoked by signal handlers so that automatic triggers do not
     block the HTTP request that caused the signal.
@@ -99,13 +97,14 @@ def trigger_workflows_for_event_task(
         executed_by_id: Optional Django User pk to record as the executor.
 
     Returns:
-        A dict summarising how many workflows were enqueued::
+        A dict summarising how many workflows were triggered::
 
             {"triggered": 2, "skipped": 0}
     """
     from django.contrib.auth.models import User
 
-    from .models import Workflow, WorkflowExecution
+    from .engine import execute_workflow
+    from .models import Workflow
     from .signals import _matches_conditions
 
     executed_by: Optional[User] = None
@@ -132,24 +131,22 @@ def trigger_workflows_for_event_task(
             continue
 
         try:
-            execution = WorkflowExecution.objects.create(
+            execution = execute_workflow(
                 workflow=workflow,
-                trigger_source=trigger_source,
                 trigger_data=trigger_data,
-                status="pending",
+                trigger_source=trigger_source,
                 executed_by=executed_by,
             )
-            # Enqueue the actual execution as a nested task
-            run_workflow_task.enqueue(str(execution.id))
             triggered += 1
             logger.info(
-                "Auto-triggered workflow '%s' (execution %s)",
+                "Auto-triggered workflow '%s' (execution %s, status=%s)",
                 workflow.name,
                 execution.id,
+                execution.status,
             )
         except Exception as exc:
             logger.exception(
-                "Failed to enqueue workflow '%s': %s", workflow.name, exc
+                "Failed to trigger workflow '%s': %s", workflow.name, exc
             )
 
     return {"triggered": triggered, "skipped": skipped}

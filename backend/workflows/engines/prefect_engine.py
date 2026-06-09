@@ -23,7 +23,7 @@ from prefect import flow, get_run_logger  # noqa: F401  (import side-effect: for
 from .base import BaseEngine
 
 if TYPE_CHECKING:
-    from workflows.models import WorkflowExecution
+    from ..models import WorkflowExecution
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class PrefectEngine(BaseEngine):
     name = 'prefect'
 
     def run(self, execution: "WorkflowExecution") -> Dict[str, Any]:
-        from workflows.engine import WorkflowEngine
+        from ..engine import WorkflowEngine
 
         flow_name = f"workflow:{execution.workflow.name}"
 

@@ -7,7 +7,7 @@ Usage:
     python manage.py load_sample_workflows --email user1@example.com,user2@example.com
 """
 from django.core.management.base import BaseCommand
-from workflows.models import Workflow, WorkflowStep
+from ...models import Workflow, WorkflowStep
 
 
 class Command(BaseCommand):

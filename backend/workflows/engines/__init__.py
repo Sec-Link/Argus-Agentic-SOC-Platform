@@ -25,7 +25,7 @@ from .base import BaseEngine
 from .native import NativeEngine
 
 if TYPE_CHECKING:
-    from workflows.models import Workflow, WorkflowExecution
+    from ..models import Workflow, WorkflowExecution
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +35,10 @@ def get_engine_for(workflow: "Workflow") -> BaseEngine:
     Resolve the engine instance to use for *workflow*.
 
     Resolution order:
-      1. ``workflow.engine_type`` if non-empty.
+      1. ``workflow.execution_engine`` if non-empty.
       2. ``settings.WORKFLOW_ENGINE_DEFAULT`` (falls back to ``"native"``).
     """
-    engine_type = (getattr(workflow, 'engine_type', '') or '').strip().lower()
+    engine_type = (getattr(workflow, 'execution_engine', '') or '').strip().lower()
     if not engine_type:
         engine_type = (getattr(settings, 'WORKFLOW_ENGINE_DEFAULT', 'native') or 'native').lower()
 

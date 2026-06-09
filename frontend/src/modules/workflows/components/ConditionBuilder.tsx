@@ -48,26 +48,28 @@ const operators = [
 
 // Common context variables that can be used in conditions
 const contextVariables = [
-  { value: '{{trigger.data.severity}}', label: 'Alert Severity', category: 'trigger' },
-  { value: '{{trigger.data.source_ip}}', label: 'Source IP', category: 'trigger' },
-  { value: '{{trigger.data.dest_ip}}', label: 'Destination IP', category: 'trigger' },
-  { value: '{{trigger.data.event_type}}', label: 'Event Type', category: 'trigger' },
+  { value: '{{trigger_data.severity}}', label: 'Alert Severity', category: 'trigger_data' },
+  { value: '{{trigger_data.source_ip}}', label: 'Source IP', category: 'trigger_data' },
+  { value: '{{trigger_data.dest_ip}}', label: 'Destination IP', category: 'trigger_data' },
+  { value: '{{trigger_data.event_type}}', label: 'Event Type', category: 'trigger_data' },
+  { value: '{{trigger_data.ticket_number}}', label: 'Ticket Number', category: 'trigger_data' },
   { value: '{{ticket.status}}', label: 'Ticket Status', category: 'ticket' },
   { value: '{{ticket.priority}}', label: 'Ticket Priority', category: 'ticket' },
-  { value: '{{ticket.assigned_user}}', label: 'Assigned User', category: 'ticket' },
-  { value: '{{previous_step.success}}', label: 'Previous Step Success', category: 'workflow' },
-  { value: '{{previous_step.output}}', label: 'Previous Step Output', category: 'workflow' },
-  { value: '{{context.custom_var}}', label: 'Custom Variable', category: 'context' },
+  { value: '{{ticket.current_assign_owner}}', label: 'Assigned User', category: 'ticket' },
+  { value: '{{previous_step.success}}', label: 'Previous Step Success', category: 'previous_step' },
+  { value: '{{previous_step.output.ticket_number}}', label: 'Previous Step Ticket Number', category: 'previous_step' },
+  { value: '{{variables.ticket_number}}', label: 'Workflow Variable Ticket Number', category: 'variables' },
+  { value: '{{variables.risk_score}}', label: 'Workflow Variable Risk Score', category: 'variables' },
 ];
 
 const valueOptionsByField: Record<string, { value: string; label: string }[]> = {
-  '{{trigger.data.severity}}': [
+  '{{trigger_data.severity}}': [
     { value: 'critical', label: 'Critical' },
     { value: 'high', label: 'High' },
     { value: 'medium', label: 'Medium' },
     { value: 'low', label: 'Low' },
   ],
-  '{{trigger.data.event_type}}': [
+  '{{trigger_data.event_type}}': [
     { value: 'account_anomalies', label: 'Account Anomalies' },
     { value: 'denial_of_service', label: 'Denial of Service' },
     { value: 'malware', label: 'Malware' },

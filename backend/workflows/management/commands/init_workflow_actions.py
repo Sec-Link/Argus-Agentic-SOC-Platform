@@ -4,8 +4,8 @@ Workflow Management Commands
 Management command to initialize default action templates.
 """
 from django.core.management.base import BaseCommand
-from workflows.models import ActionTemplate
-from workflows.actions import ActionRegistry
+from ...models import ActionTemplate
+from ...actions import ActionRegistry
 
 
 class Command(BaseCommand):

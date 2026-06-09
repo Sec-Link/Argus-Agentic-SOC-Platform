@@ -1006,7 +1006,7 @@ export interface WorkflowStep {
   id?: string;
   order: number;
   name: string;
-  node_type?: 'action' | 'condition' | 'start' | 'end' | 'parallel';
+  node_type?: 'action' | 'condition' | 'start' | 'end';
   node_category?: string;
   position_x?: number;
   position_y?: number;
@@ -1015,6 +1015,7 @@ export interface WorkflowStep {
   timeout_seconds: number;
   on_failure: 'stop' | 'continue' | 'retry' | 'skip';
   retry_count: number;
+  retry_delay_seconds?: number;
   condition?: Record<string, any>;
   next_step_true?: string;
   next_step_false?: string;
@@ -1045,6 +1046,9 @@ export interface Workflow {
   is_active: boolean;
   is_draft: boolean;
   version: number;
+  published_version?: number | null;
+  published_at?: string | null;
+  has_unpublished_changes?: boolean;
   tags: string[];
   edges?: WorkflowEdge[];
   steps?: WorkflowStep[];
@@ -1315,6 +1319,70 @@ export async function updateSavedWorkflowNode(id: string, data: Partial<SavedWor
 
 export async function deleteSavedWorkflowNode(id: string): Promise<void> {
   await client.delete(`${WORKFLOWS_BASE}/saved-nodes/${id}/`);
+}
+
+// Publish workflow to Prefect by persisting a JSON manifest for the shared deployment
+export async function publishWorkflow(id: string, options?: { register_deployment?: boolean }): Promise<{
+  status: string;
+  workflow_id: string;
+  workflow_name: string;
+  slug: string;
+  manifest_ref: string;
+  manifest_path: string;
+  manifest_version: number;
+  manifest_filename: string;
+  published_at: string;
+  steps_count: number;
+  deployment_registered: boolean;
+  deployment_id?: string;
+}> {
+  const r = await client.post(`${WORKFLOWS_BASE}/workflows/${id}/publish/`, {
+    register_deployment: options?.register_deployment ?? true,
+  });
+  return r.data;
+}
+
+// List published workflow manifests available for import
+export async function listPublishedManifests(): Promise<{ manifests: Array<{
+  filename: string;
+  slug: string;
+  name: string;
+  description: string;
+  steps_count: number;
+  published_at: string;
+  version: number;
+  trigger_type: string;
+  tags: string[];
+  has_flow_file: boolean;
+}> }> {
+  const r = await client.get(`${WORKFLOWS_BASE}/publish/manifests/`);
+  return r.data;
+}
+
+// Import workflow from manifest file, uploaded file, or JSON payload
+export async function importWorkflowFromManifest(filename: string): Promise<{
+  status: string;
+  source: string;
+  workflow_id: string;
+  workflow_name: string;
+}> {
+  const r = await client.post(`${WORKFLOWS_BASE}/import/`, { filename });
+  return r.data;
+}
+
+// Import workflow from uploaded JSON file
+export async function importWorkflowFromFile(file: File): Promise<{
+  status: string;
+  source: string;
+  workflow_id: string;
+  workflow_name: string;
+}> {
+  const form = new FormData();
+  form.append('file', file);
+  const r = await client.post(`${WORKFLOWS_BASE}/import/`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return r.data;
 }
 
 export async function listInterfaceEndpoints(params?: { interface_type?: 'api' | 'webhook'; is_active?: boolean; search?: string }): Promise<InterfaceEndpoint[]> {

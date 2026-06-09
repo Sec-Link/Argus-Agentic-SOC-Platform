@@ -5,7 +5,7 @@ Prefect deployment. It is intended for developer verification only.
 """
 from __future__ import annotations
 
-from workflows.flows.generic_workflow_flow import run_soar_workflow
+from .generic_workflow_flow import run_soar_workflow
 
 
 if __name__ == "__main__":

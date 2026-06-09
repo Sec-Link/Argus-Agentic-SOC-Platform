@@ -53,7 +53,7 @@ interface ActionConfigBuilderProps {
 type FieldDef = {
   name: string;
   label: string;
-  type: 'string' | 'number' | 'boolean' | 'select' | 'textarea' | 'array' | 'password';
+  type: 'string' | 'number' | 'boolean' | 'select' | 'textarea' | 'array' | 'password' | 'keyvalue';
   required?: boolean;
   placeholder?: string;
   options?: Array<{ value: string; label: string }>;
@@ -134,6 +134,10 @@ const actionSchemas: Record<string, SchemaDef> = {
           { value: 'PATCH', label: 'PATCH' },
         ],
         default: 'POST',
+      },
+      {
+        name: 'headers', label: 'Headers', type: 'keyvalue',
+        description: 'Optional HTTP headers sent with the request',
       },
       {
         name: 'body_template', label: 'Request Body (JSON)', type: 'textarea',
@@ -320,6 +324,18 @@ const actionSchemas: Record<string, SchemaDef> = {
         placeholder: 'Ticket description…',
       },
       {
+        name: 'status', label: 'Initial Status', type: 'select',
+        options: [
+          { value: 'new', label: 'New' },
+          { value: 'acknowledged', label: 'Acknowledged' },
+          { value: 'triaged', label: 'Triaged' },
+          { value: 'contained', label: 'Contained' },
+          { value: 'resolved', label: 'Resolved' },
+          { value: 'closed', label: 'Closed' },
+        ],
+        default: 'new',
+      },
+      {
         name: 'priority', label: 'Priority', type: 'select',
         options: [
           { value: 'critical', label: 'Critical' },
@@ -358,9 +374,42 @@ const actionSchemas: Record<string, SchemaDef> = {
     description: 'Update tickets selected by upstream context, then apply new field values',
     fields: [
       {
+        name: 'ticket_number', label: 'Ticket Number', type: 'string',
+        placeholder: '{{trigger_data.ticket_number}}',
+        description: 'Optional exact ticket number match',
+      },
+      {
         name: 'title', label: 'Ticket Title', type: 'string',
         placeholder: '{{trigger_data.title}}',
         description: 'Optional exact ticket title match, e.g. {{trigger_data.title}}',
+      },
+      {
+        name: 'match_status', label: 'Match Current Status', type: 'select',
+        options: [
+          { value: 'new', label: 'New' },
+          { value: 'acknowledged', label: 'Acknowledged' },
+          { value: 'triaged', label: 'Triaged' },
+          { value: 'contained', label: 'Contained' },
+          { value: 'resolved', label: 'Resolved' },
+          { value: 'closed', label: 'Closed' },
+        ],
+      },
+      {
+        name: 'match_priority', label: 'Match Current Priority', type: 'select',
+        options: [
+          { value: 'critical', label: 'Critical' },
+          { value: 'high', label: 'High' },
+          { value: 'medium', label: 'Medium' },
+          { value: 'low', label: 'Low' },
+        ],
+      },
+      {
+        name: 'match_assign_group', label: 'Match Assign Group', type: 'string',
+        placeholder: 'SOC L1',
+      },
+      {
+        name: 'match_assign_owner', label: 'Match Assign Owner', type: 'string',
+        placeholder: 'username',
       },
       {
         name: 'status', label: 'New Status', type: 'select',
@@ -381,6 +430,14 @@ const actionSchemas: Record<string, SchemaDef> = {
           { value: 'medium', label: 'Medium' },
           { value: 'low', label: 'Low' },
         ],
+      },
+      {
+        name: 'current_assign_group', label: 'Assign Group', type: 'string',
+        placeholder: 'SOC L2',
+      },
+      {
+        name: 'current_assign_owner', label: 'Reassign To', type: 'string',
+        placeholder: 'new_owner',
       },
       {
         name: 'event_result', label: 'Event Result', type: 'select',
@@ -411,8 +468,9 @@ const actionSchemas: Record<string, SchemaDef> = {
         description: 'Detailed handling results and notes',
       },
       {
-        name: 'current_assign_owner', label: 'Reassign To', type: 'string',
-        placeholder: 'new_owner',
+        name: 'add_comment', label: 'Comment', type: 'textarea',
+        placeholder: 'Short comment…',
+        description: 'Compatibility field mapped to ticket records when provided',
       },
     ],
   },
@@ -456,6 +514,64 @@ const ArrayInput: React.FC<{
             style={{ marginBottom: 4 }}
           >
             {item}
+          </Tag>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const KeyValueInput: React.FC<{
+  value?: Record<string, string>;
+  onChange?: (value: Record<string, string>) => void;
+}> = ({ value = {}, onChange }) => {
+  const [keyInput, setKeyInput] = useState('');
+  const [valueInput, setValueInput] = useState('');
+
+  const entries = Object.entries(value || {});
+
+  const handleAdd = () => {
+    const key = keyInput.trim();
+    if (!key) return;
+    onChange?.({ ...value, [key]: valueInput });
+    setKeyInput('');
+    setValueInput('');
+  };
+
+  const handleRemove = (key: string) => {
+    const next = { ...value };
+    delete next[key];
+    onChange?.(next);
+  };
+
+  return (
+    <div>
+      <Space style={{ marginBottom: 8, width: '100%' }} wrap>
+        <Input
+          placeholder="Header name"
+          value={keyInput}
+          onChange={(e) => setKeyInput(e.target.value)}
+          style={{ width: 180 }}
+        />
+        <Input
+          placeholder="Header value"
+          value={valueInput}
+          onChange={(e) => setValueInput(e.target.value)}
+          style={{ width: 220 }}
+        />
+        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAdd}>
+          Add
+        </Button>
+      </Space>
+      <div>
+        {entries.map(([key, itemValue]) => (
+          <Tag
+            key={key}
+            closable
+            onClose={() => handleRemove(key)}
+            style={{ marginBottom: 4 }}
+          >
+            {key}: {itemValue}
           </Tag>
         ))}
       </div>
@@ -517,6 +633,8 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
         return <TextArea rows={4} placeholder={field.placeholder} style={{ fontFamily: 'monospace', fontSize: 12 }} />;
       case 'array':
         return <ArrayInput placeholder={field.placeholder} />;
+      case 'keyvalue':
+        return <KeyValueInput />;
       default:
         return <Input placeholder={field.placeholder} />;
     }
