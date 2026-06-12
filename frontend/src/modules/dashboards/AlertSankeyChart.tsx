@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import { Card, Empty, Spin, Typography } from 'antd';
-import { fetchTicketSankeyStats } from 'services/tickets';
+import { fetchDashboardSankeyStats } from 'services/dashboards';
 import type { SankeyStats } from 'types';
 
 interface Props {
@@ -17,6 +17,9 @@ const STAGE_COLORS: Record<string, string> = {
   Resolution: '#f3a43b',
   'Event Level': '#ff6b5f',
 };
+const SANKEY_CHART_LEFT = 84;
+const SANKEY_CHART_RIGHT = 88;
+const STAGE_TEMPLATE_COLUMNS = '1.2fr 1.08fr 0.94fr 0.94fr 1.08fr';
 
 const getStoredThemeMode = (): 'light' | 'dark' => {
   // Theme lookup is defensive because dashboard pages may be rendered during Next build.
@@ -35,7 +38,7 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
 
   useEffect(() => {
     setLoading(true);
-    fetchTicketSankeyStats({ start_time: startTime, end_time: endTime })
+    fetchDashboardSankeyStats({ start_time: startTime, end_time: endTime })
       .then((data) => setStats(data))
       .catch(() => setStats(null))
       .finally(() => setLoading(false));
@@ -60,6 +63,7 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
   const mutedColor = isDarkTheme ? 'rgba(235, 247, 255, 0.72)' : 'rgba(31, 45, 61, 0.62)';
 
   const option = useMemo<EChartsOption>(() => {
+    const labelOverflow = 'break' as const;
     const nodes = (stats?.nodes ?? []).map((node) => ({
       ...node,
       itemStyle: {
@@ -72,8 +76,11 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
         color: labelColor,
         fontSize: 12,
         fontWeight: 700,
+        lineHeight: 16,
+        overflow: labelOverflow,
         textBorderColor: isDarkTheme ? 'rgba(0,0,0,0.48)' : 'rgba(255,255,255,0.7)',
         textBorderWidth: 2,
+        width: 112,
       },
     }));
     const links = (stats?.links ?? []).map((link) => ({
@@ -106,18 +113,19 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
           type: 'sankey',
           data: nodes,
           links,
-          left: 18,
-          right: 24,
-          top: 52,
+          // Reserve a wider source-column gutter so long attack labels do not clip.
+          left: SANKEY_CHART_LEFT,
+          right: SANKEY_CHART_RIGHT,
+          top: 58,
           bottom: 24,
-          nodeWidth: 22,
-          nodeGap: 16,
+          nodeWidth: 20,
+          nodeGap: 18,
           nodeAlign: 'justify',
           draggable: true,
           emphasis: { focus: 'adjacency' },
           // ECharts Sankey uses curveness on link lineStyle to create smooth organic flows.
           lineStyle: { color: 'source', opacity: isDarkTheme ? 0.34 : 0.28, curveness: 0.58 },
-          label: { color: labelColor, fontSize: 12, fontWeight: 700 },
+          label: { color: labelColor, fontSize: 12, fontWeight: 700, lineHeight: 16, overflow: labelOverflow, width: 112 },
           levels: [
             { depth: 0, itemStyle: { color: STAGE_COLORS['MITRE ATT&CK Framework'] } },
             { depth: 1, itemStyle: { color: STAGE_COLORS['Developed Use Cases'] } },
@@ -138,9 +146,13 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
     'Resolution',
     'Event Level',
   ];
+  const stageGuideBackground = isDarkTheme
+    ? 'linear-gradient(90deg, rgba(255,255,255,0.035), rgba(255,255,255,0.012), rgba(255,255,255,0.035), rgba(255,255,255,0.012), rgba(255,255,255,0.035))'
+    : 'linear-gradient(90deg, rgba(23,92,180,0.045), rgba(23,92,180,0.018), rgba(23,92,180,0.045), rgba(23,92,180,0.018), rgba(23,92,180,0.045))';
 
   return (
     <Card
+      className="dashboard-sankey-card"
       title="Alert Correlation — 5-Stage Detection Pipeline"
       styles={{ body: { padding: 0 } }}
     >
@@ -153,29 +165,53 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
           <Empty description="No correlation data available — tickets need category, resolution, and priority fields filled in" />
         </div>
       ) : (
-        <div style={{ minHeight: 620, padding: '22px 24px 18px', borderRadius: 12, background: panelBg }}>
+        <div className="dashboard-sankey-panel" style={{ background: panelBg }}>
           <div
-            // Stage headers mirror the five visual columns rendered by ECharts.
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1.15fr 1.1fr 0.85fr 0.9fr 0.9fr',
-              gap: 16,
-              marginBottom: 4,
-              color: labelColor,
-            }}
+            className="dashboard-sankey-canvas-shell"
+            style={
+              {
+                '--dashboard-sankey-plot-left': `${SANKEY_CHART_LEFT}px`,
+                '--dashboard-sankey-plot-right': `${SANKEY_CHART_RIGHT}px`,
+                '--dashboard-sankey-stage-columns': STAGE_TEMPLATE_COLUMNS,
+              } as React.CSSProperties
+            }
           >
-            {stages.map((stage) => (
-              <div key={stage}>
-                <Typography.Text style={{ color: labelColor, fontWeight: 800, fontSize: 15 }}>
-                  {stage}
-                </Typography.Text>
-              </div>
-            ))}
+            <div
+              className="dashboard-sankey-stage-guide"
+              // Stage guide bands reuse the exact Sankey plot insets so header tracks stay visually locked.
+              style={{ background: stageGuideBackground }}
+            >
+              {stages.map((stage, index) => (
+                <div
+                  key={stage}
+                  className="dashboard-sankey-stage-divider"
+                  style={{
+                    borderLeftColor: index === 0 ? 'transparent' : isDarkTheme ? 'rgba(132, 255, 226, 0.16)' : 'rgba(31, 111, 209, 0.18)',
+                  }}
+                />
+              ))}
+            </div>
+            <div
+              className="dashboard-sankey-stage-header"
+              // Header cells share the same five-column track to align text centers with stage lanes.
+              style={{ color: labelColor }}
+            >
+              {stages.map((stage) => (
+                <div key={stage} className="dashboard-sankey-stage-cell">
+                  <Typography.Text style={{ color: labelColor, fontWeight: 800, fontSize: 15 }}>
+                    {stage}
+                  </Typography.Text>
+                </div>
+              ))}
+            </div>
+            <Typography.Text
+              className="dashboard-sankey-subtitle"
+              style={{ color: mutedColor }}
+            >
+              Static MITRE/use-case context flows into live ticket categories, resolutions, and event levels.
+            </Typography.Text>
+            <ReactECharts option={option} style={{ position: 'relative', zIndex: 1, height: 540, width: '100%' }} notMerge lazyUpdate />
           </div>
-          <Typography.Text style={{ color: mutedColor, display: 'block', marginBottom: 6 }}>
-            Static MITRE/use-case context flows into live ticket categories, resolutions, and event levels.
-          </Typography.Text>
-          <ReactECharts option={option} style={{ height: 540, width: '100%' }} notMerge lazyUpdate />
         </div>
       )}
     </Card>

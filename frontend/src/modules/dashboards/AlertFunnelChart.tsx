@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Card, Empty, Spin, Typography } from 'antd';
-import { fetchTicketConversionStats } from 'services/tickets';
+import { fetchDashboardConversionStats } from 'services/dashboards';
 import type { ConversionStats } from 'types';
 
 interface Props {
@@ -38,7 +38,7 @@ const AlertFunnelChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
 
   useEffect(() => {
     setLoading(true);
-    fetchTicketConversionStats({ start_time: startTime, end_time: endTime, all_time: allTime })
+    fetchDashboardConversionStats({ start_time: startTime, end_time: endTime, all_time: allTime })
       .then((data) => setStats(data))
       .catch(() => setStats(null))
       .finally(() => setLoading(false));
@@ -104,15 +104,7 @@ const AlertFunnelChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
 
   return (
     <div>
-      <div
-        // CSS grid keeps all five cards equal-width; Ant's 24-column Row cannot divide 5 cards evenly.
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-          gap: 16,
-          marginBottom: 16,
-        }}
-      >
+      <div className="dashboard-funnel-stage-grid">
         {stages.map((s, i) => (
           <Card
             key={s.stage}
@@ -152,7 +144,7 @@ const AlertFunnelChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
         ))}
       </div>
 
-      <Card title="Alert Conversion Funnel" styles={{ body: { padding: '16px 12px' } }}>
+      <Card className="dashboard-conversion-card" title="Alert Conversion Funnel" styles={{ body: { padding: '16px 12px' } }}>
         {loading ? (
           <div style={{ height: 420, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Spin />

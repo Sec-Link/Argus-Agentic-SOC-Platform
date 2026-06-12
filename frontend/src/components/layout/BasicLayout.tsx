@@ -165,7 +165,7 @@ export default function BasicLayout({
 
   // keep sensible parent open when a child is selected
   useEffect(() => {
-    if (['dashboard', 'dashboards', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
+    if (['dashboard', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
     else if (['tickets', 'assets'].includes(selectedKey)) setOpenKeys(['investigationGroup']);
     else if (['integrations', 'orchestrator', 'correlation'].includes(selectedKey)) setOpenKeys(['dataPipelineGroup']);
     else if (['interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
@@ -187,8 +187,6 @@ export default function BasicLayout({
   const settingsItems = useMemo(
     () =>
       [
-        // Plural: this page is a collection/repository of dashboard objects.
-        { key: 'dashboards' as RouteKey, label: 'Dashboards' },
         { key: 'integrations' as RouteKey, label: 'Integrations' },
         { key: 'orchestrator' as RouteKey, label: 'Orchestrator' },
         { key: 'correlation' as RouteKey, label: 'Correlation' },
@@ -220,7 +218,6 @@ export default function BasicLayout({
       'Orchestrator',
       'Interfaces',
       'Executions',
-      'Dashboards',
       'Integrations',
     ];
     const dynamicLabels = settingsItems.map((i) => i.label);

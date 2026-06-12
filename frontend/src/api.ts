@@ -856,30 +856,24 @@ export async function deleteIntegration(id:string){
 
 export default client
 
-// Dashboards API
-export async function listDashboards(){
-  const r = await client.get('/dashboards/')
-  return r.data
+export async function fetchDashboardConversionStats(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+  const qp = new URLSearchParams();
+  // Dashboard chart APIs live under the dashboard module, not tickets.
+  if (params?.all_time) qp.set('all_time', 'true');
+  if (params?.start_time) qp.set('created_from', params.start_time);
+  if (params?.end_time) qp.set('created_to', params.end_time);
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  const r = await client.get(`/dashboards/conversion-stats/${suffix}`);
+  return r.data;
 }
 
-export async function createDashboard(payload:any){
-  const r = await client.post('/dashboards/', payload)
-  return r.data
-}
-
-export async function getDashboard(id:string){
-  const r = await client.get(`/dashboards/${id}/`)
-  return r.data
-}
-
-export async function updateDashboard(id:string, payload:any){
-  const r = await client.put(`/dashboards/${id}/`, payload)
-  return r.data
-}
-
-export async function deleteDashboard(id:string){
-  const r = await client.delete(`/dashboards/${id}/`)
-  return r.data
+export async function fetchDashboardSankeyStats(params?: { start_time?: string; end_time?: string }) {
+  const qp = new URLSearchParams();
+  if (params?.start_time) qp.set('created_from', params.start_time);
+  if (params?.end_time) qp.set('created_to', params.end_time);
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  const r = await client.get(`/dashboards/sankey-stats/${suffix}`);
+  return r.data;
 }
 
 export async function getRbacMe(){
@@ -1334,23 +1328,5 @@ export async function getInterfaceEndpointLogs(id: string): Promise<InterfaceReq
 
 export async function testInterfaceEndpoint(id: string, payload?: Record<string, any>): Promise<Record<string, any>> {
   const r = await client.post(`/interfaces/endpoints/${id}/test/`, payload || { event: 'manual_test' });
-  return r.data;
-}
-
-export async function fetchTicketConversionStats(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
-  const qp = new URLSearchParams();
-  // Make the dashboard's All Time intent explicit for the conversion endpoint.
-  if (params?.all_time) qp.set('all_time', 'true');
-  if (params?.start_time) qp.set('created_from', params.start_time);
-  if (params?.end_time) qp.set('created_to', params.end_time);
-  const r = await client.get(`/tickets/conversion-stats/?${qp.toString()}`);
-  return r.data;
-}
-
-export async function fetchTicketSankeyStats(params?: { start_time?: string; end_time?: string }) {
-  const qp = new URLSearchParams();
-  if (params?.start_time) qp.set('created_from', params.start_time);
-  if (params?.end_time) qp.set('created_to', params.end_time);
-  const r = await client.get(`/tickets/sankey-stats/?${qp.toString()}`);
   return r.data;
 }

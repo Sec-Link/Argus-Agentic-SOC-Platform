@@ -33,10 +33,10 @@ const LoginForm: React.FC<Props> = ({ onLogin }) => {
       <Card className="login-cyber-card" role="region" aria-label="Authentication panel">
         <Space direction="vertical" style={{ width: '100%' }} size={16}>
           <div className="login-brand-wrap">
-            <img src="/seclink-logo.jpg" alt="SecLink logo" className="login-brand-logo" />
+            <img src="/seclink-logo.jpg" alt="Argus logo" className="login-brand-logo" />
           </div>
           <Typography.Title level={3} style={{ textAlign: 'center', margin: 0, color: '#d8e8ff' }}>
-            Log in to ECHO
+            Log in to <span className="argus-brand-wordmark argus-brand-wordmark-login argus-brand-wordmark-login-accent">Argus</span>
           </Typography.Title>
           <LoginSwitcher mode={mode} onChange={setMode} />
 
@@ -54,4 +54,3 @@ const LoginForm: React.FC<Props> = ({ onLogin }) => {
 };
 
 export default LoginForm;
-

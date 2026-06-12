@@ -9,6 +9,35 @@ html, body {
   box-sizing: border-box;
 }
 
+/* Argus cyber wordmark: high-contrast cyber brand text with theme-safe color. */
+.argus-brand-wordmark {
+  display: inline-block;
+  font-family: 'Orbitron', 'Share Tech Mono', monospace;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  color: #0e2745;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+  transform: skewX(-8deg);
+}
+
+.argus-brand-wordmark-sidebar {
+  font-size: 21px;
+}
+
+.argus-brand-wordmark-login {
+  font-size: 1.02em;
+  vertical-align: baseline;
+}
+
+/* Login hero wordmark: pin the landing-page brand to the dashboard's cyan security accent. */
+.argus-brand-wordmark-login-accent {
+  color: #7fe7ff;
+  text-shadow:
+    0 0 6px rgba(127, 231, 255, 0.22),
+    0 0 18px rgba(90, 210, 255, 0.12);
+}
+
 .theme-light {
   --bg-main:
     radial-gradient(1200px 420px at 18% -6%, rgba(180, 210, 255, 0.55), transparent 70%),
@@ -38,6 +67,551 @@ html, body {
   --workflow-palette-text: #1f2d3d;
   --access-list-selected-bg: #e8f2ff;
   --access-secondary-text: #55657f;
+}
+
+/* Dark theme wordmark: restore subtle terminal glow only on dark surfaces. */
+.theme-dark .argus-brand-wordmark {
+  color: #a8fff0;
+  text-shadow:
+    0 0 5px rgba(0, 255, 210, 0.28),
+    0 0 14px rgba(41, 216, 255, 0.16);
+}
+
+/* Dashboard baseline sizing: cards stay aligned while content scrolls internally. */
+.dashboard-home-shell {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Dashboard toolbar: protect the title width while docking the time control as a compact top-right unit. */
+.dashboard-toolbar-shell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: 2px;
+}
+
+.dashboard-toolbar-title-shell {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.dashboard-toolbar-title {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Time anchor owns the trigger box and the absolute-positioned popover panel. */
+.dashboard-time-anchor {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Inline meta keeps refresh state and custom-range hint from inflating toolbar height. */
+.dashboard-time-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.dashboard-time-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 204px;
+  padding: 10px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+}
+
+.dashboard-time-trigger.is-open {
+  border-color: rgba(59, 130, 246, 0.46);
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.14);
+}
+
+.dashboard-time-trigger-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #475569;
+}
+
+.dashboard-time-trigger-caret {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.dashboard-time-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 30;
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 22px 46px rgba(15, 23, 42, 0.16);
+}
+
+/* Time popover header gives the control a single clear identity instead of repeated labels. */
+.dashboard-time-popover-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Vertical preset stack replaces the horizontal crowding inside the header rail. */
+.dashboard-time-preset-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* Custom gets a distinct accent so the advanced path reads as intentional rather than incidental. */
+.dashboard-time-custom-button {
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.dashboard-time-inline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Subtle inline hint preserves context without creating a second toolbar row. */
+.dashboard-time-inline-hint {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Keep custom inputs mounted while graying them out when Custom is not the active preset. */
+.dashboard-custom-time-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  margin-bottom: 12px;
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+
+.dashboard-custom-time-grid.is-disabled {
+  opacity: 0.52;
+  filter: grayscale(0.18);
+  pointer-events: none;
+}
+
+.dashboard-custom-time-field {
+  min-width: 0;
+}
+
+/* Keep invalid custom-range feedback visible without adding modal-style friction. */
+.dashboard-custom-time-error {
+  display: block;
+  margin-top: -2px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.dashboard-time-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.dashboard-time-actions .ant-btn {
+  width: 100%;
+}
+
+/* Dark theme toolbar: keep the time trigger readable against the dashboard shell. */
+.theme-dark .dashboard-time-trigger {
+  border-color: rgba(103, 232, 249, 0.18);
+  background: rgba(8, 19, 34, 0.96);
+  color: #e2e8f0;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+.theme-dark .dashboard-time-trigger.is-open {
+  border-color: rgba(103, 232, 249, 0.4);
+  box-shadow: 0 16px 34px rgba(14, 116, 144, 0.24);
+}
+
+.theme-dark .dashboard-time-trigger-label,
+.theme-dark .dashboard-time-trigger-caret {
+  color: #cbd5e1;
+}
+
+.theme-dark .dashboard-time-popover {
+  border-color: rgba(103, 232, 249, 0.16);
+  background: linear-gradient(180deg, rgba(7, 17, 31, 0.98), rgba(5, 11, 22, 0.99));
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(103, 232, 249, 0.05) inset;
+}
+
+.theme-dark .dashboard-time-popover-header {
+  color: #a5f3fc;
+}
+
+.theme-dark .dashboard-time-custom-button {
+  color: #a5f3fc;
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.16);
+}
+
+/* Responsive KPI grid: single column on mobile, five columns on wide screens. */
+.dashboard-kpi-grid,
+.dashboard-funnel-stage-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+
+.dashboard-funnel-stage-grid {
+  margin-bottom: 16px;
+}
+
+.dashboard-kpi-card {
+  min-height: 128px;
+}
+
+/* Pull the KPI row closer to the header once the tab bar is removed. */
+.dashboard-kpi-grid-compact {
+  margin-top: 2px;
+  padding-bottom: 2px;
+}
+
+/* Single-page section flow replaces the old sub-tab navigation with consistent spacing. */
+.dashboard-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 6px;
+}
+
+.dashboard-section-block {
+  width: 100%;
+}
+
+.dashboard-equal-card,
+.dashboard-table-card {
+  height: 420px;
+  max-height: 420px;
+  overflow: hidden;
+}
+
+.dashboard-equal-card .ant-card-body,
+.dashboard-table-card .ant-card-body {
+  height: calc(100% - 56px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.dashboard-table-card .ant-table-wrapper {
+  min-width: 0;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.dashboard-table-card .ant-table-pagination {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+/* Table cards: collapse nested Ant Table surfaces so the outer card is the only visible container. */
+.dashboard-table-card .ant-table,
+.dashboard-table-card .ant-table-container,
+.dashboard-table-card .ant-table-content {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.dashboard-table-card .ant-table-container::before,
+.dashboard-table-card .ant-table-container::after {
+  display: none !important;
+}
+
+.dashboard-table-card .ant-empty {
+  margin-block: 0 !important;
+}
+
+.dashboard-table-card .ant-empty-normal {
+  margin-block: 24px 0 !important;
+}
+
+/* Flat empty-state shell keeps the no-data view inside the same outer card surface. */
+.dashboard-table-empty-state {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  background: transparent;
+}
+
+/* Mirror the table header row without introducing a nested card border/shadow. */
+.dashboard-table-empty-head {
+  display: grid;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px 10px 0 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Center the empty content while preserving the card's single-surface appearance. */
+.dashboard-table-empty-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 12px 12px;
+  border-radius: 0 0 10px 10px;
+  background: transparent;
+}
+
+.dashboard-table-empty-head span {
+  min-width: 0;
+}
+
+.theme-light .dashboard-table-empty-head {
+  background: rgba(255, 255, 255, 0.96);
+  color: #314a6b;
+}
+
+.theme-dark .dashboard-table-empty-head {
+  background: rgba(10, 24, 50, 0.88);
+  color: #dbe6ff;
+}
+
+.theme-light .dashboard-table-empty-body {
+  border-top: 1px solid rgba(186, 204, 228, 0.42);
+}
+
+.theme-dark .dashboard-table-empty-body {
+  border-top: 1px solid rgba(36, 66, 110, 0.52);
+}
+
+.dashboard-conversion-card {
+  height: 520px;
+  max-height: 520px;
+  overflow: hidden;
+}
+
+.dashboard-conversion-card .ant-card-body {
+  height: calc(100% - 56px);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.dashboard-sankey-card {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.dashboard-sankey-panel {
+  position: relative;
+  min-height: 620px;
+  padding: 22px 16px 18px;
+  border-radius: 12px;
+  overflow-x: hidden;
+}
+
+.dashboard-sankey-canvas-shell {
+  position: relative;
+  width: 100%;
+  min-width: 980px;
+  --dashboard-sankey-plot-left: 84px;
+  --dashboard-sankey-plot-right: 88px;
+  --dashboard-sankey-stage-columns: 1.2fr 1.08fr 0.94fr 0.94fr 1.08fr;
+}
+
+/* Sankey stage overlay: share one grid/inset system for headers and column guides. */
+.dashboard-sankey-stage-guide,
+.dashboard-sankey-stage-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--dashboard-sankey-stage-columns);
+  margin-left: var(--dashboard-sankey-plot-left);
+  margin-right: var(--dashboard-sankey-plot-right);
+}
+
+.dashboard-sankey-stage-guide {
+  position: absolute;
+  inset: 44px var(--dashboard-sankey-plot-right) 20px var(--dashboard-sankey-plot-left);
+  border-radius: 14px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Dashed separators make stage ownership clearer without overpowering the chart. */
+.dashboard-sankey-stage-divider {
+  border-left: 1px dashed transparent;
+}
+
+/* Center each stage title over its corresponding Sankey lane. */
+.dashboard-sankey-stage-header {
+  gap: 0;
+  margin-bottom: 4px;
+  z-index: 1;
+}
+
+.dashboard-sankey-stage-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.dashboard-sankey-stage-cell .ant-typography {
+  width: 100%;
+  text-wrap: balance;
+}
+
+/* Keep the Sankey subtitle aligned to the same visual plot rail. */
+.dashboard-sankey-subtitle {
+  display: block;
+  margin-right: var(--dashboard-sankey-plot-right);
+  margin-bottom: 6px;
+  margin-left: var(--dashboard-sankey-plot-left);
+  position: relative;
+  z-index: 1;
+}
+
+/* Mobile dashboard collapse: avoid page-level horizontal overflow. */
+@media (max-width: 900px) {
+  /* Tablet toolbar wrap keeps the persistent custom controls readable without clipping. */
+  .dashboard-toolbar-shell {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-time-anchor {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-time-meta {
+    min-height: 0;
+    flex-wrap: wrap;
+  }
+
+  .dashboard-time-trigger {
+    width: 100%;
+  }
+
+  .dashboard-time-popover {
+    left: 0;
+    right: auto;
+    width: 100%;
+  }
+
+  .dashboard-kpi-grid,
+  .dashboard-funnel-stage-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-equal-card,
+  .dashboard-table-card {
+    height: 400px;
+    max-height: 400px;
+  }
+
+  .dashboard-sankey-panel {
+    padding: 18px 12px 14px;
+    overflow-x: auto;
+  }
+
+  .dashboard-sankey-canvas-shell {
+    min-width: 760px;
+    --dashboard-sankey-plot-left: 72px;
+    --dashboard-sankey-plot-right: 64px;
+    --dashboard-sankey-stage-columns: 1.14fr 1.05fr 0.94fr 0.94fr 1.12fr;
+  }
+}
+
+/* Phone dashboard collapse: one-column cards and compact chart containers. */
+@media (max-width: 560px) {
+  /* Phone toolbar collapse keeps fixed time controls usable in a single-column stack. */
+  .dashboard-time-popover {
+    width: min(100vw - 24px, 100%);
+  }
+
+  .dashboard-kpi-grid,
+  .dashboard-funnel-stage-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .dashboard-equal-card,
+  .dashboard-table-card {
+    height: 380px;
+    max-height: 380px;
+  }
+
+  .dashboard-conversion-card {
+    height: 500px;
+    max-height: 500px;
+  }
+
+  .dashboard-sankey-canvas-shell {
+    min-width: 640px;
+    --dashboard-sankey-plot-left: 60px;
+    --dashboard-sankey-plot-right: 56px;
+    --dashboard-sankey-stage-columns: 1.08fr 1fr 0.96fr 0.96fr 1fr;
+  }
+
+  /* Compact mobile labels stay centered while preserving stage readability. */
+  .dashboard-sankey-stage-cell {
+    padding: 0 6px;
+  }
+
+  .dashboard-sankey-stage-cell .ant-typography {
+    font-size: 12px !important;
+  }
 }
 
 .theme-light.ant-layout {
@@ -934,6 +1508,62 @@ html, body {
   font-weight: 600;
   letter-spacing: 0.2px;
   padding: 1px 8px;
+}
+
+/* Summary cards: establish explicit text hierarchy instead of relying on dark-on-light inline colors. */
+.sla-summary-ticket-card.ant-card {
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.sla-summary-ticket-link {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.sla-summary-ticket-title {
+  margin-bottom: 6px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.sla-summary-ticket-meta {
+  color: #475569;
+}
+
+.sla-summary-ticket-timestamp {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* Dark mode summary cards: use brighter cyan/stone hierarchy so tickets stay readable on deep surfaces. */
+.theme-dark .sla-summary-ticket-card.ant-card {
+  background: linear-gradient(180deg, rgba(7, 17, 31, 0.96), rgba(5, 11, 22, 0.98)) !important;
+  border: 1px solid rgba(103, 232, 249, 0.16) !important;
+  box-shadow:
+    0 16px 32px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(103, 232, 249, 0.05) inset;
+}
+
+.theme-dark .sla-summary-ticket-card .ant-card-head-title {
+  color: #f8fafc;
+}
+
+.theme-dark .sla-summary-ticket-link {
+  color: #a5f3fc;
+}
+
+.theme-dark .sla-summary-ticket-title {
+  color: #f8fafc;
+}
+
+.theme-dark .sla-summary-ticket-meta {
+  color: #cbd5e1;
+}
+
+.theme-dark .sla-summary-ticket-timestamp {
+  color: #94a3b8;
 }
 
 .sla-status-new.ant-tag {

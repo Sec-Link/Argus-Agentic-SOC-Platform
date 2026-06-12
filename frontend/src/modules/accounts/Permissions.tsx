@@ -196,7 +196,6 @@ const Permissions: React.FC = () => {
   const permissionCategoryOptions = useMemo(() => {
     const labelMap: Record<string, string> = {
       tickets: 'Tickets',
-      dashboards: 'Dashboards',
       integrations: 'Integrations',
       alerts: 'Alerts',
       orchestrator: 'Orchestrator',
