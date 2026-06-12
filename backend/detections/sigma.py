@@ -5,6 +5,7 @@ import uuid
 from functools import lru_cache
 from pathlib import Path
 
+import requests
 import yaml
 
 from .models import LocalDetectionFieldMapping
@@ -26,6 +27,10 @@ ATTACK_TACTIC_MAP = {
     "exfiltration": {"id": "TA0010", "name": "Exfiltration", "reference": "https://attack.mitre.org/tactics/TA0010/"},
     "impact": {"id": "TA0040", "name": "Impact", "reference": "https://attack.mitre.org/tactics/TA0040/"},
 }
+
+MITRE_ATTACK_GITHUB_URL = (
+    "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
+)
 
 def load_rule_document(yaml_text: str) -> dict:
     try:
@@ -284,14 +289,11 @@ def _pysigma_stub_file() -> Path:
     return Path(__file__).resolve().with_name("mitre_attack_stub.json")
 
 
-def _local_attack_dataset_file() -> Path:
-    return Path(__file__).resolve().with_name("enterprise-attack.json")
-
-
-def _local_attack_dataset_has_objects() -> bool:
-    dataset = _local_attack_dataset_file()
+def _remote_attack_dataset_has_objects() -> bool:
     try:
-        data = json.loads(dataset.read_text(encoding="utf-8"))
+        response = requests.get(MITRE_ATTACK_GITHUB_URL, timeout=(5, 30))
+        response.raise_for_status()
+        data = response.json()
         return bool(data.get("objects")) if isinstance(data, dict) else False
     except Exception:
         return False
@@ -306,8 +308,8 @@ def _sigma_runtime():
     from sigma.data import mitre_attack
 
     mitre_attack.set_cache_dir(str(cache_dir))
-    if _local_attack_dataset_has_objects():
-        mitre_attack.set_url(str(_local_attack_dataset_file()))
+    if _remote_attack_dataset_has_objects():
+        mitre_attack.set_url(MITRE_ATTACK_GITHUB_URL)
 
     from sigma.backends.elasticsearch.elasticsearch_esql import ESQLBackend
     from sigma.backends.elasticsearch.elasticsearch_lucene import LuceneBackend
@@ -330,8 +332,8 @@ def _mitre_attack_lookup() -> dict:
     try:
         from sigma.data import mitre_attack
 
-        if _local_attack_dataset_has_objects():
-            mitre_attack.set_url(str(_local_attack_dataset_file()))
+        if _remote_attack_dataset_has_objects():
+            mitre_attack.set_url(MITRE_ATTACK_GITHUB_URL)
         return {
             "tactics": dict(getattr(mitre_attack, "mitre_attack_tactics", {}) or {}),
             "techniques": dict(getattr(mitre_attack, "mitre_attack_techniques", {}) or {}),
