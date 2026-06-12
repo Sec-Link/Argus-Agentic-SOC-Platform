@@ -32,6 +32,7 @@ function iconByKey(key: RouteKey) {
   if (key === 'orchestrator') return <DeploymentUnitOutlined />;
   if (key === 'interfaces') return <ApiOutlined />;
   if (key === 'correlation') return <LineChartOutlined />;
+  if (key === 'detection') return <BellOutlined />;
   if (key === 'workflows') return <BranchesOutlined />;
   if (key === 'workflow-executions') return <RadarChartOutlined />;
   if (key === 'permissions') return <LockOutlined />;
@@ -82,6 +83,7 @@ export default function Sidebar({
     orchestrator: labelOverrides.orchestrator || 'Orchestrator',
     interfaces: labelOverrides.interfaces || 'Interfaces',
     correlation: labelOverrides.correlation || 'Correlation',
+    detection: labelOverrides.detection || 'Detection',
     permissions: labelOverrides.permissions || 'Access Management',
     // Shortened for compact enterprise sidebar wording.
     'registration-approvals': labelOverrides['registration-approvals'] || 'Approvals',
@@ -113,14 +115,14 @@ export default function Sidebar({
       // Renamed from "Setup Pipeline" to match SIEM/SOAR standard terminology.
       title: 'Data Pipeline',
       icon: <DeploymentUnitOutlined />,
-      items: ['integrations', 'orchestrator', 'correlation'],
+      items: ['detection','integrations', 'orchestrator', 'correlation'],
     },
     {
       key: 'automationGroup',
       // Shortened to reduce truncation and redundant wording.
       title: 'Automation',
       icon: <BranchesOutlined />,
-      items: ['interfaces', 'workflows', 'workflow-executions'],
+        items: ['interfaces', 'workflows', 'workflow-executions'],
     },
     {
       key: 'administrationGroup',

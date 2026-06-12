@@ -13,7 +13,9 @@ try {
 const nextConfig = {
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
-  output: 'standalone',
+  // Keep `next start` compatible in local/dev environments.
+  // Set NEXT_OUTPUT_MODE=standalone only when you explicitly run standalone server.
+  output: process.env.NEXT_OUTPUT_MODE === 'standalone' ? 'standalone' : undefined,
   outputFileTracingRoot: path.resolve(__dirname),
   async rewrites() {
     const backendOrigin = process.env.BACKEND_ORIGIN || 'http://localhost:8000';
