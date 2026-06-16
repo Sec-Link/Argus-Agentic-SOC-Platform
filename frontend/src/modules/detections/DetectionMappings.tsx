@@ -9,6 +9,7 @@ type LocalMapRow = {
   sigma: string;
   splunk: string;
   elastic: string;
+  elastic_index_patterns?: string[];
   mapping_profile?: string;
   category?: string;
   data_source?: string;
@@ -20,6 +21,7 @@ type MappingDraft = {
   sigma: string;
   splunk: string;
   elastic: string;
+  elastic_index_patterns: string;
   category: string;
   data_source: string;
   event_category: string;
@@ -37,6 +39,7 @@ type Props = {
   onDownloadTemplate: () => void;
   onDeleteSelected: () => void;
   onOpenCreate: () => void;
+  onOpenEdit: (row: LocalMapRow) => void;
   onCloseCreate: () => void;
   onSaveCreate: () => void;
   onSetSelectedIds: (value: React.Key[]) => void;
@@ -45,6 +48,29 @@ type Props = {
 
 export default function DetectionMappings(props: Props) {
   const [pageSize, setPageSize] = React.useState(10);
+  const [search, setSearch] = React.useState("");
+  const filteredRows = React.useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return props.rows;
+    return props.rows.filter((row) => {
+      const indexPatterns = Array.isArray(row.elastic_index_patterns) && row.elastic_index_patterns.length
+        ? row.elastic_index_patterns.join(", ")
+        : guessElasticIndexPatternsFromProfile(row.mapping_profile).join(", ");
+      return [
+        row.mapping_profile,
+        row.sigma,
+        row.splunk,
+        row.elastic,
+        row.category,
+        row.data_source,
+        row.event_category,
+        indexPatterns,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ")
+        .includes(query);
+    });
+  }, [props.rows, search]);
   const columns: ColumnsType<LocalMapRow> = [
     { title: "Profile", dataIndex: "mapping_profile", key: "mapping_profile", width: 220 },
     { title: "Sigma", dataIndex: "sigma", key: "sigma" },
@@ -54,7 +80,18 @@ export default function DetectionMappings(props: Props) {
       title: "Elastic Index Patterns",
       key: "elastic_index_patterns",
       width: 220,
-      render: (_, row) => guessElasticIndexPatternsFromProfile(row.mapping_profile).join(", "),
+      render: (_, row) => {
+        const patterns = Array.isArray(row.elastic_index_patterns) && row.elastic_index_patterns.length
+          ? row.elastic_index_patterns
+          : guessElasticIndexPatternsFromProfile(row.mapping_profile);
+        return patterns.join(", ");
+      },
+    },
+    {
+      title: "Actions",
+      key: "actions",
+      width: 110,
+      render: (_, row) => <Button size="small" onClick={() => props.onOpenEdit(row)}>Edit</Button>,
     },
   ];
 
@@ -80,6 +117,13 @@ export default function DetectionMappings(props: Props) {
         </Popconfirm>
         <Button type="primary" onClick={props.onOpenCreate}>New Mapping</Button>
         <Button onClick={props.onRefresh}>Refresh</Button>
+        <Input.Search
+          allowClear
+          placeholder="Search mappings"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ width: 280 }}
+        />
         <input
           id="detection-upload-mappings-files"
           type="file"
@@ -106,7 +150,7 @@ export default function DetectionMappings(props: Props) {
       </Space>
       <Table
         rowKey="id"
-        dataSource={props.rows}
+        dataSource={filteredRows}
         columns={columns}
         pagination={{
           pageSize,
@@ -122,11 +166,17 @@ export default function DetectionMappings(props: Props) {
           onChange: props.onSetSelectedIds,
         }}
       />
-      <Modal title="New Mapping" open={props.modalOpen} onCancel={props.onCloseCreate} onOk={props.onSaveCreate}>
+      <Modal title="Field Mapping" open={props.modalOpen} onCancel={props.onCloseCreate} onOk={props.onSaveCreate}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Input placeholder="Mapping Profile" value={props.draft.mapping_profile} onChange={(e) => setField("mapping_profile", e.target.value)} />
           <Input placeholder="Sigma Field" value={props.draft.sigma} onChange={(e) => setField("sigma", e.target.value)} />
           <Input placeholder="Elastic ECS Field" value={props.draft.elastic} onChange={(e) => setField("elastic", e.target.value)} />
+          <Input.TextArea
+            placeholder={"Elastic Index Patterns, one per line or comma separated\nlogs-*\nwinlogbeat-*"}
+            value={props.draft.elastic_index_patterns}
+            onChange={(e) => setField("elastic_index_patterns", e.target.value)}
+            rows={3}
+          />
           <Input placeholder="Splunk Field" value={props.draft.splunk} onChange={(e) => setField("splunk", e.target.value)} />
           <Input placeholder="Category" value={props.draft.category} onChange={(e) => setField("category", e.target.value)} />
           <Input placeholder="Data Source" value={props.draft.data_source} onChange={(e) => setField("data_source", e.target.value)} />

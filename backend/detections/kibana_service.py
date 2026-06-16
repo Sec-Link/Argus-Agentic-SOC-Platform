@@ -135,7 +135,11 @@ def serialize_published_rule(rule: LocalDetectionRule) -> dict:
 def is_kibana_rule_payload(payload: dict) -> bool:
     language = str(payload.get("language") or "").strip().lower()
     rule_type = str(payload.get("type") or "").strip().lower()
-    return language == "esql" or rule_type == "esql"
+    if rule_type == "esql" and language == "esql":
+        return True
+    if rule_type == "query" and language in {"lucene", "kuery", "kql"}:
+        return True
+    return False
 
 
 def rule_lookup_params(payload: dict) -> dict:

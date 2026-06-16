@@ -54,7 +54,7 @@ type RuleRow = DetectionRuleItem & {
   kibana_rule_id?: string;
 };
 
-type LocalMapRow = { id: string | number; sigma: string; splunk: string; elastic: string; mapping_profile?: string };
+type LocalMapRow = { id: string | number; sigma: string; splunk: string; elastic: string; elastic_index_patterns?: string[]; mapping_profile?: string };
 type ConnectorRow = { id: string; name: string; connector_type_id?: string };
 type KibanaMetadata = { published?: boolean; remote_id?: string; rule_id?: string; enabled?: boolean; name?: string; updated_at?: string };
 type MappingDraft = {
@@ -62,6 +62,7 @@ type MappingDraft = {
   sigma: string;
   splunk: string;
   elastic: string;
+  elastic_index_patterns: string;
   category: string;
   data_source: string;
   event_category: string;
@@ -98,11 +99,13 @@ export default function Detections() {
   const [maps, setMaps] = useState<LocalMapRow[]>([]);
   const [selectedMappingIds, setSelectedMappingIds] = useState<React.Key[]>([]);
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
+  const [editingMappingId, setEditingMappingId] = useState<string | number | null>(null);
   const [mappingDraft, setMappingDraft] = useState<MappingDraft>({
     mapping_profile: "",
     sigma: "",
     splunk: "",
     elastic: "",
+    elastic_index_patterns: "",
     category: "",
     data_source: "",
     event_category: "",
@@ -160,6 +163,7 @@ export default function Detections() {
           sigma: String(row.sigma || ""),
           splunk: String(row.splunk || ""),
           elastic: String(row.elastic || ""),
+          elastic_index_patterns: Array.isArray(row.elastic_index_patterns) ? row.elastic_index_patterns.map((item: any) => String(item || "").trim()).filter(Boolean) : [],
           mapping_profile: String(row.mapping_profile || ""),
           category: String(row.category || ""),
           data_source: String(row.data_source || ""),
@@ -198,7 +202,9 @@ export default function Detections() {
     const indexPatterns =
       Array.isArray(nextDetail?.payload?.elastic_index_patterns) && nextDetail.payload?.elastic_index_patterns.length
         ? nextDetail.payload.elastic_index_patterns
-        : guessElasticIndexPatternsFromProfile(fallbackProfile);
+        : Array.isArray(nextDetail?.compiled?.elastic_index_patterns) && nextDetail.compiled.elastic_index_patterns.length
+          ? nextDetail.compiled.elastic_index_patterns
+          : guessElasticIndexPatternsFromProfile(fallbackProfile);
 
     setSelectedId(id);
     setDetail(nextDetail);
@@ -283,8 +289,14 @@ export default function Detections() {
 
     const meta = detail.meta || {};
     const compiled = detail.compiled || {};
+    const compiledLanguage = String(compiled.language || (compiled.lucene ? "lucene" : "esql")).toLowerCase();
     const indexPatterns = parseIndexPatterns(elasticIndexPatternsText);
-    const query = applyIndexPatternsToEsql(compiled.esql || "*", indexPatterns);
+    const query =
+      compiledLanguage === "lucene"
+        ? String(compiled.lucene || "*")
+        : applyIndexPatternsToEsql(compiled.esql || "*", indexPatterns);
+    const ruleType = compiledLanguage === "lucene" ? "query" : "esql";
+    const ruleLanguage = compiledLanguage === "lucene" ? "lucene" : "esql";
 
     try {
       const normalizedActions = dedupeElasticActions(parseElasticActions(elasticActionsText));
@@ -292,15 +304,15 @@ export default function Detections() {
       const sigmaTags = Array.isArray(meta.tags) ? meta.tags.map((item) => String(item || "").trim()).filter(Boolean) : [];
       const payload = {
         name: meta.title || selectedId,
-        type: "esql",
+        type: ruleType,
         rule_id: selectedId,
         enabled: false,
         severity: meta.level || "low",
         description: meta.description || meta.title || selectedId,
         index: indexPatterns,
         query,
-        language: "esql",
-        tags: Array.from(new Set(["sigma", "esql", ...sigmaTags])),
+        language: ruleLanguage,
+        tags: Array.from(new Set(["sigma", ruleLanguage, ...sigmaTags])),
         actions,
       };
 
@@ -655,19 +667,26 @@ export default function Detections() {
 
   const handleCreateMapping = async () => {
     try {
-      await createDetectionMapping(mappingDraft);
+      await createDetectionMapping({
+        ...(editingMappingId !== null ? { id: editingMappingId } : {}),
+        ...mappingDraft,
+        elastic_index_patterns: parseIndexPatterns(mappingDraft.elastic_index_patterns),
+      });
       setMappingModalOpen(false);
+      const wasEditing = editingMappingId !== null;
+      setEditingMappingId(null);
       setMappingDraft({
         mapping_profile: "",
         sigma: "",
         splunk: "",
         elastic: "",
+        elastic_index_patterns: "",
         category: "",
         data_source: "",
         event_category: "",
       });
       await loadMappings();
-      message.success("Mapping created");
+      message.success(wasEditing ? "Mapping updated" : "Mapping created");
     } catch (e: any) {
       message.error(e?.response?.data?.detail || e?.message || "Create mapping failed");
     }
@@ -675,9 +694,9 @@ export default function Detections() {
 
   const handleDownloadMappingTemplate = () => {
     const lines = [
-      "mapping_profile,category,data_source,event_category,sigma,splunk,elastic",
-      'aws_cloudtrail,,,,"eventName","","event.action"',
-      'aws_cloudtrail,,,,"sourceIPAddress","","source.ip"',
+      "mapping_profile,category,data_source,event_category,sigma,splunk,elastic,elastic_index_patterns",
+      'aws_cloudtrail,,,,"eventName","","event.action","logs-aws.cloudtrail-*"',
+      'aws_cloudtrail,,,,"sourceIPAddress","","source.ip","logs-aws.cloudtrail-*"',
     ];
     downloadText("detection-mappings-template.csv", lines.join("\n"), "text/csv;charset=utf-8");
     message.success("CSV template downloaded");
@@ -787,8 +806,38 @@ export default function Detections() {
                 onExport={handleExportMappings}
                 onDownloadTemplate={handleDownloadMappingTemplate}
                 onDeleteSelected={handleDeleteMappings}
-                onOpenCreate={() => setMappingModalOpen(true)}
-                onCloseCreate={() => setMappingModalOpen(false)}
+                onOpenCreate={() => {
+                  setEditingMappingId(null);
+                  setMappingDraft({
+                    mapping_profile: "",
+                    sigma: "",
+                    splunk: "",
+                    elastic: "",
+                    elastic_index_patterns: "",
+                    category: "",
+                    data_source: "",
+                    event_category: "",
+                  });
+                  setMappingModalOpen(true);
+                }}
+                onOpenEdit={(row) => {
+                  setEditingMappingId(row.id);
+                  setMappingDraft({
+                    mapping_profile: String(row.mapping_profile || ""),
+                    sigma: String(row.sigma || ""),
+                    splunk: String(row.splunk || ""),
+                    elastic: String(row.elastic || ""),
+                    elastic_index_patterns: Array.isArray(row.elastic_index_patterns) ? row.elastic_index_patterns.join("\n") : "",
+                    category: String(row.category || ""),
+                    data_source: String(row.data_source || ""),
+                    event_category: String(row.event_category || ""),
+                  });
+                  setMappingModalOpen(true);
+                }}
+                onCloseCreate={() => {
+                  setMappingModalOpen(false);
+                  setEditingMappingId(null);
+                }}
                 onSaveCreate={handleCreateMapping}
                 onSetSelectedIds={setSelectedMappingIds}
                 onSetDraft={setMappingDraft}

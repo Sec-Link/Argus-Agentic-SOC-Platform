@@ -361,6 +361,20 @@ def _elastic_field_mapping_for_profiles(candidates: list[str]) -> dict[str, str]
     return mapping
 
 
+def _elastic_index_patterns_for_profiles(candidates: list[str]) -> list[str]:
+    rows = LocalDetectionFieldMapping.objects.filter(mapping_profile__in=candidates).order_by("id")
+    patterns = []
+    seen = set()
+    for row in rows:
+        row_patterns = row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else []
+        for item in row_patterns:
+            pattern = str(item or "").strip()
+            if pattern and pattern not in seen:
+                seen.add(pattern)
+                patterns.append(pattern)
+    return patterns
+
+
 def _build_processing_pipeline(candidates: list[str]):
     mapping = _elastic_field_mapping_for_profiles(candidates)
     components = _sigma_runtime()
@@ -416,6 +430,7 @@ def _join_queries(queries: list[str], fallback: str = "*") -> str:
 def compile_queries_from_yaml(yaml_text: str) -> dict:
     parsed = load_rule_document(yaml_text)
     candidates = _mapping_candidates(parsed)
+    index_patterns = _elastic_index_patterns_for_profiles(candidates)
     components = _sigma_runtime()
 
     try:
@@ -423,6 +438,7 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
         esql = _join_queries(esql_queries)
         return {
             "profiles": candidates,
+            "elastic_index_patterns": index_patterns,
             "language": "esql",
             "esql": esql,
         }
@@ -434,6 +450,7 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
         lucene = _join_queries(lucene_queries)
         return {
             "profiles": candidates,
+            "elastic_index_patterns": index_patterns,
             "language": "lucene",
             "lucene": lucene,
             "error": esql_error,
@@ -442,6 +459,7 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
         lucene_error = str(exc).strip() or "Lucene compilation failed"
         return {
             "profiles": candidates,
+            "elastic_index_patterns": index_patterns,
             "language": "esql",
             "esql": "*",
             "error": f"ES|QL: {esql_error} | Lucene: {lucene_error}",

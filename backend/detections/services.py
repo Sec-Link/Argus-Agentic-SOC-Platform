@@ -2,6 +2,7 @@ import csv
 import difflib
 import io
 import json
+import re
 import uuid
 from itertools import zip_longest
 
@@ -91,7 +92,7 @@ def summarize_payload_changes(previous_payload: dict | None, next_payload: dict 
         ("name", "Rule Name"),
         ("enabled", "Enabled"),
         ("type", "Rule Type"),
-        ("query", "ES|QL Query"),
+        ("query", "Detection Query"),
         ("description", "Description"),
         ("kibana_metadata", "Kibana Metadata"),
     ]
@@ -390,6 +391,20 @@ def import_mapping_files(*, files, actor: str) -> dict:
     skipped = 0
     results = []
 
+    def parse_index_patterns(value) -> list[str]:
+        if isinstance(value, list):
+            raw_values = value
+        else:
+            raw_values = re.split(r"[\r\n,;]+", str(value or ""))
+        patterns = []
+        seen = set()
+        for item in raw_values:
+            pattern = str(item or "").strip()
+            if pattern and pattern not in seen:
+                seen.add(pattern)
+                patterns.append(pattern)
+        return patterns
+
     def upsert_row(row: dict) -> str:
         nonlocal created, updated, skipped
         profile = str(row.get("mapping_profile") or row.get("profile") or "").strip()
@@ -406,6 +421,7 @@ def import_mapping_files(*, files, actor: str) -> dict:
             "event_category": str(row.get("event_category") or row.get("event") or ""),
             "splunk_field": str(row.get("splunk") or row.get("splunk_field") or ""),
             "elastic_field": str(row.get("elastic") or row.get("elastic_field") or ""),
+            "elastic_index_patterns": parse_index_patterns(row.get("elastic_index_patterns") or row.get("index_patterns") or row.get("indices")),
             "updated_by": actor,
         }
         obj, is_created = LocalDetectionFieldMapping.objects.update_or_create(
@@ -529,6 +545,7 @@ def export_mapping_bundle(*, mapping_ids: list[str] | None = None) -> dict:
             "sigma": row.sigma_field,
             "splunk": row.splunk_field,
             "elastic": row.elastic_field,
+            "elastic_index_patterns": row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else [],
         }
         for row in rows
     ]
@@ -543,7 +560,7 @@ def export_mapping_csv(*, mapping_ids: list[str] | None = None) -> str:
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=["mapping_profile", "category", "data_source", "event_category", "sigma", "splunk", "elastic"],
+        fieldnames=["mapping_profile", "category", "data_source", "event_category", "sigma", "splunk", "elastic", "elastic_index_patterns"],
     )
     writer.writeheader()
     for row in rows:
@@ -556,6 +573,7 @@ def export_mapping_csv(*, mapping_ids: list[str] | None = None) -> str:
                 "sigma": row.sigma_field,
                 "splunk": row.splunk_field,
                 "elastic": row.elastic_field,
+                "elastic_index_patterns": ", ".join(row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else []),
             }
         )
     return output.getvalue()

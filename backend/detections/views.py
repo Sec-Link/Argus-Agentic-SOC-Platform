@@ -120,18 +120,32 @@ class DetectionMappingListView(APIView):
         serializer = DetectionMappingSaveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        row, created = LocalDetectionFieldMapping.objects.update_or_create(
-            mapping_profile=str(data["mapping_profile"]).strip(),
-            sigma_field=str(data["sigma"]).strip(),
-            defaults={
-                "splunk_field": str(data.get("splunk") or ""),
-                "elastic_field": str(data.get("elastic") or ""),
-                "category": str(data.get("category") or ""),
-                "data_source": str(data.get("data_source") or ""),
-                "event_category": str(data.get("event_category") or ""),
-                "updated_by": user_name_from_request(request),
-            },
-        )
+        defaults = {
+            "mapping_profile": str(data["mapping_profile"]).strip(),
+            "sigma_field": str(data["sigma"]).strip(),
+            "splunk_field": str(data.get("splunk") or ""),
+            "elastic_field": str(data.get("elastic") or ""),
+            "elastic_index_patterns": [str(item).strip() for item in data.get("elastic_index_patterns", []) if str(item).strip()],
+            "category": str(data.get("category") or ""),
+            "data_source": str(data.get("data_source") or ""),
+            "event_category": str(data.get("event_category") or ""),
+            "updated_by": user_name_from_request(request),
+        }
+        mapping_id = data.get("id")
+        if mapping_id:
+            row = LocalDetectionFieldMapping.objects.filter(id=mapping_id).first()
+            if not row:
+                return Response({"detail": "Mapping not found"}, status=404)
+            for key, value in defaults.items():
+                setattr(row, key, value)
+            row.save()
+            created = False
+        else:
+            row, created = LocalDetectionFieldMapping.objects.update_or_create(
+                mapping_profile=defaults["mapping_profile"],
+                sigma_field=defaults["sigma_field"],
+                defaults={key: value for key, value in defaults.items() if key not in {"mapping_profile", "sigma_field"}},
+            )
         if created:
             row.created_by = user_name_from_request(request)
             row.save(update_fields=["created_by"])
