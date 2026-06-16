@@ -169,11 +169,12 @@ export default function Sidebar({
             aria-label="Go to dashboard"
           >
             <img
-              src="/seclink-logo.jpg"
+              src="/seclink-logo.svg"
               alt="Argus logo"
               width={40}
               height={40}
-              style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }}
+              className="sidebar-brand-logo"
+              style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain' }}
             />
             <span className="argus-brand-wordmark argus-brand-wordmark-sidebar">
               Argus

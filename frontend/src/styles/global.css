@@ -39,34 +39,30 @@ html, body {
 }
 
 .theme-light {
-  --bg-main:
-    radial-gradient(1200px 420px at 18% -6%, rgba(180, 210, 255, 0.55), transparent 70%),
-    radial-gradient(980px 520px at 82% 12%, rgba(170, 200, 255, 0.45), transparent 72%),
-    radial-gradient(860px 420px at 24% 78%, rgba(205, 220, 255, 0.35), transparent 74%),
-    radial-gradient(520px 320px at 70% 86%, rgba(220, 230, 255, 0.32), transparent 76%),
-    linear-gradient(180deg, #f7f9ff 0%, #eef3fb 45%, #e9eff8 100%);
-  --bg-sidebar: rgba(234, 241, 252, 0.92);
-  --bg-header: rgba(234, 241, 252, 0.9);
-  --text-primary: #0f3b66;
+  /* Hyper-modern light: crisp white surfaces, electric-blue accent, deep-navy typography */
+  --bg-main: linear-gradient(160deg, #f0f4fd 0%, #eaeff9 50%, #e4ecf7 100%);
+  --bg-sidebar: #ffffff;
+  --bg-header: #ffffff;
+  --text-primary: #0d1f3c;
   --text-contrast: #ffffff;
-  --menu-hover-bg: rgba(15, 59, 102, 0.06);
-  --menu-selected-bg: rgba(15, 59, 102, 0.10);
-  --menu-selected-edge: #1f6fd1;
-  --resizer-bg: rgba(15, 59, 102, 0.06);
-  --logo-bg: #1f6fd1;
-  --avatar-bg: #1f6fd1;
-  --toggle-bg: #ffffff;
-  --toggle-border: #a9c9e8;
-  --workflow-border: #d8e6f6;
+  --menu-hover-bg: rgba(26, 110, 245, 0.07);
+  --menu-selected-bg: rgba(26, 110, 245, 0.11);
+  --menu-selected-edge: #1a6ef5;
+  --resizer-bg: rgba(26, 110, 245, 0.08);
+  --logo-bg: #1a6ef5;
+  --avatar-bg: #1a6ef5;
+  --toggle-bg: #f8fafc;
+  --toggle-border: #cdd6e8;
+  --workflow-border: #dde5f2;
   --workflow-sidebar-bg: #f7fbff;
-  --workflow-minimap-bg: #eef5ff;
+  --workflow-minimap-bg: #eff5ff;
   --workflow-muted-card-bg: #f5f9ff;
-  --workflow-palette-bg: #f6f9ff;
+  --workflow-palette-bg: #f3f7ff;
   --workflow-palette-item-bg: #ffffff;
-  --workflow-palette-icon: #6f7f98;
-  --workflow-palette-text: #1f2d3d;
-  --access-list-selected-bg: #e8f2ff;
-  --access-secondary-text: #55657f;
+  --workflow-palette-icon: #647899;
+  --workflow-palette-text: #19293f;
+  --access-list-selected-bg: #e4f0ff;
+  --access-secondary-text: #4f6282;
 }
 
 /* Dark theme wordmark: restore subtle terminal glow only on dark surfaces. */
@@ -663,18 +659,32 @@ html, body {
   z-index: 1;
 }
 
-/* Light theme hierarchy: cards and tables pop from background */
+/* Sidebar right edge: single 1px separator keeps the layout clean without a shadow */
+.theme-light .ant-layout-sider {
+  border-right: 1px solid #e4eaf5 !important;
+}
+
+/* Header bottom separator */
+.theme-light .ant-layout-header {
+  border-bottom: 1px solid #e4eaf5 !important;
+  box-shadow: none !important;
+}
+
+/* Light theme hierarchy: crisp white surfaces with a single refined border — no heavy shadows */
 .theme-light .ant-card,
 .theme-light .ant-table-wrapper,
 .theme-light .ant-descriptions {
   background: #ffffff !important;
-  border: 0 !important;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.6) inset,
-    0 18px 38px rgba(32, 61, 102, 0.12),
-    0 4px 10px rgba(32, 61, 102, 0.08);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  border: 1px solid #dde5f2 !important;
+  box-shadow: 0 1px 4px rgba(13, 31, 60, 0.05) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.theme-light .ant-card:hover {
+  border-color: #b0c6ee !important;
+  box-shadow: 0 4px 16px rgba(26, 110, 245, 0.08) !important;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .theme-light .ant-tabs-content-holder {
@@ -684,7 +694,9 @@ html, body {
 }
 
 .theme-light .ant-card-head {
-  border-bottom: 0 !important;
+  border-bottom: 1px solid #eef2f9 !important;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .theme-light .ant-table {
@@ -795,9 +807,11 @@ html, body {
 }
 
 .theme-light .ant-table-thead > tr > th {
-  background: #ffffff !important;
-  border-bottom: 0 !important;
-  color: #314a6b !important;
+  background: #f8fafd !important;
+  border-bottom: 1px solid #e8edf7 !important;
+  color: #1e3256 !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em;
 }
 
 .theme-light .ant-table-tbody > tr > td {
@@ -1250,8 +1264,19 @@ html, body {
 .login-brand-logo {
   width: 104px;
   height: auto;
-  opacity: 0.94;
-  filter: drop-shadow(0 6px 16px rgba(46, 118, 232, 0.28));
+  opacity: 0.92;
+  /* SVG strokes are mid-gray; boost brightness so they read well on the dark cyber card */
+  filter: brightness(1.6) drop-shadow(0 6px 16px rgba(46, 118, 232, 0.28));
+}
+
+/* Sidebar logo: subtle contrast lift in dark mode */
+.theme-dark .sidebar-brand-logo {
+  filter: brightness(1.5) saturate(0.85);
+  opacity: 0.88;
+}
+.theme-light .sidebar-brand-logo {
+  filter: brightness(0.82) saturate(1.1);
+  opacity: 0.9;
 }
 
 .login-cyber-card .ant-input,

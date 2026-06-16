@@ -1,0 +1,33 @@
+<svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="#8fa3c4" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <!--
+    Argus geometric circuit icon — vectorised from the original SECLINK mark.
+    Outer hexagonal frame divided by a horizontal midline into:
+      Upper half  — right-pointing arrow (>)
+      Lower half  — left-pointing arrow  (<)
+    Four circuit-trace stubs terminate in hollow ring nodes at the outer corners.
+  -->
+
+  <!-- Outer hexagonal boundary -->
+  <polygon points="78,50 158,50 196,105 158,160 78,160 40,105"/>
+
+  <!-- Horizontal midline (creates the twin-arrow "S" silhouette) -->
+  <line x1="78" y1="105" x2="158" y2="105"/>
+
+  <!-- Circuit trace stubs -->
+  <line x1="40"  y1="105" x2="16"  y2="105"/>
+  <line x1="196" y1="105" x2="220" y2="105"/>
+  <line x1="78"  y1="50"  x2="55"  y2="26"/>
+  <line x1="158" y1="160" x2="181" y2="184"/>
+
+  <!-- Node outer rings -->
+  <circle cx="16"  cy="105" r="8"/>
+  <circle cx="220" cy="105" r="8"/>
+  <circle cx="55"  cy="26"  r="8"/>
+  <circle cx="181" cy="184" r="8"/>
+
+  <!-- Node center fills -->
+  <circle cx="16"  cy="105" r="3.5" fill="#8fa3c4"/>
+  <circle cx="220" cy="105" r="3.5" fill="#8fa3c4"/>
+  <circle cx="55"  cy="26"  r="3.5" fill="#8fa3c4"/>
+  <circle cx="181" cy="184" r="3.5" fill="#8fa3c4"/>
+</svg>
