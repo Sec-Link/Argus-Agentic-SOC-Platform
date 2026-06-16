@@ -356,6 +356,18 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
               {workflow && (
                 <Tag color="blue">v{workflow.version}</Tag>
               )}
+              {workflow?.published_version ? (
+                <Tooltip title={workflow.published_at ? `Published at ${workflow.published_at}` : 'Published manifest available'}>
+                  <Tag color="green">Published v{workflow.published_version}</Tag>
+                </Tooltip>
+              ) : (
+                workflow ? <Tag>Unpublished</Tag> : null
+              )}
+              {workflow?.has_unpublished_changes ? (
+                <Tooltip title="Workflow has been modified since the last publish. Re-publish to push the latest definition to Prefect.">
+                  <Tag color="red">Unpublished Changes</Tag>
+                </Tooltip>
+              ) : null}
             </Space>
           </Col>
           <Col>

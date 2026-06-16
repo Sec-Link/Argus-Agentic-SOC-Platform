@@ -383,6 +383,24 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
     [selectedNode, setEdges]
   );
 
+  // Hook fired by ReactFlow after edges are removed (via Delete/Backspace key,
+  // programmatic onEdgesChange, or our onEdgeDoubleClick handler). Kept as a
+  // no-op placeholder so we own the lifecycle and can plug in side effects
+  // (e.g. analytics, persisted-state cleanup) in the future without rewiring.
+  const onEdgesDelete = useCallback((_deleted: Edge[]) => {
+    // intentional no-op: useEdgesState already drops the edges from state
+  }, []);
+
+  // Double-click an edge to delete it. This is the primary, focus-independent
+  // delete affordance — keyboard delete only fires when ReactFlow has focus,
+  // which fails as soon as the user is typing in the left-hand config form.
+  const onEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+    },
+    [setEdges]
+  );
+
   const getCurrentNodeById = useCallback(
     (nodeId: string) => nodes.find((node) => String(node.id) === nodeId),
     [nodes]
@@ -1178,6 +1196,16 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                 {isNew ? 'Create Visual Workflow' : `Edit: ${workflow?.name || ''}`}
               </span>
               {workflow && <Tag color="blue">v{workflow.version}</Tag>}
+              {workflow?.published_version ? (
+                <Tag color="green" title={workflow.published_at ? `Published at ${workflow.published_at}` : undefined}>
+                  Published v{workflow.published_version}
+                </Tag>
+              ) : (
+                workflow ? <Tag>Unpublished</Tag> : null
+              )}
+              {workflow?.has_unpublished_changes ? (
+                <Tag color="red" title="Workflow has been modified since the last publish.">Unpublished Changes</Tag>
+              ) : null}
             </Space>
           </Col>
           <Col>
@@ -1294,6 +1322,8 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodesDelete={onNodesDelete}
+            onEdgesDelete={onEdgesDelete}
+            onEdgeDoubleClick={onEdgeDoubleClick}
             onConnect={onConnect}
             onInit={setReactFlowInstance}
             onDrop={onDrop}
@@ -1303,6 +1333,11 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
             fitView
             snapToGrid
             snapGrid={[15, 15]}
+            // Accept both keys so Windows users (Delete) and Mac users
+            // (Backspace) can remove the selected edge/node consistently.
+            deleteKeyCode={['Delete', 'Backspace']}
+            edgesFocusable
+            elementsSelectable
             defaultEdgeOptions={{
               type: 'smoothstep',
               markerEnd: { type: MarkerType.ArrowClosed },

@@ -18,6 +18,7 @@ import {
 } from 'antd';
 import {
   PlayCircleOutlined,
+  PauseCircleOutlined,
   DeleteOutlined,
   CopyOutlined,
   SearchOutlined,
@@ -37,6 +38,7 @@ import {
   cloneWorkflow,
   getWorkflowStats,
   publishWorkflow,
+  cancelWorkflowExecution,
   listPublishedManifests,
   importWorkflowFromManifest,
   importWorkflowFromFile,
@@ -64,6 +66,53 @@ const statusColors: Record<string, string> = {
   pending: 'warning',
   failed: 'error',
   cancelled: 'default',
+};
+
+// Compute the run-status main label/color for the merged Status column.
+// Rules:
+//   manual    : draft -> gray 'Manual Run'; active -> blue 'Manual Run';
+//               inactive -> gray 'Manual Run · Inactive'
+//   scheduled : draft -> gray 'Schedule Disabled'; active -> green 'Scheduled · Enabled';
+//               inactive -> red 'Scheduled · Disabled'; cron shown as hint when present
+//   event     : draft -> gray 'Event Trigger'; active -> green 'Listening · Enabled';
+//               inactive -> red 'Listening · Disabled'
+interface RunStatusInfo {
+  color: string;
+  label: string;
+  hint?: string;
+}
+
+const getRunStatusInfo = (workflow: Workflow): RunStatusInfo => {
+  const { trigger_type, is_active, is_draft, schedule_cron } = workflow;
+
+  if (trigger_type === 'manual') {
+    if (is_draft) return { color: 'default', label: 'Manual Run' };
+    if (is_active) return { color: 'blue', label: 'Manual Run' };
+    return { color: 'default', label: 'Manual Run · Inactive' };
+  }
+
+  if (trigger_type === 'scheduled') {
+    const hint = schedule_cron || undefined;
+    if (is_draft) return { color: 'default', label: 'Schedule Disabled', hint };
+    if (is_active) return { color: 'green', label: 'Scheduled · Enabled', hint };
+    return { color: 'red', label: 'Scheduled · Disabled', hint };
+  }
+
+  // alert / ticket_created / ticket_status / webhook -> event-driven
+  if (is_draft) return { color: 'default', label: 'Event Trigger' };
+  if (is_active) return { color: 'green', label: 'Listening · Enabled' };
+  return { color: 'red', label: 'Listening · Disabled' };
+};
+
+// Non-terminal execution states: while last_execution is in one of these states
+// we consider the workflow as "currently running". The Execute button is then
+// swapped for a Stop/Pause button and the Publish-to-Prefect button is disabled
+// to prevent racing a republish against an in-flight run.
+const RUNNING_EXECUTION_STATES = new Set(['pending', 'running', 'paused']);
+
+const isWorkflowRunning = (workflow: Workflow): boolean => {
+  const status = workflow.last_execution?.status;
+  return !!status && RUNNING_EXECUTION_STATES.has(status);
 };
 
 const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow }) => {
@@ -168,6 +217,26 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       fetchWorkflows();
     } catch (err: any) {
       message.error('Failed to clone workflow');
+    }
+  };
+
+  // Stop the workflow's currently in-flight execution. Backend uses the
+  // `cancel` endpoint (also the path for Prefect-backed runs), but in the UI
+  // we surface this as a "pause" affordance per product spec: while a run is
+  // active the Execute button is replaced with this stop button.
+  const handleCancelExecution = async (workflow: Workflow) => {
+    const executionId = workflow.last_execution?.id;
+    if (!executionId) {
+      message.warning('No active execution to stop');
+      return;
+    }
+    try {
+      await cancelWorkflowExecution(executionId);
+      message.success('Execution stop requested');
+      fetchWorkflows();
+      fetchStats();
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'Failed to stop execution');
     }
   };
 
@@ -283,52 +352,53 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       title: 'Trigger',
       dataIndex: 'trigger_type',
       key: 'trigger_type',
-      width: 140,
+      width: 110,
       render: (type: string) => (
         <Tag>{triggerTypeLabels[type] || type}</Tag>
-      ),
-    },
-    {
-      title: 'Engine',
-      dataIndex: 'execution_engine',
-      key: 'execution_engine',
-      width: 100,
-      render: (engine?: string) => (
-        <Tag color={engine === 'prefect' ? 'geekblue' : 'default'}>
-          {engine === 'prefect' ? 'Prefect' : 'Local'}
-        </Tag>
       ),
     },
     {
       title: 'Steps',
       dataIndex: 'step_count',
       key: 'step_count',
-      width: 80,
+      width: 70,
       align: 'center',
       render: (count: number) => count || 0,
     },
     {
+      // Merged column: run-status main tag + lifecycle tags + cron hint.
+      // Replaces the previous separate Status / Run Status pair so the table
+      // fits within common desktop widths without horizontal scrolling.
       title: 'Status',
       key: 'status',
-      width: 120,
-      render: (_: any, record: Workflow) => (
-        <Space wrap>
-          {record.is_draft ? (
-            <Tag color="orange">Draft</Tag>
-          ) : record.is_active ? (
-            <Tag color="green">Active</Tag>
-          ) : (
-            <Tag color="default">Inactive</Tag>
-          )}
-          {record.published_version ? <Tag color="blue">Published v{record.published_version}</Tag> : <Tag>Unpublished</Tag>}
-          {record.has_unpublished_changes ? <Tag color="red">Unpublished Changes</Tag> : null}
-        </Space>
-      ),
+      width: 240,
+      render: (_: any, record: Workflow) => {
+        const runInfo = getRunStatusInfo(record);
+        return (
+          <Space direction="vertical" size={2} style={{ lineHeight: 1.4 }}>
+            <Tag color={runInfo.color} style={{ marginRight: 0 }}>
+              {runInfo.label}
+            </Tag>
+            <Space size={4} wrap>
+              {record.is_draft && <Tag color="orange">Draft</Tag>}
+              {record.published_version ? (
+                <Tag color="blue">Published v{record.published_version}</Tag>
+              ) : !record.is_draft ? (
+                <Tag>Unpublished</Tag>
+              ) : null}
+              {record.has_unpublished_changes && <Tag color="red">Changes</Tag>}
+            </Space>
+            {runInfo.hint && (
+              <span style={{ fontSize: 11, color: '#888' }}>{runInfo.hint}</span>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: 'Last Execution',
       key: 'last_execution',
-      width: 160,
+      width: 150,
       render: (_: any, record: Workflow) => {
         if (!record.last_execution) {
           return <span style={{ color: '#999' }}>Never</span>;
@@ -351,57 +421,84 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       title: 'Executions',
       dataIndex: 'execution_count',
       key: 'execution_count',
-      width: 100,
+      width: 90,
       align: 'center',
       render: (count: number) => count || 0,
     },
     {
       title: 'Actions',
       key: 'actions',
-      width: 220,
-      render: (_: any, record: Workflow) => (
-        <Space size="small">
-          {record.is_active && !record.is_draft && (
-            <Tooltip title="Execute">
+      width: 200,
+      render: (_: any, record: Workflow) => {
+        const running = isWorkflowRunning(record);
+        return (
+          <Space size="small">
+            {running ? (
+              // While an execution is in-flight the Execute button is
+              // replaced with a Stop button regardless of active/draft state.
+              <Tooltip title="Stop running execution">
+                <Button
+                  danger
+                  size="small"
+                  icon={<PauseCircleOutlined />}
+                  onClick={() => handleCancelExecution(record)}
+                />
+              </Tooltip>
+            ) : (
+              record.is_active && !record.is_draft && (
+                <Tooltip title="Execute">
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<PlayCircleOutlined />}
+                    onClick={() => handleExecute(record.id)}
+                  />
+                </Tooltip>
+              )
+            )}
+            <Tooltip title="Visual Editor">
               <Button
-                type="primary"
                 size="small"
-                icon={<PlayCircleOutlined />}
-                onClick={() => handleExecute(record.id)}
+                icon={<BranchesOutlined />}
+                onClick={() => onVisualEditWorkflow?.(record.id)}
               />
             </Tooltip>
-          )}
-          <Tooltip title="Visual Editor">
-            <Button
-              size="small"
-              icon={<BranchesOutlined />}
-              onClick={() => onVisualEditWorkflow?.(record.id)}
-            />
-          </Tooltip>
-          <Tooltip title="Clone">
-            <Button
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={() => handleClone(record.id)}
-            />
-          </Tooltip>
-          <Tooltip title="Publish to Prefect">
-            <Button
-              size="small"
-              icon={<CloudUploadOutlined />}
-              onClick={() => handlePublish(record.id)}
-            />
-          </Tooltip>
-          <Popconfirm
-            title="Delete this workflow?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
+            <Tooltip title="Clone">
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => handleClone(record.id)}
+              />
+            </Tooltip>
+            <Tooltip
+              title={
+                running
+                  ? 'Cannot publish while an execution is running'
+                  : 'Publish to Prefect'
+              }
+            >
+              {/* Wrap the disabled Button in a span so the Tooltip still */}
+              {/* fires on hover (antd Tooltip cannot bind to a disabled button). */}
+              <span>
+                <Button
+                  size="small"
+                  icon={<CloudUploadOutlined />}
+                  onClick={() => handlePublish(record.id)}
+                  disabled={running}
+                />
+              </span>
+            </Tooltip>
+            <Popconfirm
+              title="Delete this workflow?"
+              onConfirm={() => handleDelete(record.id)}
+              okText="Yes"
+              cancelText="No"
+            >
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Space>
+        );
+      },
     },
   ];
 
