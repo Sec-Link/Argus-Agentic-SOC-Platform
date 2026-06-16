@@ -2,6 +2,7 @@
 import { Card, Col, Row, Select, Space, Tabs, Transfer, Button, message, Tag, Tooltip, Popconfirm, Badge, Input, Modal, List, Typography, Switch, Divider } from 'antd'
 import { PlusCircleOutlined, DeleteOutlined, FilterOutlined } from '@ant-design/icons'
 import { createGroup, createUser, deleteGroup, deleteUser, getGroupPermissions, getUserGroups, getUserPermissions, listGroups, listPermissions, listUsers, resetUserPassword, updateGroup, updateGroupPermissions, updateUser, updateUserGroups, updateUserPermissions } from 'services/accounts'
+import { getIsReadonly } from 'lib/auth'
 
 type BasicUser = {
   id: number
@@ -18,6 +19,7 @@ type BasicGroup = { id: number; name: string; permissions?: number[] }
 type PermissionItem = { id: number; name: string; codename: string; app_label: string; model: string }
 
 const Permissions: React.FC = () => {
+  const isReadonly = useMemo(() => getIsReadonly(), []) // stable: guest status doesn't change in session
   const [users, setUsers] = useState<BasicUser[]>([])
   const [groups, setGroups] = useState<BasicGroup[]>([])
   const [permissions, setPermissions] = useState<PermissionItem[]>([])
@@ -783,16 +785,19 @@ const Permissions: React.FC = () => {
                                   >
                                     Impersonate
                                   </Button>
-                                  <Popconfirm
-                                    title="Delete this user?"
-                                    onConfirm={handleDeleteUser}
-                                    okText="Delete"
-                                    cancelText="Cancel"
-                                  >
-                                    <Button danger loading={userDeleteSaving}>
-                                      Delete user
-                                    </Button>
-                                  </Popconfirm>
+                                  <Tooltip title={isReadonly ? 'Guest accounts cannot delete users' : undefined}>
+                                    <Popconfirm
+                                      title="Delete this user?"
+                                      onConfirm={handleDeleteUser}
+                                      okText="Delete"
+                                      cancelText="Cancel"
+                                      disabled={isReadonly}
+                                    >
+                                      <Button danger loading={userDeleteSaving} disabled={isReadonly}>
+                                        Delete user
+                                      </Button>
+                                    </Popconfirm>
+                                  </Tooltip>
                                 </Space>
                               </Space>
                             ),
@@ -979,16 +984,19 @@ const Permissions: React.FC = () => {
                                   <Button type="primary" onClick={handleUpdateGroupName} loading={groupNameSaving}>
                                     Save changes
                                   </Button>
-                                  <Popconfirm
-                                    title="Delete this group?"
-                                    onConfirm={handleDeleteGroup}
-                                    okText="Delete"
-                                    cancelText="Cancel"
-                                  >
-                                    <Button danger loading={groupDeleteSaving}>
-                                      Delete group
-                                    </Button>
-                                  </Popconfirm>
+                                  <Tooltip title={isReadonly ? 'Guest accounts cannot delete groups' : undefined}>
+                                    <Popconfirm
+                                      title="Delete this group?"
+                                      onConfirm={handleDeleteGroup}
+                                      okText="Delete"
+                                      cancelText="Cancel"
+                                      disabled={isReadonly}
+                                    >
+                                      <Button danger loading={groupDeleteSaving} disabled={isReadonly}>
+                                        Delete group
+                                      </Button>
+                                    </Popconfirm>
+                                  </Tooltip>
                                 </Space>
                               </Space>
                             ),

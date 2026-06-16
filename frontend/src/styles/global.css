@@ -670,7 +670,7 @@ html, body {
   box-shadow: none !important;
 }
 
-/* Light theme hierarchy: crisp white surfaces with a single refined border — no heavy shadows */
+/* Light theme hierarchy: crisp white surfaces with a single refined border */
 .theme-light .ant-card,
 .theme-light .ant-table-wrapper,
 .theme-light .ant-descriptions {
@@ -679,12 +679,14 @@ html, body {
   box-shadow: 0 1px 4px rgba(13, 31, 60, 0.05) !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  /* Transition on base rule so both hover-enter AND hover-exit are animated */
+  transition: border-color 200ms ease, box-shadow 220ms ease, transform 200ms ease !important;
 }
 
 .theme-light .ant-card:hover {
-  border-color: #b0c6ee !important;
-  box-shadow: 0 4px 16px rgba(26, 110, 245, 0.08) !important;
-  transition: border-color 180ms ease, box-shadow 180ms ease;
+  border-color: #aac4ed !important;
+  box-shadow: 0 6px 22px rgba(26, 110, 245, 0.10) !important;
+  transform: translateY(-1px);
 }
 
 .theme-light .ant-tabs-content-holder {
@@ -1103,6 +1105,64 @@ html, body {
     transform: translateY(0) scale(1);
     filter: blur(0);
   }
+}
+
+/* ─── Light mode micro-animations ───────────────────────────────────────── */
+
+/* Subtle lift-in for KPI / content cards as the page settles */
+@keyframes cardLiftIn {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.theme-light .dashboard-kpi-card,
+.theme-light .dashboard-equal-card,
+.theme-light .dashboard-table-card {
+  animation: cardLiftIn 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Stagger KPI grid children so they cascade in, not all at once */
+.theme-light .dashboard-kpi-grid > :nth-child(1) { animation-delay:  0ms; }
+.theme-light .dashboard-kpi-grid > :nth-child(2) { animation-delay: 40ms; }
+.theme-light .dashboard-kpi-grid > :nth-child(3) { animation-delay: 80ms; }
+.theme-light .dashboard-kpi-grid > :nth-child(4) { animation-delay:120ms; }
+.theme-light .dashboard-kpi-grid > :nth-child(5) { animation-delay:160ms; }
+
+/* Button active press: tiny scale-down for tactile feedback */
+.theme-light .ant-btn:active:not(:disabled) {
+  transform: scale(0.975) translateY(1px) !important;
+  transition: transform 80ms ease !important;
+}
+
+/* Input / Select focus ring: smooth expand from the border */
+.theme-light .ant-input-affix-wrapper:focus-within,
+.theme-light .ant-input:focus,
+.theme-light .ant-select-focused .ant-select-selector {
+  transition: border-color 160ms ease, box-shadow 160ms ease !important;
+}
+
+/* Sidebar selected item: smooth left-edge indicator slide-in */
+.theme-light .siem-menu-pale .ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  height: 60%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--menu-selected-edge);
+  animation: menuIndicatorIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes menuIndicatorIn {
+  from { opacity: 0; transform: scaleY(0.4); }
+  to   { opacity: 1; transform: scaleY(1);   }
+}
+
+/* Tab switching: ink bar glides smoothly (Ant Design handles the bar
+   but this ensures the content area fades cleanly on tab change) */
+.theme-light .ant-tabs-content-holder {
+  transition: opacity 150ms ease !important;
 }
 
 .theme-light .ant-btn,
@@ -1524,6 +1584,62 @@ html, body {
   100% {
     box-shadow: 0 0 8px rgba(255, 59, 48, 0.35);
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Light mode severity overrides: swap neon glows for premium ink shadows.
+   Neon box-shadows on white cards look garish; we keep the same hues but
+   tighten the glow radius and kill pulsing animations.
+   ───────────────────────────────────────────────────────────────────────── */
+.theme-light .sla-severity-critical.ant-tag {
+  background: #dc2626 !important;
+  box-shadow: 0 1px 5px rgba(220, 38, 38, 0.38), 0 0 0 1px rgba(220, 38, 38, 0.14) !important;
+  animation: none !important;
+}
+.theme-light .sla-severity-high.ant-tag {
+  background: #ea580c !important;
+  box-shadow: 0 1px 5px rgba(234, 88, 12, 0.36), 0 0 0 1px rgba(234, 88, 12, 0.14) !important;
+  animation: none !important;
+}
+.theme-light .sla-severity-medium.ant-tag {
+  background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%) !important;
+  box-shadow: 0 1px 5px rgba(217, 119, 6, 0.32) !important;
+}
+.theme-light .sla-severity-low.ant-tag {
+  background: #2563eb !important;
+  box-shadow: 0 1px 5px rgba(37, 99, 235, 0.28) !important;
+}
+.theme-light .sla-severity-unknown.ant-tag {
+  background: #64748b !important;
+  box-shadow: 0 1px 4px rgba(100, 116, 139, 0.22) !important;
+}
+
+/* Light mode status overrides: solid, saturated, ink-shadow only */
+.theme-light .sla-status-new.ant-tag {
+  background: #1d4ed8 !important;
+  box-shadow: 0 1px 5px rgba(29, 78, 216, 0.30) !important;
+  animation: none !important;
+}
+.theme-light .sla-status-acknowledged.ant-tag {
+  background: #6d28d9 !important;
+  box-shadow: 0 1px 5px rgba(109, 40, 217, 0.28) !important;
+}
+.theme-light .sla-status-triaged.ant-tag {
+  background: #b45309 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 5px rgba(180, 83, 9, 0.28) !important;
+}
+.theme-light .sla-status-contained.ant-tag {
+  background: #0d9488 !important;
+  box-shadow: 0 1px 5px rgba(13, 148, 136, 0.28) !important;
+}
+.theme-light .sla-status-resolved.ant-tag {
+  background: #15803d !important;
+  box-shadow: 0 1px 5px rgba(21, 128, 61, 0.28) !important;
+}
+.theme-light .sla-status-closed.ant-tag {
+  background: #6b7280 !important;
+  box-shadow: 0 1px 4px rgba(107, 114, 128, 0.20) !important;
 }
 
 /* SLA status tags */

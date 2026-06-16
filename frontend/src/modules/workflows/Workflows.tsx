@@ -37,6 +37,7 @@ import {
   Workflow,
   WorkflowStats,
 } from 'services/workflows';
+import { getIsReadonly } from 'lib/auth';
 
 interface WorkflowsProps {
   onNavigate?: (path: string) => void;
@@ -69,6 +70,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [triggerFilter, setTriggerFilter] = useState<string>('');
+  const [isReadonly] = useState(() => getIsReadonly()); // stable: derived once from localStorage
 
   const fetchWorkflows = useCallback(async () => {
     setLoading(true);
@@ -104,6 +106,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   }, [fetchWorkflows, fetchStats]);
 
   const handleDelete = async (id: string) => {
+    if (isReadonly) return; // guests cannot delete workflows
     try {
       await deleteWorkflow(id);
       message.success('Workflow deleted');
@@ -272,14 +275,17 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
               onClick={() => handleClone(record.id)}
             />
           </Tooltip>
-          <Popconfirm
-            title="Delete this workflow?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title={isReadonly ? 'Guest accounts cannot delete workflows' : undefined}>
+            <Popconfirm
+              title="Delete this workflow?"
+              onConfirm={() => handleDelete(record.id)}
+              okText="Yes"
+              cancelText="No"
+              disabled={isReadonly}
+            >
+              <Button size="small" danger icon={<DeleteOutlined />} disabled={isReadonly} />
+            </Popconfirm>
+          </Tooltip>
         </Space>
       ),
     },

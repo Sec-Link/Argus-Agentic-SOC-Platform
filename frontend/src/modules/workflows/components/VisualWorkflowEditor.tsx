@@ -69,6 +69,7 @@ import {
 } from 'services/workflows';
 import { fetchSlaTicketFieldChoices } from 'services/tickets';
 import { listInterfaceEndpoints } from 'services/interfaces';
+import { getIsReadonly } from 'lib/auth';
 import type {
   Workflow,
   WorkflowStep,
@@ -341,6 +342,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   onBack,
   onSaved,
 }) => {
+  const [isReadonly] = useState(() => getIsReadonly()); // stable: derived once from localStorage
   const [modal, modalContextHolder] = Modal.useModal();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
@@ -1099,6 +1101,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   };
 
   const handleDeleteManagedSavedNode = async (node: SavedWorkflowNode) => {
+    if (isReadonly) return; // guests cannot delete saved nodes
     try {
       await deleteSavedWorkflowNode(node.id);
       await refreshSavedNodes();
@@ -1638,19 +1641,21 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                 <Button key="edit" type="link" icon={<EditOutlined />} onClick={() => openEditSavedNodeForm(item)}>
                   Edit
                 </Button>,
-                <Popconfirm
-                  key="delete"
-                  title="Delete saved node?"
-                  description={`This will remove reusable node "${item.name}".`}
-                  okText="Delete"
-                  cancelText="Cancel"
-                  okButtonProps={{ danger: true }}
-                  onConfirm={() => handleDeleteManagedSavedNode(item)}
-                >
-                  <Button type="link" danger>
-                    Delete
-                  </Button>
-                </Popconfirm>,
+                <Tooltip key="delete" title={isReadonly ? 'Guest accounts cannot delete saved nodes' : undefined}>
+                  <Popconfirm
+                    title="Delete saved node?"
+                    description={`This will remove reusable node "${item.name}".`}
+                    okText="Delete"
+                    cancelText="Cancel"
+                    okButtonProps={{ danger: true }}
+                    disabled={isReadonly}
+                    onConfirm={() => handleDeleteManagedSavedNode(item)}
+                  >
+                    <Button type="link" danger disabled={isReadonly}>
+                      Delete
+                    </Button>
+                  </Popconfirm>
+                </Tooltip>,
               ]}
             >
               <List.Item.Meta

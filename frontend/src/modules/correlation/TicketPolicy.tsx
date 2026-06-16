@@ -1,8 +1,9 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Form, Input, List, Modal, Select, Space, Tag, message, Divider, Typography } from 'antd';
+import { Button, Card, Form, Input, List, Modal, Select, Space, Tag, Tooltip, message, Divider, Typography } from 'antd';
 import { createTicketPolicy, deleteTicketPolicy, fetchTicketPolicies, updateTicketPolicy } from 'services/ticketPolicies';
 import { listIntegrations, integrationsPreviewEsMapping } from 'services/integrations';
 import type { TicketPolicy } from '../../types';
+import { getIsReadonly } from 'lib/auth';
 
 const POLICY_LABELS: Record<TicketPolicy['policy_type'], string> = {
   creation: 'Ticket Creation Conditions',
@@ -41,6 +42,7 @@ type RuleItem = {
 };
 
 export default function TicketPolicyPage({ embedded = false }: { embedded?: boolean }) {
+  const isReadonly = useMemo(() => getIsReadonly(), []); // stable for session lifetime
   const [items, setItems] = useState<TicketPolicy[]>([]);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
@@ -118,6 +120,7 @@ export default function TicketPolicyPage({ embedded = false }: { embedded?: bool
   };
 
   const handleDelete = (policy: TicketPolicy) => {
+    if (isReadonly) return; // guest users cannot delete policies
     Modal.confirm({
       title: 'Delete policy?',
       content: policy.name,
@@ -254,7 +257,9 @@ export default function TicketPolicyPage({ embedded = false }: { embedded?: bool
             <List.Item
               actions={[
                 <Button key="edit" onClick={() => openEdit(policy)}>Edit</Button>,
-                <Button key="delete" danger onClick={() => handleDelete(policy)}>Delete</Button>,
+                <Tooltip key="delete" title={isReadonly ? 'Guest accounts cannot delete policies' : undefined}>
+                  <Button danger disabled={isReadonly} onClick={() => handleDelete(policy)}>Delete</Button>
+                </Tooltip>,
               ]}
             >
               <List.Item.Meta

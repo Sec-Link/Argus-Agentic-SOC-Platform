@@ -11,6 +11,7 @@ import {
   Row,
   Select,
   Space,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
@@ -358,6 +359,7 @@ const Integrations: React.FC = () => {
   };
 
   const handleDelete = async (item: any) => {
+    if (isReadonly) return; // belt-and-suspenders: block even if called programmatically
     const name = item?.name || item?.id || 'this integration';
     const ok = window.confirm(`Delete ${name}? This cannot be undone.`);
     if (!ok) return;
@@ -518,10 +520,18 @@ const Integrations: React.FC = () => {
           <Button type="primary" onClick={(e) => { e.stopPropagation(); card.onConfigure(); }}>
             {card.isInstalled ? 'Configure' : 'Setup Integration'}
           </Button>
-          {card.isInstalled && card.onUninstall && !isReadonly ? (
-            <Button danger onClick={(e) => { e.stopPropagation(); card.onUninstall?.(); }}>
-              Delete
-            </Button>
+          {card.isInstalled && card.onUninstall ? (
+            /* Show to all; disabled with contextual tooltip for guest users */
+            <Tooltip title={isReadonly ? 'Guest accounts cannot delete integrations' : undefined}>
+              <Button
+                danger
+                disabled={isReadonly}
+                style={isReadonly ? { pointerEvents: 'none', opacity: 0.45 } : undefined}
+                onClick={(e) => { e.stopPropagation(); card.onUninstall?.(); }}
+              >
+                Delete
+              </Button>
+            </Tooltip>
           ) : null}
         </Space>
       </Card>

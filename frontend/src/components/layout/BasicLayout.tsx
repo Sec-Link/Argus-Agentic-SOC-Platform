@@ -298,8 +298,96 @@ export default function BasicLayout({
         : {
             algorithm: antdTheme.defaultAlgorithm,
             token: {
-              colorPrimary: '#1f6fd1',
-              colorBgLayout: '#f5faff',
+              /* ── Brand ── */
+              colorPrimary: '#1a6ef5',
+              colorPrimaryHover: '#3d88f7',
+              colorPrimaryActive: '#1559d4',
+              /* ── Surface hierarchy ── */
+              colorBgBase: '#f0f4fd',
+              colorBgLayout: '#f0f4fd',
+              colorBgContainer: '#ffffff',
+              colorBgElevated: '#ffffff',
+              colorBgSpotlight: '#1e2d4a',
+              /* ── Typography ── */
+              colorText: '#0d1f3c',
+              colorTextSecondary: '#4f6282',
+              colorTextTertiary: '#7a90b4',
+              colorTextQuaternary: '#a0b0cc',
+              /* ── Borders ── */
+              colorBorder: '#dde5f2',
+              colorBorderSecondary: '#eef2f9',
+              /* ── Fill states ── */
+              colorFill: 'rgba(26, 110, 245, 0.06)',
+              colorFillSecondary: 'rgba(26, 110, 245, 0.04)',
+              colorFillTertiary: 'rgba(26, 110, 245, 0.02)',
+              /* ── Shape & type ── */
+              borderRadius: 10,
+              borderRadiusLG: 12,
+              borderRadiusSM: 8,
+              borderRadiusXS: 6,
+              fontFamily: '"IBM Plex Sans", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
+              fontSize: 13.5,
+              lineHeight: 1.55,
+            },
+            components: {
+              Layout: { bodyBg: '#f0f4fd', siderBg: '#ffffff' },
+              Card: { colorBgContainer: '#ffffff', borderRadiusLG: 12 },
+              Modal: { contentBg: '#ffffff', headerBg: '#ffffff', borderRadiusLG: 14 },
+              Table: {
+                colorBgContainer: '#ffffff',
+                headerBg: '#f8fafd',
+                headerColor: '#1e3256',
+                rowHoverBg: 'rgba(26, 110, 245, 0.05)',
+                borderColor: '#eef2f9',
+              },
+              Input: {
+                colorBgContainer: '#ffffff',
+                activeBorderColor: '#1a6ef5',
+                hoverBorderColor: '#6aa3f7',
+                colorBorder: '#dde5f2',
+                activeShadow: '0 0 0 2px rgba(26, 110, 245, 0.12)',
+              },
+              Select: {
+                colorBgContainer: '#ffffff',
+                colorBgElevated: '#ffffff',
+                optionSelectedBg: 'rgba(26, 110, 245, 0.08)',
+                optionActiveBg: 'rgba(26, 110, 245, 0.04)',
+              },
+              Button: {
+                colorPrimary: '#1a6ef5',
+                defaultBorderColor: '#dde5f2',
+                defaultColor: '#0d1f3c',
+                defaultBg: '#ffffff',
+                defaultShadow: '0 1px 3px rgba(13, 31, 60, 0.06)',
+                primaryShadow: '0 2px 6px rgba(26, 110, 245, 0.28)',
+              },
+              Menu: {
+                itemSelectedBg: 'rgba(26, 110, 245, 0.11)',
+                itemHoverBg: 'rgba(26, 110, 245, 0.07)',
+                itemColor: '#0d1f3c',
+                itemSelectedColor: '#1a6ef5',
+                itemHoverColor: '#1a6ef5',
+                subMenuItemBg: 'transparent',
+              },
+              Tabs: {
+                itemColor: '#4f6282',
+                itemSelectedColor: '#1a6ef5',
+                itemHoverColor: '#1a6ef5',
+                inkBarColor: '#1a6ef5',
+                itemActiveColor: '#1559d4',
+              },
+              Tooltip: {
+                colorBgDefault: '#1e2d4a',
+                colorTextLightSolid: '#f0f6ff',
+                borderRadius: 8,
+              },
+              Popover: {
+                colorBgElevated: '#ffffff',
+              },
+              Dropdown: {
+                colorBgElevated: '#ffffff',
+              },
+              Tag: { borderRadiusSM: 6 },
             },
           },
     [uiTheme]
