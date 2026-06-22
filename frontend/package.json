@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
-    "start": "next start -p 3000"
+    "start": "next start -p 3000",
+    "start:standalone": "node .next/standalone/server.js"
   },
   "dependencies": {
     "@ant-design/charts": "^2.6.7",

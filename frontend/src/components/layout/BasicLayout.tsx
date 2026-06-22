@@ -167,7 +167,7 @@ export default function BasicLayout({
   useEffect(() => {
     if (['dashboard', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
     else if (['tickets', 'assets'].includes(selectedKey)) setOpenKeys(['investigationGroup']);
-    else if (['integrations', 'orchestrator', 'correlation'].includes(selectedKey)) setOpenKeys(['dataPipelineGroup']);
+    else if (['detection','integrations', 'orchestrator', 'correlation'].includes(selectedKey)) setOpenKeys(['dataPipelineGroup']);
     else if (['interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
       setOpenKeys(['automationGroup']);
     } else if (['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs'].includes(selectedKey)) {
@@ -190,7 +190,7 @@ export default function BasicLayout({
         { key: 'integrations' as RouteKey, label: 'Integrations' },
         { key: 'orchestrator' as RouteKey, label: 'Orchestrator' },
         { key: 'correlation' as RouteKey, label: 'Correlation' },
-        { key: 'interfaces' as RouteKey, label: 'Interfaces' },
+        { key: 'detection' as RouteKey, label: 'Detection' },
         { key: 'workflows' as RouteKey, label: 'Workflows' },
         // Shortened label for space efficiency in sidebar.
         { key: 'workflow-executions' as RouteKey, label: 'Executions' },
@@ -211,6 +211,7 @@ export default function BasicLayout({
       'Monitoring',
       'Investigation',
       'Data Pipeline',
+      'Detection',
       'Automation',
       'Administration',
       'Access Management',
