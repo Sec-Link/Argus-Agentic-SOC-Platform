@@ -222,59 +222,14 @@ def _mapping_candidates(parsed: dict) -> list[str]:
     product = str(logsource.get("product") or "").strip().lower()
     category = str(logsource.get("category") or "").strip().lower()
     service = str(logsource.get("service") or "").strip().lower()
-    base = "_".join(value for value in [product, service or category] if value)
     profiles = [
         f"{product}_{service}" if product and service else "",
         f"{product}_{category}" if product and category else "",
-        base,
     ]
     profiles = [value for value in profiles if value]
-    aliases = {
-        "windows_process_creation": ["windows_sysmon_process_creation", "windows_security_generic"],
-        "windows_file_event": ["windows_sysmon_file_event"],
-        "windows_file_access": ["windows_sysmon_file_access"],
-        "windows_file_delete": ["windows_sysmon_file_delete"],
-        "windows_registry_set": ["windows_sysmon_registry_set"],
-        "windows_registry_add": ["windows_sysmon_registry_add"],
-        "windows_registry_delete": ["windows_sysmon_registry_delete"],
-        "windows_network_connection": ["windows_sysmon_network_connection"],
-        "windows_dns_query": ["windows_sysmon_dns_query", "dns_query"],
-        "windows_image_load": ["windows_sysmon_image_load"],
-        "windows_driver_load": ["windows_sysmon_driver_load"],
-        "windows_pipe_created": ["windows_sysmon_pipe_created"],
-        "windows_create_stream_hash": ["windows_sysmon_create_stream_hash"],
-        "windows_wmi_event": ["windows_sysmon_wmi_event"],
-        "windows_powershell": ["windows_powershell_script_block"],
-        "windows_ps_script": ["windows_powershell_script_block"],
-        "windows_security": ["windows_security_generic"],
-        "windows_logon": ["windows_security_logon"],
-        "windows_account_management": ["windows_security_account_management"],
-        "windows_object_access": ["windows_security_object_access"],
-        "windows_service_install": ["windows_security_service_install"],
-        "windows_taskscheduler": ["windows_taskscheduler_task_event"],
-        "linux_process_creation": ["linux_auditd_process_creation"],
-        "linux_file_event": ["linux_auditd_file_event"],
-        "linux_auth": ["linux_auth"],
-        "aws_cloudtrail": ["aws_cloudtrail_api_activity"],
-        "azure_auditlogs": ["azure_auditlogs_audit"],
-        "okta_system": ["okta_system"],
-        "m365_audit": ["m365_audit"],
-        "google_workspace": ["google_workspace_audit"],
-        "proxy_generic": ["proxy_http"],
-        "webserver_generic": ["webserver_http"],
-        "zeek_dns": ["zeek_dns", "dns_query"],
-        "zeek_http": ["zeek_http"],
-        "dns_generic": ["dns_query"],
-    }
-    expanded = []
-    for profile in profiles:
-        expanded.append(profile)
-        expanded.extend(aliases.get(profile, []))
-    expanded.append("common")
-
     unique = []
     seen = set()
-    for value in expanded:
+    for value in profiles:
         if value and value not in seen:
             seen.add(value)
             unique.append(value)
@@ -289,14 +244,52 @@ def _pysigma_stub_file() -> Path:
     return Path(__file__).resolve().with_name("mitre_attack_stub.json")
 
 
-def _remote_attack_dataset_has_objects() -> bool:
+def _pysigma_attack_bundle_file() -> Path:
+    return _pysigma_cache_dir() / "enterprise-attack.json"
+
+
+def _mitre_bundle_has_objects(path: Path) -> bool:
     try:
-        response = requests.get(MITRE_ATTACK_GITHUB_URL, timeout=(5, 30))
-        response.raise_for_status()
-        data = response.json()
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
         return bool(data.get("objects")) if isinstance(data, dict) else False
     except Exception:
         return False
+
+
+def _download_mitre_attack_bundle(target: Path) -> bool:
+    try:
+        response = requests.get(MITRE_ATTACK_GITHUB_URL, timeout=(5, 120))
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or not data.get("objects"):
+            return False
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = target.with_suffix(".json.tmp")
+        with temp_path.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False)
+        temp_path.replace(target)
+        return True
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=1)
+def _mitre_attack_data_source() -> str:
+    bundle_path = _pysigma_attack_bundle_file()
+    if _mitre_bundle_has_objects(bundle_path):
+        return str(bundle_path)
+    if _download_mitre_attack_bundle(bundle_path) and _mitre_bundle_has_objects(bundle_path):
+        return str(bundle_path)
+    return str(_pysigma_stub_file())
+
+
+def _configure_mitre_attack_data(mitre_attack) -> None:
+    cache_dir = _pysigma_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    mitre_attack.set_cache_dir(str(cache_dir))
+    mitre_attack.set_url(_mitre_attack_data_source())
 
 
 @lru_cache(maxsize=1)
@@ -307,9 +300,7 @@ def _sigma_runtime():
 
     from sigma.data import mitre_attack
 
-    mitre_attack.set_cache_dir(str(cache_dir))
-    if _remote_attack_dataset_has_objects():
-        mitre_attack.set_url(MITRE_ATTACK_GITHUB_URL)
+    _configure_mitre_attack_data(mitre_attack)
 
     from sigma.backends.elasticsearch.elasticsearch_esql import ESQLBackend
     from sigma.backends.elasticsearch.elasticsearch_lucene import LuceneBackend
@@ -332,8 +323,7 @@ def _mitre_attack_lookup() -> dict:
     try:
         from sigma.data import mitre_attack
 
-        if _remote_attack_dataset_has_objects():
-            mitre_attack.set_url(MITRE_ATTACK_GITHUB_URL)
+        _configure_mitre_attack_data(mitre_attack)
         return {
             "tactics": dict(getattr(mitre_attack, "mitre_attack_tactics", {}) or {}),
             "techniques": dict(getattr(mitre_attack, "mitre_attack_techniques", {}) or {}),
@@ -366,13 +356,39 @@ def _elastic_index_patterns_for_profiles(candidates: list[str]) -> list[str]:
     patterns = []
     seen = set()
     for row in rows:
-        row_patterns = row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else []
+        if isinstance(row.elastic_index_patterns, list):
+            row_patterns = row.elastic_index_patterns
+        else:
+            row_patterns = re.split(r"[\r\n,]+", str(row.elastic_index_patterns or ""))
         for item in row_patterns:
             pattern = str(item or "").strip()
             if pattern and pattern not in seen:
                 seen.add(pattern)
                 patterns.append(pattern)
     return patterns
+
+
+def _apply_index_patterns_to_esql(query: str, index_patterns: list[str]) -> str:
+    source = str(query or "").strip()
+    patterns = [str(item or "").strip() for item in index_patterns if str(item or "").strip()]
+    if not source or not patterns:
+        return source
+
+    next_from = ", ".join(patterns)
+
+    def replace_from(match):
+        prefix = match.group("prefix")
+        from_body = match.group("body").strip()
+        metadata_match = re.search(r"(?i)\s+metadata\s+", from_body)
+        metadata = from_body[metadata_match.start() :] if metadata_match else ""
+        return f"{prefix}{next_from}{metadata} "
+
+    return re.sub(
+        r"(?im)^(?P<prefix>\s*from\s+)(?P<body>[^\|\r\n]+)",
+        replace_from,
+        source,
+        count=1,
+    )
 
 
 def _build_processing_pipeline(candidates: list[str]):
@@ -435,7 +451,7 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
 
     try:
         esql_queries = _render_queries(components["ESQLBackend"], yaml_text, candidates)
-        esql = _join_queries(esql_queries)
+        esql = _apply_index_patterns_to_esql(_join_queries(esql_queries), index_patterns)
         return {
             "profiles": candidates,
             "elastic_index_patterns": index_patterns,

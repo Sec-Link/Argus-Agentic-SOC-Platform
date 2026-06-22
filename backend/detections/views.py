@@ -35,7 +35,7 @@ class DetectionRulesView(APIView):
     required_permissions = {"GET": "integrations.view_integration"}
 
     def get(self, request):
-        rules = LocalDetectionRule.objects.filter(is_deleted=False).order_by("name", "id")
+        rules = LocalDetectionRule.objects.filter(is_deleted=False, payload__has_key="yaml").order_by("name", "id")
         return Response([serialize_legacy_rule(rule) for rule in rules])
 
 

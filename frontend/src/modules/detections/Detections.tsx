@@ -197,14 +197,12 @@ export default function Detections() {
   const loadDetail = async (id: string) => {
     const nextDetail = await getDetectionRule(id);
     const actions = Array.isArray(nextDetail?.payload?.elastic_actions) ? nextDetail.payload?.elastic_actions : [];
-    const profiles = Array.isArray(nextDetail?.compiled?.profiles) ? nextDetail.compiled?.profiles : [];
-    const fallbackProfile = profiles[0] || String(nextDetail?.meta?.profile || "");
     const indexPatterns =
-      Array.isArray(nextDetail?.payload?.elastic_index_patterns) && nextDetail.payload?.elastic_index_patterns.length
-        ? nextDetail.payload.elastic_index_patterns
-        : Array.isArray(nextDetail?.compiled?.elastic_index_patterns) && nextDetail.compiled.elastic_index_patterns.length
-          ? nextDetail.compiled.elastic_index_patterns
-          : guessElasticIndexPatternsFromProfile(fallbackProfile);
+      Array.isArray(nextDetail?.compiled?.elastic_index_patterns) && nextDetail.compiled.elastic_index_patterns.length
+        ? nextDetail.compiled.elastic_index_patterns
+        : Array.isArray(nextDetail?.payload?.elastic_index_patterns) && nextDetail.payload?.elastic_index_patterns.length
+          ? nextDetail.payload.elastic_index_patterns
+          : [];
 
     setSelectedId(id);
     setDetail(nextDetail);
@@ -331,7 +329,7 @@ export default function Detections() {
 
       const nextMetadata: KibanaMetadata = {
         published: true,
-        remote_id: String(publishedRule?.id || selectedId || ""),
+        remote_id: String(publishedRule?.kibana_remote_id || publishedRule?.id || selectedId || ""),
         rule_id: String(publishedRule?.rule_id || selectedId),
         enabled: Boolean(publishedRule?.enabled ?? payload.enabled),
         name: String(publishedRule?.name || payload.name || ""),
