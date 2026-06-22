@@ -49,11 +49,10 @@ export interface SankeyLink {
   target: string;
   value: number;
   stage?: string;
-  lineStyle?: Record<string, unknown>;
 }
 
 export interface SankeyStats {
-  nodes: Array<{ name: string; stage?: string; itemStyle?: Record<string, unknown> }>;
+  nodes: Array<{ name: string; stage?: string }>;
   links: SankeyLink[];
   stages?: string[];
   summary?: { tickets?: number };

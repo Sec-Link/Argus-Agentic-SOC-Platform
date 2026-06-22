@@ -74,17 +74,8 @@ class DenyReadonlyUser(BasePermission):
     def has_permission(self, request, view):
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return True
-        user = getattr(request, "user", None)
-        if not user or not user.is_authenticated:
-            return False
-        try:
-            from accounts.models import UserAuthProfile
-            profile = UserAuthProfile.objects.filter(user=user).first()
-            if profile and profile.is_readonly:
-                return False
-        except Exception:
-            pass
-        return True
+        from accounts.services import is_user_readonly
+        return not is_user_readonly(getattr(request, "user", None))
 
 
 class HasDjangoPermissions(BasePermission):

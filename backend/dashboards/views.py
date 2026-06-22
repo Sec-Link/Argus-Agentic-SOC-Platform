@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, time
 
 from django.db.models import Count
@@ -11,6 +12,8 @@ from rest_framework.response import Response
 
 from alerts.models import Alert
 from tickets.models import EventTicket
+
+logger = logging.getLogger(__name__)
 
 
 class DashboardViewSet(viewsets.ViewSet):
@@ -106,22 +109,15 @@ class DashboardViewSet(viewsets.ViewSet):
                     return ""
                 return text.replace("_", " ").replace("-", " ").title()
 
-            def node(name, stage, color):
-                """Build a styled Sankey node while preserving the legacy `name` key."""
-                return {
-                    "name": name,
-                    "stage": stage,
-                    "itemStyle": {"color": color, "borderColor": "rgba(255,255,255,0.28)", "borderWidth": 1},
-                }
+            def node(name, stage):
+                return {"name": name, "stage": stage}
 
-            def link(source, target, value, stage, color):
-                """Build a weighted Sankey link with frontend styling metadata."""
+            def link(source, target, value, stage):
                 return {
                     "source": source,
                     "target": target,
                     "value": max(int(value or 0), 1),
                     "stage": stage,
-                    "lineStyle": {"color": color, "opacity": 0.26},
                 }
 
             base_qs = (
@@ -159,13 +155,13 @@ class DashboardViewSet(viewsets.ViewSet):
             links = []
 
             for item in mitre_nodes:
-                nodes_by_name[item["label"]] = node(item["label"], "MITRE ATT&CK Framework", "#f7efe2")
+                nodes_by_name[item["label"]] = node(item["label"], "MITRE ATT&CK Framework")
             for item in use_case_nodes:
-                nodes_by_name[item["label"]] = node(item["label"], "Developed Use Cases", "#78b8a8")
+                nodes_by_name[item["label"]] = node(item["label"], "Developed Use Cases")
 
             for item in mitre_nodes:
                 uc_label = next((uc["label"] for uc in use_case_nodes if uc["key"] == item["use_case"]), "Behavior-Based Use Cases")
-                links.append(link(item["label"], uc_label, item["weight"], "MITRE -> Use Cases", "#7fb6a8"))
+                links.append(link(item["label"], uc_label, item["weight"], "MITRE -> Use Cases"))
 
             live_total = sum(category_counts.values())
             category_names = []
@@ -174,13 +170,13 @@ class DashboardViewSet(viewsets.ViewSet):
                 if not category_name:
                     continue
                 category_names.append((category_name, count))
-                nodes_by_name[category_name] = node(category_name, "Alerts", "#4aa3ff")
+                nodes_by_name[category_name] = node(category_name, "Alerts")
 
             if category_names:
                 use_case_cycle = [uc["label"] for uc in use_case_nodes]
                 for idx, (category_name, count) in enumerate(category_names):
                     # Mock use-case stages are proportionally connected into live alert categories.
-                    links.append(link(use_case_cycle[idx % len(use_case_cycle)], category_name, count, "Use Cases -> Alerts", "#78b8a8"))
+                    links.append(link(use_case_cycle[idx % len(use_case_cycle)], category_name, count, "Use Cases -> Alerts"))
 
             for row in category_result_rows:
                 count = int(row.get("count") or 0)
@@ -189,9 +185,9 @@ class DashboardViewSet(viewsets.ViewSet):
                 cat = category_labels.get(row.get("category_key") or "", labelize(row.get("category_key")))
                 res = result_labels.get(row.get("result_key") or "", labelize(row.get("result_key")))
                 if cat and res:
-                    nodes_by_name[cat] = nodes_by_name.get(cat) or node(cat, "Alerts", "#4aa3ff")
-                    nodes_by_name[res] = nodes_by_name.get(res) or node(res, "Resolution", "#f2a33b")
-                    links.append(link(cat, res, count, "Alerts -> Resolution", "#f2a33b"))
+                    nodes_by_name[cat] = nodes_by_name.get(cat) or node(cat, "Alerts")
+                    nodes_by_name[res] = nodes_by_name.get(res) or node(res, "Resolution")
+                    links.append(link(cat, res, count, "Alerts -> Resolution"))
 
             for row in result_priority_rows:
                 count = int(row.get("count") or 0)
@@ -200,9 +196,9 @@ class DashboardViewSet(viewsets.ViewSet):
                 res = result_labels.get(row.get("result_key") or "", labelize(row.get("result_key")))
                 level = priority_labels.get(row.get("priority_key") or "", labelize(row.get("priority_key")))
                 if res and level:
-                    nodes_by_name[res] = nodes_by_name.get(res) or node(res, "Resolution", "#f2a33b")
-                    nodes_by_name[level] = nodes_by_name.get(level) or node(level, "Event Level", "#ff6b5f")
-                    links.append(link(res, level, count, "Resolution -> Event Level", "#ff6b5f"))
+                    nodes_by_name[res] = nodes_by_name.get(res) or node(res, "Resolution")
+                    nodes_by_name[level] = nodes_by_name.get(level) or node(level, "Event Level")
+                    links.append(link(res, level, count, "Resolution -> Event Level"))
 
             stages = [
                 "MITRE ATT&CK Framework",
@@ -217,6 +213,6 @@ class DashboardViewSet(viewsets.ViewSet):
                 "stages": stages,
                 "summary": {"tickets": live_total},
             })
-        except Exception as exc:
-            # Keep dashboard rendering stable even when source data contains unexpected values.
-            return Response({"nodes": [], "links": [], "error": str(exc)}, status=status.HTTP_200_OK)
+        except Exception:
+            logger.exception("sankey_stats failed")
+            return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

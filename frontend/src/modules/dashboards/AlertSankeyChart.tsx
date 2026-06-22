@@ -70,7 +70,6 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
         borderRadius: 8,
         shadowBlur: isDarkTheme ? 12 : 8,
         shadowColor: isDarkTheme ? 'rgba(0, 0, 0, 0.32)' : 'rgba(40, 77, 120, 0.16)',
-        ...(node.itemStyle || {}),
       },
       label: {
         color: labelColor,
@@ -86,10 +85,9 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
     const links = (stats?.links ?? []).map((link) => ({
       ...link,
       lineStyle: {
-        color: 'source',
+        color: 'source' as const,
         opacity: isDarkTheme ? 0.34 : 0.28,
         curveness: 0.58,
-        ...(link.lineStyle || {}),
       },
     }));
 

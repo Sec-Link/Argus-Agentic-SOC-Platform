@@ -36,3 +36,11 @@ Thumbs.db
 
 # tmp cache
 tmp_cache/
+
+# Claude Code local config — contains personal settings and MCP credentials
+.claude/settings.json
+.claude/settings.local.json
+.mcp.json
+
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo
