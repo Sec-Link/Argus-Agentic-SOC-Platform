@@ -317,7 +317,7 @@ export default function Detections() {
       let publishedRule: any;
       try {
         const full = await getPublishedDetectionRule(selectedId);
-        const { rule_id: _ruleId, ...fullWithoutRuleId } = full || {};
+        const { id: _id, rule_id: _ruleId, kibana_rule_id: _kibanaRuleId, ...fullWithoutRuleId } = full || {};
         publishedRule = await updatePublishedDetectionRule(selectedId, { ...fullWithoutRuleId, ...payload, id: selectedId });
       } catch (e: any) {
         if (e?.response?.status === 404 || e?.response?.data?.status_code === 404) {
@@ -329,8 +329,8 @@ export default function Detections() {
 
       const nextMetadata: KibanaMetadata = {
         published: true,
-        remote_id: String(publishedRule?.kibana_remote_id || publishedRule?.id || selectedId || ""),
-        rule_id: String(publishedRule?.rule_id || selectedId),
+        remote_id: String(publishedRule?.kibana_rule_id || selectedId || ""),
+        rule_id: String(selectedId),
         enabled: Boolean(publishedRule?.enabled ?? payload.enabled),
         name: String(publishedRule?.name || payload.name || ""),
         updated_at: new Date().toISOString(),
@@ -348,8 +348,8 @@ export default function Detections() {
         target: "elastic-dev",
         action: "publish",
         status: "success",
-        remote_id: String(publishedRule?.id || ""),
-        remote_rule_id: String(publishedRule?.rule_id || selectedId),
+        remote_id: String(publishedRule?.kibana_rule_id || selectedId),
+        remote_rule_id: String(publishedRule?.kibana_rule_id || selectedId),
         payload,
       });
       await loadRules();
@@ -459,13 +459,14 @@ export default function Detections() {
       return;
     }
     try {
-      const full = await getPublishedDetectionRule(remoteId);
-      const updated = await patchPublishedDetectionRule(remoteId, { ...full, enabled });
+      const full = await getPublishedDetectionRule(selectedId);
+      const { id: _id, rule_id: _ruleId, kibana_rule_id: _kibanaRuleId, ...fullForUpdate } = full || {};
+      const updated = await patchPublishedDetectionRule(selectedId, { ...fullForUpdate, enabled });
       const nextMetadata: KibanaMetadata = {
         ...kibanaMetadata,
         published: true,
-        remote_id: String(updated?.id || remoteId),
-        rule_id: String(updated?.rule_id || kibanaMetadata.rule_id || selectedId),
+        remote_id: String(updated?.kibana_rule_id || remoteId),
+        rule_id: String(kibanaMetadata.rule_id || selectedId),
         enabled: Boolean(updated?.enabled),
         name: String(updated?.name || kibanaMetadata.name || detail.meta?.title || selectedId),
         updated_at: new Date().toISOString(),
@@ -481,8 +482,8 @@ export default function Detections() {
         target: "elastic-dev",
         action: enabled ? "enable" : "disable",
         status: "success",
-        remote_id: String(updated?.id || remoteId),
-        remote_rule_id: String(updated?.rule_id || selectedId),
+        remote_id: String(updated?.kibana_rule_id || remoteId),
+        remote_rule_id: String(updated?.kibana_rule_id || remoteId),
       });
       await loadRules();
       await loadDetail(selectedId);
@@ -507,7 +508,7 @@ export default function Detections() {
       return;
     }
     try {
-      await deletePublishedDetectionRule(remoteId);
+      await deletePublishedDetectionRule(selectedId);
       const nextMetadata: KibanaMetadata = {
         published: false,
         remote_id: "",
@@ -528,7 +529,7 @@ export default function Detections() {
         action: "delete",
         status: "success",
         remote_id: remoteId,
-        remote_rule_id: String(kibanaMetadata.rule_id || selectedId),
+        remote_rule_id: String(remoteId),
       });
       await loadRules();
       await loadDetail(selectedId);

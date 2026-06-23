@@ -12,9 +12,10 @@ from .models import (
     LocalDetectionDeployment,
     LocalDetectionFieldMapping,
     LocalDetectionRule,
+    LocalDetectionRuleMitreAttack,
     LocalDetectionRuleVersion,
 )
-from .sigma import build_kibana_threat_from_tags, build_rule_detail_metadata, extract_rule_id, extract_rule_meta
+from .sigma import build_kibana_threat_from_tags, build_rule_detail_metadata, extract_rule_id, extract_rule_meta, parse_mitre_attack_tags
 
 
 def user_name_from_request(request) -> str:
@@ -23,6 +24,31 @@ def user_name_from_request(request) -> str:
         return ""
     return str(getattr(user, "username", "") or getattr(user, "email", "") or getattr(user, "id", "") or "")
 
+
+def sync_rule_mitre_attack_mappings(rule: LocalDetectionRule, tags: list[str] | None) -> None:
+    rows = parse_mitre_attack_tags(tags)
+    payload = rule.payload if isinstance(rule.payload, dict) else {}
+    kibana_meta = payload.get("kibana_metadata") if isinstance(payload.get("kibana_metadata"), dict) else {}
+    sigma_rule_id = str(rule.rule_uuid or "").strip()
+    kibana_rule_id = str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or kibana_meta.get("remote_id") or "").strip()
+
+    LocalDetectionRuleMitreAttack.objects.filter(rule_id=sigma_rule_id).delete()
+    if not rows:
+        return
+    LocalDetectionRuleMitreAttack.objects.bulk_create(
+        [
+            LocalDetectionRuleMitreAttack(
+                rule_id=sigma_rule_id,
+                kibana_rule_id=kibana_rule_id,
+                tactic_id=row["tactic_id"],
+                tactic_name=row["tactic_name"],
+                technique_id=row["technique_id"],
+                technique_name=row["technique_name"],
+            )
+            for row in rows
+        ],
+        ignore_conflicts=True,
+    )
 
 def append_rule_version(
     rule: LocalDetectionRule,
@@ -154,7 +180,7 @@ def serialize_legacy_rule(rule: LocalDetectionRule) -> dict:
         "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
         "publish_status": "published" if kibana_meta.get("published") else "unpublished",
         "kibana_enabled": bool(kibana_meta.get("enabled", False)),
-        "kibana_rule_id": str(kibana_meta.get("rule_id") or ""),
+        "kibana_rule_id": str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or kibana_meta.get("remote_id") or ""),
     }
 
 
@@ -258,6 +284,7 @@ def save_local_rule(
                 change_type="create",
                 change_summary=[{"field": "rule", "label": "Rule", "type": "created", "message": "Created rule"}],
             )
+            sync_rule_mitre_attack_mappings(rule, payload.get("tags"))
             return rule
 
         previous_payload = dict(rule.payload or {})
@@ -274,11 +301,13 @@ def save_local_rule(
             change_type="update",
             change_summary=summarize_payload_changes(previous_payload, payload),
         )
+        sync_rule_mitre_attack_mappings(rule, payload.get("tags"))
         return rule
 
 
 def soft_delete_local_rule(*, rule: LocalDetectionRule, actor: str) -> None:
     with transaction.atomic():
+        LocalDetectionRuleMitreAttack.objects.filter(rule_id=rule.rule_uuid).delete()
         rule.is_deleted = True
         rule.version += 1
         rule.updated_by = actor

@@ -79,6 +79,9 @@ class KibanaDetectionRuleDetailView(APIView):
         return (
             LocalDetectionRule.objects.filter(rule_uuid=rule_id, is_deleted=False).first()
             or LocalDetectionRule.objects.filter(payload__rule_id=rule_id, is_deleted=False).order_by("-updated_at", "-id").first()
+            or LocalDetectionRule.objects.filter(payload__kibana_rule_id=rule_id, is_deleted=False).order_by("-updated_at", "-id").first()
+            or LocalDetectionRule.objects.filter(payload__kibana_remote_id=rule_id, is_deleted=False).order_by("-updated_at", "-id").first()
+            or LocalDetectionRule.objects.filter(payload__kibana_metadata__remote_id=rule_id, is_deleted=False).order_by("-updated_at", "-id").first()
         )
 
     def get(self, request, rule_id: str):

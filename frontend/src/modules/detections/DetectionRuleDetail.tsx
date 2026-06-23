@@ -116,8 +116,8 @@ export default function DetectionRuleDetail(props: Props) {
         }
       >
         <Space wrap>
-          <Typography.Text type="secondary">Rule ID: {props.kibanaMetadata.rule_id || "-"}</Typography.Text>
-          <Typography.Text type="secondary">Remote ID: {props.kibanaMetadata.remote_id || "-"}</Typography.Text>
+          <Typography.Text type="secondary">Sigma Rule ID: {props.kibanaMetadata.rule_id || "-"}</Typography.Text>
+          <Typography.Text type="secondary">Kibana Rule ID: {props.kibanaMetadata.remote_id || "-"}</Typography.Text>
           <Button size="small" disabled={!props.kibanaMetadata.published || Boolean(props.kibanaMetadata.enabled)} onClick={() => props.onSyncKibanaEnabled(true)}>Enable</Button>
           <Button size="small" disabled={!props.kibanaMetadata.published || !Boolean(props.kibanaMetadata.enabled)} onClick={() => props.onSyncKibanaEnabled(false)}>Disable</Button>
           <Popconfirm title="Delete the detection rule from Kibana?" okText="Delete" cancelText="Cancel" onConfirm={props.onDeleteKibanaRule}>

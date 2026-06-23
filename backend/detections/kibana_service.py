@@ -119,11 +119,11 @@ def normalize_rule_payload(payload: dict, fallback_id: str | None = None) -> tup
 
 def serialize_published_rule(rule: LocalDetectionRule) -> dict:
     payload = dict(rule.payload or {})
-    kibana_remote_id = str(payload.get("kibana_remote_id") or payload.get("id") or "").strip()
-    payload["id"] = rule.rule_uuid
-    if kibana_remote_id and kibana_remote_id != rule.rule_uuid:
-        payload["kibana_remote_id"] = kibana_remote_id
-    payload.setdefault("rule_id", payload.get("rule_id") or rule.rule_uuid)
+    sigma_rule_id = str(rule.rule_uuid or "").strip()
+    kibana_remote_id = str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or "").strip()
+    payload["id"] = sigma_rule_id
+    payload["rule_id"] = sigma_rule_id
+    payload["kibana_rule_id"] = kibana_remote_id
     payload["name"] = rule.name
     payload["type"] = rule.rule_type
     payload["enabled"] = bool(rule.enabled)
@@ -146,12 +146,9 @@ def is_kibana_rule_payload(payload: dict) -> bool:
 
 
 def rule_lookup_params(payload: dict) -> dict:
-    rule_id = str(payload.get("rule_id") or "").strip()
-    rule_object_id = str(payload.get("id") or "").strip()
-    if rule_id:
-        return {"rule_id": rule_id}
-    if rule_object_id:
-        return {"id": rule_object_id}
+    kibana_object_id = str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or "").strip()
+    if kibana_object_id:
+        return {"id": kibana_object_id}
     return {}
 
 
@@ -167,6 +164,7 @@ def sanitize_kibana_rule_payload(payload: dict) -> dict:
         threat = build_kibana_threat_from_tags(tags)
     if threat:
         data["threat"] = threat
+    data.pop("mitre_attack", None)
     return data
 
 
@@ -180,9 +178,9 @@ def apply_kibana_response_to_payload(payload: dict, remote: dict) -> dict:
         remote_id = str(remote.get("id") or "").strip()
         remote_rule_id = str(remote.get("rule_id") or "").strip()
         if remote_id:
-            next_payload["kibana_remote_id"] = remote_id
+            next_payload["kibana_rule_id"] = remote_id
         if remote_rule_id:
-            next_payload["rule_id"] = remote_rule_id
+            next_payload["kibana_api_rule_id"] = remote_rule_id
     return next_payload
 
 

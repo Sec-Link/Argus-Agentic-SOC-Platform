@@ -28,6 +28,17 @@ ATTACK_TACTIC_MAP = {
     "impact": {"id": "TA0040", "name": "Impact", "reference": "https://attack.mitre.org/tactics/TA0040/"},
 }
 
+ATTACK_TACTIC_ALIASES = {
+    value["id"].lower(): slug for slug, value in ATTACK_TACTIC_MAP.items()
+}
+ATTACK_TACTIC_ALIASES.update({slug: slug for slug in ATTACK_TACTIC_MAP})
+ATTACK_TACTIC_ALIASES.update(
+    {
+        # Newer pySigma MITRE STIX loader returns x_mitre_shortname for TA0005.
+        "stealth": "defense-evasion",
+    }
+)
+
 MITRE_ATTACK_GITHUB_URL = (
     "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
 )
@@ -104,118 +115,131 @@ def build_rule_detail_metadata(yaml_text: str) -> dict:
     }
 
 
-def build_kibana_threat_from_tags(tags: list[str] | None) -> list[dict]:
+def _normalize_attack_tactic_slug(value: str) -> str:
+    key = str(value or "").strip().lower()
+    key = key.replace("_", "-").replace(" ", "-")
+    return ATTACK_TACTIC_ALIASES.get(key, key)
+
+
+def _technique_name(technique_names: dict, technique_id: str) -> str:
+    return str(technique_names.get(technique_id) or technique_id)
+
+
+def _normalize_attack_technique_id(value: str) -> str:
+    key = str(value or "").strip().lower()
+    key = key.replace("/", ".").replace("\\", ".").replace("_", ".").replace("-", ".")
+    key = re.sub(r"\.+", ".", key)
+    return key.upper()
+
+
+def parse_mitre_attack_tags(tags: list[str] | None) -> list[dict]:
     values = [str(value).strip().lower() for value in (tags or []) if str(value).strip()]
-    tactic_slugs: list[str] = []
-    technique_ids: list[str] = []
-    subtechnique_ids: list[str] = []
+    attack_lookup = _mitre_attack_lookup()
+    technique_names = attack_lookup.get("techniques", {}) if isinstance(attack_lookup.get("techniques"), dict) else {}
+    technique_tactics = attack_lookup.get("technique_tactics", {}) if isinstance(attack_lookup.get("technique_tactics"), dict) else {}
+
+    rows: list[dict] = []
+    seen = set()
+    current_tactic_slug = ""
+
+    def add_row(tactic_slug: str, technique_id: str) -> None:
+        tactic_slug = _normalize_attack_tactic_slug(tactic_slug)
+        tactic = ATTACK_TACTIC_MAP.get(tactic_slug)
+        if not tactic or not technique_id:
+            return
+        key = (tactic["id"], technique_id)
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append(
+            {
+                "tactic_id": tactic["id"],
+                "tactic_name": tactic["name"],
+                "technique_id": technique_id,
+                "technique_name": _technique_name(technique_names, technique_id),
+            }
+        )
 
     for tag in values:
         if not tag.startswith("attack."):
             continue
         suffix = tag.split(".", 1)[1].strip()
-        if re.fullmatch(r"t\d{4}", suffix):
-            technique_ids.append(suffix.upper())
-        elif re.fullmatch(r"t\d{4}\.\d{3}", suffix):
-            subtechnique_ids.append(suffix.upper())
-        elif suffix in ATTACK_TACTIC_MAP:
-            tactic_slugs.append(suffix)
+        tactic_slug = _normalize_attack_tactic_slug(suffix)
+        if tactic_slug in ATTACK_TACTIC_MAP:
+            current_tactic_slug = tactic_slug
+            continue
+        technique_id = _normalize_attack_technique_id(suffix)
+        if not re.fullmatch(r"T\d{4}(?:\.\d{3})?", technique_id):
+            continue
 
-    unique_tactics = []
-    seen_tactics = set()
-    for slug in tactic_slugs:
-        if slug not in seen_tactics:
-            seen_tactics.add(slug)
-            unique_tactics.append(slug)
+        if current_tactic_slug:
+            add_row(current_tactic_slug, technique_id)
+            continue
 
-    unique_techniques = []
-    seen_techniques = set()
-    for technique in technique_ids:
-        if technique not in seen_techniques:
-            seen_techniques.add(technique)
-            unique_techniques.append(technique)
+        for inferred_slug in technique_tactics.get(technique_id, []) or []:
+            add_row(str(inferred_slug or ""), technique_id)
 
-    unique_subtechniques = []
-    seen_subtechniques = set()
-    for subtechnique in subtechnique_ids:
-        if subtechnique not in seen_subtechniques:
-            seen_subtechniques.add(subtechnique)
-            unique_subtechniques.append(subtechnique)
+    return rows
 
-    if not unique_tactics and not unique_techniques and not unique_subtechniques:
+
+def build_kibana_threat_from_tags(tags: list[str] | None) -> list[dict]:
+    rows = parse_mitre_attack_tags(tags)
+    if not rows:
         return []
 
-    attack_lookup = _mitre_attack_lookup()
-    tactic_names = attack_lookup.get("tactics", {}) if isinstance(attack_lookup.get("tactics"), dict) else {}
-    technique_names = attack_lookup.get("techniques", {}) if isinstance(attack_lookup.get("techniques"), dict) else {}
-    technique_tactics = attack_lookup.get("technique_tactics", {}) if isinstance(attack_lookup.get("technique_tactics"), dict) else {}
+    grouped: dict[str, dict] = {}
+    technique_seen: dict[str, set] = {}
+    subtechniques_by_parent: dict[tuple[str, str], list[dict]] = {}
 
-    if not unique_tactics:
-        inferred = []
-        for technique_id in [*unique_techniques, *unique_subtechniques]:
-            for tactic_slug in technique_tactics.get(technique_id, []) or []:
-                tactic_slug = str(tactic_slug or "").strip().lower()
-                if tactic_slug and tactic_slug in ATTACK_TACTIC_MAP and tactic_slug not in inferred:
-                    inferred.append(tactic_slug)
-        unique_tactics = inferred
-
-    techniques = []
-    for technique_id in unique_techniques:
-        children = [
-            {
-                "id": sub_id,
-                "name": str(technique_names.get(sub_id) or sub_id),
-                "reference": f"https://attack.mitre.org/techniques/{sub_id.replace('.', '/')}/",
-            }
-            for sub_id in unique_subtechniques
-            if sub_id.startswith(f"{technique_id}.")
-        ]
-        techniques.append(
-            {
-                "id": technique_id,
-                "name": str(technique_names.get(technique_id) or technique_id),
-                "reference": f"https://attack.mitre.org/techniques/{technique_id}/",
-                "subtechnique": children,
-            }
-        )
-
-    orphan_subtechniques = [sub_id for sub_id in unique_subtechniques if not any(sub_id.startswith(f"{tech['id']}.") for tech in techniques)]
-    for sub_id in orphan_subtechniques:
-        parent_id = sub_id.split(".", 1)[0]
-        techniques.append(
-            {
-                "id": parent_id,
-                "name": str(technique_names.get(parent_id) or parent_id),
-                "reference": f"https://attack.mitre.org/techniques/{parent_id}/",
-                "subtechnique": [
-                    {
-                        "id": sub_id,
-                        "name": str(technique_names.get(sub_id) or sub_id),
-                        "reference": f"https://attack.mitre.org/techniques/{sub_id.replace('.', '/')}/",
-                    }
-                ],
-            }
-        )
-
-    threats = []
-    for slug in unique_tactics:
-        tactic = ATTACK_TACTIC_MAP.get(slug)
-        if not tactic:
-            continue
-        threats.append(
-            {
+    for row in rows:
+        tactic_id = row["tactic_id"]
+        if tactic_id not in grouped:
+            grouped[tactic_id] = {
                 "framework": "MITRE ATT&CK",
                 "tactic": {
-                    "id": tactic["id"],
-                    "name": str(tactic_names.get(tactic["id"]) or tactic["name"]),
-                    "reference": tactic["reference"],
+                    "id": tactic_id,
+                    "name": row["tactic_name"],
+                    "reference": f"https://attack.mitre.org/tactics/{tactic_id}/",
                 },
-                "technique": techniques,
+                "technique": [],
+            }
+            technique_seen[tactic_id] = set()
+
+        technique_id = row["technique_id"]
+        if "." in technique_id:
+            parent_id = technique_id.split(".", 1)[0]
+            subtechniques_by_parent.setdefault((tactic_id, parent_id), []).append(
+                {
+                    "id": technique_id,
+                    "name": row["technique_name"],
+                    "reference": f"https://attack.mitre.org/techniques/{technique_id.replace('.', '/')}/",
+                }
+            )
+            if parent_id in technique_seen[tactic_id]:
+                continue
+            technique_id = parent_id
+            technique_name = _technique_name(_mitre_attack_lookup().get("techniques", {}), parent_id)
+        else:
+            technique_name = row["technique_name"]
+
+        if technique_id in technique_seen[tactic_id]:
+            continue
+        technique_seen[tactic_id].add(technique_id)
+        grouped[tactic_id]["technique"].append(
+            {
+                "id": technique_id,
+                "name": technique_name,
+                "reference": f"https://attack.mitre.org/techniques/{technique_id}/",
             }
         )
 
-    return threats
+    for tactic_id, threat in grouped.items():
+        for technique in threat["technique"]:
+            subtechniques = subtechniques_by_parent.get((tactic_id, technique["id"]), [])
+            if subtechniques:
+                technique["subtechnique"] = subtechniques
 
+    return list(grouped.values())
 
 def _mapping_candidates(parsed: dict) -> list[str]:
     logsource = parsed.get("logsource") if isinstance(parsed.get("logsource"), dict) else {}
@@ -320,6 +344,30 @@ def _sigma_runtime():
 
 @lru_cache(maxsize=1)
 def _mitre_attack_lookup() -> dict:
+    try:
+        from .models import MitreAttackTactic, MitreAttackTechnique, MitreAttackTechniqueTactic
+
+        tactics = {
+            row.tactic_id: row.shortname
+            for row in MitreAttackTactic.objects.all().only("tactic_id", "shortname")
+        }
+        techniques = {
+            row.technique_id: row.name
+            for row in MitreAttackTechnique.objects.all().only("technique_id", "name")
+        }
+        technique_tactics: dict[str, list[str]] = {}
+        for row in MitreAttackTechniqueTactic.objects.select_related("technique", "tactic").all():
+            technique_tactics.setdefault(row.technique.technique_id, []).append(row.tactic.shortname)
+
+        if tactics or techniques or technique_tactics:
+            return {
+                "tactics": tactics,
+                "techniques": techniques,
+                "technique_tactics": technique_tactics,
+            }
+    except Exception:
+        pass
+
     try:
         from sigma.data import mitre_attack
 
@@ -480,3 +528,4 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
             "esql": "*",
             "error": f"ES|QL: {esql_error} | Lucene: {lucene_error}",
         }
+
