@@ -1,13 +1,35 @@
-from django.db import migrations, models
+﻿from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("detections", "0007_field_mapping_elastic_index_patterns"),
+        ("detections", "0006_localdetectionruleversion_change_summary"),
     ]
 
     operations = [
+        migrations.AddField(
+            model_name="localdetectionfieldmapping",
+            name="elastic_index_patterns",
+            field=models.JSONField(blank=True, default=list),
+        ),
+        migrations.CreateModel(
+            name="LocalDetectionRuleMitreAttack",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("rule_id", models.CharField(db_index=True, max_length=128)),
+                ("kibana_rule_id", models.CharField(blank=True, db_index=True, default="", max_length=128)),
+                ("tactic_id", models.CharField(db_index=True, max_length=32)),
+                ("tactic_name", models.CharField(max_length=128)),
+                ("technique_id", models.CharField(db_index=True, max_length=32)),
+                ("technique_name", models.CharField(max_length=255)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+            ],
+            options={
+                "db_table": "detection_rule_mitre_attack",
+                "unique_together": {("rule_id", "tactic_id", "technique_id")},
+            },
+        ),
         migrations.CreateModel(
             name="MitreAttackTactic",
             fields=[
@@ -51,11 +73,19 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.AddIndex(
-            model_name="mitreattacktechniquetactic",
-            index=models.Index(fields=["technique", "tactic"], name="mitre_attac_techniq_b85d1d_idx"),
+            model_name="localdetectionrulemitreattack",
+            index=models.Index(fields=["rule_id", "tactic_id"], name="detection_r_rule_id_031214_idx"),
+        ),
+        migrations.AddIndex(
+            model_name="localdetectionrulemitreattack",
+            index=models.Index(fields=["tactic_id", "technique_id"], name="detection_r_tactic__b92baa_idx"),
         ),
         migrations.AddIndex(
             model_name="mitreattacktechniquetactic",
-            index=models.Index(fields=["tactic", "technique"], name="mitre_attac_tactic__77b941_idx"),
+            index=models.Index(fields=["technique", "tactic"], name="mitre_attac_techniq_b948d4_idx"),
+        ),
+        migrations.AddIndex(
+            model_name="mitreattacktechniquetactic",
+            index=models.Index(fields=["tactic", "technique"], name="mitre_attac_tactic__11e9a8_idx"),
         ),
     ]
