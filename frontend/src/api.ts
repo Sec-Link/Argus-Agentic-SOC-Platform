@@ -1366,6 +1366,7 @@ export type DetectionRuleDetail = {
   payload?: Record<string, any>;
   meta?: DetectionRuleMeta;
   compiled?: {
+    language?: string;
     lucene?: string;
     eql?: string;
     esql?: string;
@@ -1373,6 +1374,7 @@ export type DetectionRuleDetail = {
     kql?: string;
     error?: string;
     profiles?: string[];
+    elastic_index_patterns?: string[];
   };
 };
 
@@ -1385,6 +1387,7 @@ export type DetectionMappingItem = {
   sigma: string;
   splunk?: string;
   elastic?: string;
+  elastic_index_patterns?: string[];
   [key: string]: any;
 };
 
@@ -1405,7 +1408,7 @@ export async function saveDetectionRule(id: string, yaml: string, extras?: Recor
 
 export async function compileDetectionRule(
   yaml: string,
-): Promise<{ lucene?: string; eql?: string; esql?: string; splunk?: string; kql?: string; error?: string; profiles?: string[] }> {
+): Promise<{ language?: string; lucene?: string; eql?: string; esql?: string; splunk?: string; kql?: string; error?: string; profiles?: string[]; elastic_index_patterns?: string[] }> {
   const r = await client.post('/detections/rules/compile/', { yaml });
   return r.data;
 }

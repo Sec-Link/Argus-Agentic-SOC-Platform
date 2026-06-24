@@ -21,6 +21,7 @@ class DetectionMappingSerializer(serializers.ModelSerializer):
     sigma = serializers.CharField(source="sigma_field")
     splunk = serializers.CharField(source="splunk_field")
     elastic = serializers.CharField(source="elastic_field")
+    elastic_index_patterns = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = LocalDetectionFieldMapping
@@ -33,14 +34,21 @@ class DetectionMappingSerializer(serializers.ModelSerializer):
             "sigma",
             "splunk",
             "elastic",
+            "elastic_index_patterns",
         )
 
 
 class DetectionMappingSaveSerializer(serializers.Serializer):
+    id = serializers.IntegerField(required=False)
     mapping_profile = serializers.CharField(required=True, allow_blank=False)
     sigma = serializers.CharField(required=True, allow_blank=False)
     splunk = serializers.CharField(required=False, allow_blank=True, default="")
     elastic = serializers.CharField(required=False, allow_blank=True, default="")
+    elastic_index_patterns = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        required=False,
+        default=list,
+    )
     category = serializers.CharField(required=False, allow_blank=True, default="")
     data_source = serializers.CharField(required=False, allow_blank=True, default="")
     event_category = serializers.CharField(required=False, allow_blank=True, default="")

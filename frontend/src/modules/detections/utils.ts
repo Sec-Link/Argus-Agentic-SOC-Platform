@@ -81,7 +81,12 @@ export function applyIndexPatternsToEsql(query: string, indexPatterns: string[])
   const patterns = Array.isArray(indexPatterns) ? indexPatterns.map((item) => String(item || "").trim()).filter(Boolean) : [];
   if (!source || !patterns.length) return source;
   const nextFrom = patterns.join(", ");
-  return source.replace(/(^\s*from\s+)\*(\s|$)/im, (_match, prefix, suffix) => `${prefix}${nextFrom}${suffix}`);
+  return source.replace(/(^\s*from\s+)([^\|\r\n]+)/im, (_match, prefix, body) => {
+    const currentFrom = String(body || "").trim();
+    const metadataMatch = currentFrom.match(/\s+metadata\s+/i);
+    const metadata = metadataMatch?.index !== undefined ? currentFrom.slice(metadataMatch.index) : "";
+    return `${prefix}${nextFrom}${metadata} `;
+  });
 }
 
 export function enrichElasticActions(actions: any[], connectors: Array<{ id: string; connector_type_id?: string }>) {

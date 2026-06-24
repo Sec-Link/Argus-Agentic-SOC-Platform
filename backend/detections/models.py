@@ -43,6 +43,63 @@ class LocalDetectionRuleVersion(models.Model):
         ]
 
 
+class LocalDetectionRuleMitreAttack(models.Model):
+    """MITRE ATT&CK mappings parsed from a detection rule's Sigma tags."""
+
+    rule_id = models.CharField(max_length=128, db_index=True)
+    kibana_rule_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    tactic_id = models.CharField(max_length=32, db_index=True)
+    tactic_name = models.CharField(max_length=128)
+    technique_id = models.CharField(max_length=32, db_index=True)
+    technique_name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "detection_rule_mitre_attack"
+        unique_together = ("rule_id", "tactic_id", "technique_id")
+        indexes = [
+            models.Index(fields=["rule_id", "tactic_id"]),
+            models.Index(fields=["tactic_id", "technique_id"]),
+        ]
+
+
+class MitreAttackTactic(models.Model):
+    tactic_id = models.CharField(max_length=32, unique=True, db_index=True)
+    name = models.CharField(max_length=128)
+    shortname = models.CharField(max_length=128, unique=True, db_index=True)
+    reference_url = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "mitre_attack_tactic"
+
+
+class MitreAttackTechnique(models.Model):
+    technique_id = models.CharField(max_length=32, unique=True, db_index=True)
+    name = models.CharField(max_length=255)
+    reference_url = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "mitre_attack_technique"
+
+
+class MitreAttackTechniqueTactic(models.Model):
+    technique = models.ForeignKey(MitreAttackTechnique, on_delete=models.CASCADE, related_name="tactic_links")
+    tactic = models.ForeignKey(MitreAttackTactic, on_delete=models.CASCADE, related_name="technique_links")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "mitre_attack_technique_tactic"
+        unique_together = ("technique", "tactic")
+        indexes = [
+            models.Index(fields=["technique", "tactic"]),
+            models.Index(fields=["tactic", "technique"]),
+        ]
+
+
 class LocalDetectionFieldMapping(models.Model):
     """Persisted field mapping rows (Sigma -> Splunk/Elastic)."""
 
@@ -53,6 +110,7 @@ class LocalDetectionFieldMapping(models.Model):
     sigma_field = models.CharField(max_length=255)
     splunk_field = models.CharField(max_length=255, blank=True, default="")
     elastic_field = models.CharField(max_length=255, blank=True, default="")
+    elastic_index_patterns = models.JSONField(default=list, blank=True)
     created_by = models.CharField(max_length=150, blank=True, default="")
     updated_by = models.CharField(max_length=150, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
