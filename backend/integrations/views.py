@@ -9,7 +9,7 @@ from .serializers import IntegrationSerializer
 from rest_framework.decorators import api_view
 from requests.auth import HTTPBasicAuth
 from rest_framework.permissions import IsAuthenticated
-from accounts.permissions import HasDjangoPermissions, RbacModelPermissions
+from accounts.permissions import DenyReadonlyUser, HasDjangoPermissions, RbacModelPermissions
 from django.utils.dateparse import parse_datetime
 import os
 import datetime
@@ -58,7 +58,7 @@ def _deny_if_no_perm(request, perm):
 class IntegrationViewSet(viewsets.ModelViewSet):
     queryset = Integration.objects.all().order_by('-created_at')
     serializer_class = IntegrationSerializer
-    permission_classes = [RbacModelPermissions]
+    permission_classes = [RbacModelPermissions, DenyReadonlyUser]
     rbac_action_perms = {"test": "change"}
 
     def _activate_alerts_es_config(self, integration: Integration):

@@ -28,7 +28,6 @@ function iconByKey(key: RouteKey) {
   if (key === 'tickets') return <UnorderedListOutlined />;
   if (key === 'assets') return <HddOutlined />;
   if (key === 'integrations') return <AppstoreOutlined />;
-  if (key === 'dashboards') return <DashboardOutlined />;
   if (key === 'orchestrator') return <DeploymentUnitOutlined />;
   if (key === 'interfaces') return <ApiOutlined />;
   if (key === 'correlation') return <LineChartOutlined />;
@@ -78,7 +77,6 @@ export default function Sidebar({
     tickets: 'Tickets',
     assets: 'Assets',
     integrations: labelOverrides.integrations || 'Integrations',
-    dashboards: labelOverrides.dashboards || 'Dashboards',
     // Singular: platform-level engines/config domains.
     orchestrator: labelOverrides.orchestrator || 'Orchestrator',
     interfaces: labelOverrides.interfaces || 'Interfaces',
@@ -101,8 +99,7 @@ export default function Sidebar({
       // Gerund parent for high-level monitoring domain.
       title: 'Monitoring',
       icon: <DashboardOutlined />,
-      // Dashboards moved here from the deprecated "Data & Platform" section.
-      items: ['dashboard', 'dashboards', 'alerts'],
+      items: ['dashboard', 'alerts'],
     },
     {
       key: 'investigationGroup',
@@ -174,14 +171,15 @@ export default function Sidebar({
             aria-label="Go to dashboard"
           >
             <img
-              src="/seclink-logo.jpg"
-              alt="SECLINK logo"
+              src="/seclink-logo.svg"
+              alt="Argus logo"
               width={40}
               height={40}
-              style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }}
+              className="sidebar-brand-logo"
+              style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain' }}
             />
-            <span style={{ fontWeight: 900, letterSpacing: 0.6, fontSize: 22, color: 'var(--text-primary)' }}>
-              ECHO
+            <span className="argus-brand-wordmark argus-brand-wordmark-sidebar">
+              Argus
             </span>
           </div>
           <Button

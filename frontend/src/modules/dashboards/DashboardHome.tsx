@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
-import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Popover, Divider, Typography, Input } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input } from 'antd';
+import { ClockCircleOutlined, ReloadOutlined } from '@ant-design/icons';
 import { fetchDashboard } from 'services/alerts';
 import type { DashboardData } from 'types';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
+import AlertFunnelChart from './AlertFunnelChart';
+import AlertSankeyChart from './AlertSankeyChart';
 
 type TimeRangePreset = '1h' | '24h' | '7d' | 'all' | 'custom';
 type TimeWindow = {
@@ -17,6 +19,33 @@ type TimeWindow = {
   preset: TimeRangePreset;
 };
 
+const CACHE_KEY = 'siem_dashboard_cache_v1';
+const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v3';
+const DEFAULT_TIME_WINDOW_CACHE_KEY = 'siem_dashboard_default_time_window_v1';
+const POLL_INTERVAL_MS = 10 * 1000;
+
+// Read persisted dashboard time preferences defensively across SSR and malformed storage states.
+const readStoredTimeWindow = (key: string): TimeWindow | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const storage = key === TIME_WINDOW_CACHE_KEY ? window.sessionStorage : window.localStorage;
+    const raw = storage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as TimeWindow;
+    return parsed && parsed.preset ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+// Persist the explicit dashboard default so future visits can skip the hard-coded initial preset.
+const writeStoredDefaultTimeWindow = (value: TimeWindow) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(DEFAULT_TIME_WINDOW_CACHE_KEY, JSON.stringify(value));
+  } catch {}
+};
+
 const Dashboard: React.FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
   // keep last successful data to avoid UI blanking during reloads
@@ -24,28 +53,25 @@ const Dashboard: React.FC = () => {
   const failuresRef = React.useRef<number>(0);
   const [refreshing, setRefreshing] = React.useState(false);
   const [activePanelRefresh, setActivePanelRefresh] = useState<string | null>(null);
-
-  const CACHE_KEY = 'siem_dashboard_cache_v1';
-  const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v2';
-  const POLL_INTERVAL_MS = 10 * 1000;
   const [loading, setLoading] = useState(false);
-  const [timePickerOpen, setTimePickerOpen] = useState(false);
-  const [timePreset, setTimePreset] = useState<TimeRangePreset>('24h');
+  const [timePreset, setTimePreset] = useState<TimeRangePreset>('all');
   const [customRange, setCustomRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [customStartTimeText, setCustomStartTimeText] = useState('00:00:00');
   const [customEndTimeText, setCustomEndTimeText] = useState('23:59:59');
   const [isCustomRange, setIsCustomRange] = useState(false);
+  const [isTimeMenuOpen, setIsTimeMenuOpen] = useState(false);
   const [activeTimeWindow, setActiveTimeWindow] = useState<TimeWindow>(() => {
-    const now = dayjs();
+    // Default dashboard scope is all-time unless the user restores a saved window.
     return {
-      start_time: now.subtract(24, 'hour').toISOString(),
-      end_time: now.toISOString(),
-      all_time: false,
+      start_time: undefined,
+      end_time: undefined,
+      all_time: true,
       isCustomRange: false,
-      preset: '24h',
+      preset: 'all',
     };
   });
   const activeTimeWindowRef = React.useRef<TimeWindow>(activeTimeWindow);
+  const timeMenuRef = React.useRef<HTMLDivElement | null>(null);
   const [trendGroupBy, setTrendGroupBy] = useState<'hour' | 'day'>('hour');
   const [scoreGroupBy, setScoreGroupBy] = useState<'hour' | 'day'>('hour');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
@@ -204,6 +230,19 @@ const Dashboard: React.FC = () => {
   }, [activeTimeWindow]);
 
   useEffect(() => {
+    // Close the floating time menu when the user clicks outside the trigger/panel shell.
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!isTimeMenuOpen) return;
+      const target = event.target as Node | null;
+      if (timeMenuRef.current && target && !timeMenuRef.current.contains(target)) {
+        setIsTimeMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isTimeMenuOpen]);
+
+  useEffect(() => {
     // Persist the selected dashboard time window across navigation/remounts.
     try {
       sessionStorage.setItem(TIME_WINDOW_CACHE_KEY, JSON.stringify(activeTimeWindow));
@@ -211,28 +250,23 @@ const Dashboard: React.FC = () => {
   }, [activeTimeWindow]);
 
   useEffect(() => {
-    // Rehydrate persisted time window before the first request.
+    // Rehydrate the dashboard window with saved defaults taking priority over session-only state.
     let initialWindowForLoad: TimeWindow | null = null;
-    try {
-      const rawWindow = sessionStorage.getItem(TIME_WINDOW_CACHE_KEY);
-      if (rawWindow) {
-        const parsed = JSON.parse(rawWindow) as TimeWindow;
-        if (parsed && parsed.preset) {
-          initialWindowForLoad = parsed;
-          activeTimeWindowRef.current = parsed;
-          setActiveTimeWindow(parsed);
-          setTimePreset(parsed.preset);
-          setIsCustomRange(!!parsed.isCustomRange);
-          if (parsed.preset === 'custom' && parsed.start_time && parsed.end_time) {
-            const start = dayjs(parsed.start_time);
-            const end = dayjs(parsed.end_time);
-            setCustomRange([start, end]);
-            setCustomStartTimeText(start.format('HH:mm:ss'));
-            setCustomEndTimeText(end.format('HH:mm:ss'));
-          }
-        }
+    const restoredWindow = readStoredTimeWindow(DEFAULT_TIME_WINDOW_CACHE_KEY) || readStoredTimeWindow(TIME_WINDOW_CACHE_KEY);
+    if (restoredWindow) {
+      initialWindowForLoad = restoredWindow;
+      activeTimeWindowRef.current = restoredWindow;
+      setActiveTimeWindow(restoredWindow);
+      setTimePreset(restoredWindow.preset);
+      setIsCustomRange(!!restoredWindow.isCustomRange);
+      if (restoredWindow.preset === 'custom' && restoredWindow.start_time && restoredWindow.end_time) {
+        const start = dayjs(restoredWindow.start_time);
+        const end = dayjs(restoredWindow.end_time);
+        setCustomRange([start, end]);
+        setCustomStartTimeText(start.format('HH:mm:ss'));
+        setCustomEndTimeText(end.format('HH:mm:ss'));
       }
-    } catch {}
+    }
 
     // on mount only: read cache and perform initial loads and polling
     try {
@@ -341,6 +375,26 @@ const Dashboard: React.FC = () => {
     return date.hour(hms.hh).minute(hms.mm).second(hms.ss).millisecond(0);
   };
 
+  // Validate the custom time draft so invalid ranges cannot be applied or saved as defaults.
+  const getCustomRangeValidationError = () => {
+    if (timePreset !== 'custom') return null;
+    if (!customRange?.[0] || !customRange?.[1]) {
+      return 'Please select both start and end time';
+    }
+    const startWithTime = bindTimePart(customRange[0], customStartTimeText);
+    const endWithTime = bindTimePart(customRange[1], customEndTimeText);
+    if (!startWithTime || !endWithTime) {
+      return 'Use valid time format HH:mm:ss';
+    }
+    if (startWithTime.isAfter(endWithTime)) {
+      return 'Start time cannot be later than end time';
+    }
+    return null;
+  };
+
+  const customRangeValidationError = getCustomRangeValidationError();
+  const isCustomRangeValid = !customRangeValidationError;
+
   const applyTimeSelection = async () => {
     if (timePreset === 'all') {
       const nextWindow: TimeWindow = {
@@ -352,24 +406,24 @@ const Dashboard: React.FC = () => {
       };
       setIsCustomRange(false);
       setActiveTimeWindow(nextWindow);
-      setTimePickerOpen(false);
       await load({ timeWindow: nextWindow });
       return;
     }
 
     if (timePreset === 'custom') {
-      if (!customRange?.[0] || !customRange?.[1]) {
-        message.warning('Please select both start and end time');
+      if (customRangeValidationError) {
+        message.error(customRangeValidationError);
         return;
       }
-      const startWithTime = bindTimePart(customRange[0], customStartTimeText);
-      const endWithTime = bindTimePart(customRange[1], customEndTimeText);
+      const rangeDraft = customRange;
+      if (!rangeDraft?.[0] || !rangeDraft?.[1]) {
+        message.error('Please select both start and end time');
+        return;
+      }
+      const startWithTime = bindTimePart(rangeDraft[0], customStartTimeText);
+      const endWithTime = bindTimePart(rangeDraft[1], customEndTimeText);
       if (!startWithTime || !endWithTime) {
-        message.warning('Use valid time format HH:mm:ss');
-        return;
-      }
-      if (startWithTime.isAfter(endWithTime)) {
-        message.warning('Start time must be earlier than end time');
+        message.error('Use valid time format HH:mm:ss');
         return;
       }
       const nextWindow: TimeWindow = {
@@ -381,7 +435,6 @@ const Dashboard: React.FC = () => {
       };
       setIsCustomRange(true);
       setActiveTimeWindow(nextWindow);
-      setTimePickerOpen(false);
       await load({ timeWindow: nextWindow });
       return;
     }
@@ -401,30 +454,62 @@ const Dashboard: React.FC = () => {
     };
     setIsCustomRange(false);
     setActiveTimeWindow(nextWindow);
-    setTimePickerOpen(false);
     await load({ timeWindow: nextWindow });
   };
 
-  const maybeAutoApplyOnClose = async (nextOpen: boolean) => {
-    if (nextOpen) {
-      setTimePickerOpen(true);
+  // Apply a non-custom preset immediately so the toolbar behaves like a fixed SOC shortcut strip.
+  const applyFixedPreset = async (preset: Exclude<TimeRangePreset, 'custom'>) => {
+    if (preset === 'all') {
+      const nextWindow: TimeWindow = {
+        all_time: true,
+        start_time: undefined,
+        end_time: undefined,
+        isCustomRange: false,
+        preset: 'all',
+      };
+      setTimePreset('all');
+      setIsCustomRange(false);
+      setActiveTimeWindow(nextWindow);
+      await load({ timeWindow: nextWindow });
       return;
     }
-    // Blur/click-away auto-apply: commit automatically when the panel closes.
-    if (timePreset === 'custom') {
-      if (!customRange?.[0] || !customRange?.[1]) {
-        setTimePickerOpen(false);
-        return;
-      }
-      const startWithTime = bindTimePart(customRange[0], customStartTimeText);
-      const endWithTime = bindTimePart(customRange[1], customEndTimeText);
-      if (!startWithTime || !endWithTime || startWithTime.isAfter(endWithTime)) {
-        setTimePickerOpen(false);
-        return;
-      }
+
+    const now = dayjs();
+    const relativeRange = (() => {
+      if (preset === '1h') return { start: now.subtract(1, 'hour'), end: now };
+      if (preset === '7d') return { start: now.subtract(7, 'day'), end: now };
+      return { start: now.subtract(24, 'hour'), end: now };
+    })();
+    const nextWindow: TimeWindow = {
+      start_time: relativeRange.start.toISOString(),
+      end_time: relativeRange.end.toISOString(),
+      all_time: false,
+      isCustomRange: false,
+      preset,
+    };
+    setTimePreset(preset);
+    setIsCustomRange(false);
+    setActiveTimeWindow(nextWindow);
+    await load({ timeWindow: nextWindow });
+  };
+
+  const handlePresetSelection = async (preset: TimeRangePreset) => {
+    if (preset === 'custom') {
+      setTimePreset('custom');
+      setIsCustomRange(true);
+      return;
     }
-    setTimePickerOpen(false);
-    await applyTimeSelection();
+    await applyFixedPreset(preset);
+  };
+
+  // Save the currently active dashboard window as a durable front-end default.
+  const handleSaveDefaultTimeWindow = () => {
+    if (timePreset === 'custom' && customRangeValidationError) {
+      message.error(customRangeValidationError);
+      return;
+    }
+    writeStoredDefaultTimeWindow(activeTimeWindowRef.current);
+    message.success(`Saved ${selectedRangeLabel()} as the default dashboard time window`);
   };
 
   const categoryBreakdown = displayData?.category_breakdown;
@@ -445,141 +530,225 @@ const Dashboard: React.FC = () => {
     />
   );
 
-  return (
-  <>
-      <Space style={{ display: 'flex', justifyContent: 'space-between', marginTop: 0, marginBottom: 6, width: '100%' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <span style={{ fontSize: 16, fontWeight: 700 }}>Dashboard Overview</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Popover
-            trigger="click"
-            placement="bottomRight"
-            open={timePickerOpen}
-            onOpenChange={maybeAutoApplyOnClose}
-            content={
-              <div style={{ width: 360 }}>
-                <Typography.Text strong>Time Range</Typography.Text>
-                <Divider style={{ margin: '10px 0' }} />
-                <Select
-                  size="middle"
-                  value={timePreset}
-                  style={{ width: '100%' }}
-                  options={[
-                    { label: 'Last 1 Hour', value: '1h' },
-                    { label: 'Last 24 Hours', value: '24h' },
-                    { label: 'Last 7 Days', value: '7d' },
-                    { label: 'All Time', value: 'all' },
-                    { label: 'Custom', value: 'custom' },
-                  ]}
-                  onChange={(v) => setTimePreset(v as TimeRangePreset)}
-                />
-                {timePreset === 'custom' && (
-                  <div style={{ marginTop: 12 }}>
-                    <Space direction="vertical" style={{ width: '100%' }} size={10}>
-                      <div>
-                        <Typography.Text type="secondary">Start Time</Typography.Text>
-                        <Space.Compact style={{ width: '100%', marginTop: 4 }}>
-                          <DatePicker
-                            format="YYYY-MM-DD"
-                            style={{ width: '64%' }}
-                            value={customRange?.[0] ?? null}
-                            onChange={(v) => setCustomRange([v, customRange?.[1] ?? null])}
-                          />
-                          <Input
-                            style={{ width: '36%' }}
-                            value={customStartTimeText}
-                            placeholder="HH:mm:ss"
-                            onChange={(e) => setCustomStartTimeText(sanitizeTimeText(e.target.value))}
-                          />
-                        </Space.Compact>
-                      </div>
-                      <div>
-                        <Typography.Text type="secondary">End Time</Typography.Text>
-                        <Space.Compact style={{ width: '100%', marginTop: 4 }}>
-                          <DatePicker
-                            format="YYYY-MM-DD"
-                            style={{ width: '48%' }}
-                            value={customRange?.[1] ?? null}
-                            onChange={(v) => setCustomRange([customRange?.[0] ?? null, v])}
-                          />
-                          <Input
-                            style={{ width: '32%' }}
-                            value={customEndTimeText}
-                            placeholder="HH:mm:ss"
-                            onChange={(e) => setCustomEndTimeText(sanitizeTimeText(e.target.value))}
-                          />
-                          <Button style={{ width: '20%' }} onClick={handleSetEndToNow}>Now</Button>
-                        </Space.Compact>
-                      </div>
-                    </Space>
-                  </div>
-                )}
-                <Divider style={{ margin: '12px 0' }} />
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Click outside to auto-save and refresh.
-                </Typography.Text>
-              </div>
-            }
-          >
-            <Button>
-              {selectedRangeLabel()}
-            </Button>
-          </Popover>
-          {isCustomRange && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Custom window locked for auto-refresh
-            </Typography.Text>
-          )}
-          {refreshing && <Spin size="small" style={{ marginLeft: 12 }} />}
-        </div>
-      </Space>
+  const animatedRecentAlerts = useAnimatedNumber((displayData?.recent_1h_alerts ?? 0) as number, 600);
+  const animatedTotalAlerts = useAnimatedNumber(displayData?.total ?? 0, 600);
+  const animatedDataSources = useAnimatedNumber((displayData?.data_source_count ?? 0) as number, 600);
+  const animatedEnabledRules = useAnimatedNumber((displayData?.enabled_siem_rule_count ?? 0) as number, 600);
+  const animatedDetections = useAnimatedNumber((displayData?.siem_rule_detected_count_1h ?? 0) as number, 600);
 
-      {/* Keep 5 KPI cards in one row with equal widths that auto-shrink together. */}
-      <div style={{ marginTop: 10, width: '100%', paddingBottom: 2 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 16, width: '100%' }}>
-          <Card title="Alerts in Last Hour" extra={panelRefresh('kpi_last_hour', 'Refresh Alerts in Last Hour')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.recent_1h_alerts ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Total Alerts" extra={panelRefresh('kpi_total_alerts', 'Refresh Total Alerts')}>
-            <Statistic
-              value={useAnimatedNumber(displayData?.total ?? 0, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Data Sources" extra={panelRefresh('kpi_data_sources', 'Refresh Data Sources')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.data_source_count ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Enabled SIEM Rules" extra={panelRefresh('kpi_enabled_rules', 'Refresh Enabled SIEM Rules')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.enabled_siem_rule_count ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
-          <Card title="Detections (Last Hour)" extra={panelRefresh('kpi_detections_1h', 'Refresh Detections in Last Hour')}>
-            <Statistic
-              value={useAnimatedNumber((displayData?.siem_rule_detected_count_1h ?? 0) as number, 600)}
-              loading={!displayData && loading}
-              valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
-            />
-          </Card>
+  const renderOverviewMetricCard = (title: string, value: number, panelKey: string, ariaLabel: string) => (
+    // Shared card renderer keeps all overview KPI cards visually symmetric.
+    <Card
+      className="dashboard-kpi-card"
+      title={title}
+      extra={panelRefresh(panelKey, ariaLabel)}
+      style={{ width: '100%', minWidth: 0 }}
+      styles={{ body: { minHeight: 78 } }}
+    >
+      <Statistic
+        value={value}
+        loading={!displayData && loading}
+        valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
+      />
+    </Card>
+  );
+
+  // Reuse a single paged table-card renderer so bottom-row modules stay aligned without extra wrapper layers.
+  const renderPagedTableCard = (
+    title: string,
+    panelKey: string,
+    ariaLabel: string,
+    columns: Array<any>,
+    dataSource: Array<any>,
+  ) => {
+    const hasRows = Array.isArray(dataSource) && dataSource.length > 0;
+    return (
+    <Card
+      className="dashboard-table-card"
+      title={title}
+      extra={panelRefresh(panelKey, ariaLabel)}
+      styles={{ body: { padding: '8px 12px 12px' } }}
+    >
+      {hasRows ? (
+        <Table
+          size="small"
+          tableLayout="fixed"
+          rowKey={(r) => r.name}
+          pagination={{
+            pageSize: 5,
+            size: 'small',
+            hideOnSinglePage: true,
+            position: ['bottomCenter'],
+          }}
+          columns={columns}
+          dataSource={dataSource as any}
+        />
+      ) : (
+        // Render a flat empty state so "no data" does not create a second visual card via Ant Table internals.
+        <div className="dashboard-table-empty-state">
+          <div className="dashboard-table-empty-head">
+            {columns.map((column, index) => (
+              <span key={String(column?.dataIndex || column?.key || index)}>
+                {String(column?.title || '')}
+              </span>
+            ))}
+          </div>
+          <div className="dashboard-table-empty-body">
+            <Empty description="No data" />
+          </div>
         </div>
+      )}
+    </Card>
+    );
+  };
+
+  const timeParams = {
+    start_time: activeTimeWindow.start_time,
+    end_time: activeTimeWindow.end_time,
+    all_time: activeTimeWindow.all_time,
+  };
+
+  const isCustomPresetActive = timePreset === 'custom';
+
+  return (
+  <div className="dashboard-home-shell">
+      <div className="dashboard-toolbar-shell">
+        <div className="dashboard-toolbar-title-shell">
+          <span className="dashboard-toolbar-title">Dashboard Overview</span>
+        </div>
+        <div className="dashboard-time-anchor" ref={timeMenuRef}>
+          {/* Collapse the time controls into a compact trigger so the header preserves title space. */}
+          <button
+            type="button"
+            className={`dashboard-time-trigger${isTimeMenuOpen ? ' is-open' : ''}`}
+            onClick={() => setIsTimeMenuOpen((open) => !open)}
+            aria-haspopup="dialog"
+            aria-expanded={isTimeMenuOpen}
+          >
+            <span className="dashboard-time-trigger-label">{selectedRangeLabel()}</span>
+            <span className="dashboard-time-trigger-caret">{isTimeMenuOpen ? '▴' : '▾'}</span>
+          </button>
+          {/* Keep refresh/custom-range context inline so the toolbar stays compact above the fold. */}
+          <div className="dashboard-time-meta">
+            <div className="dashboard-time-inline-status">
+              {refreshing ? <Spin size="small" /> : null}
+            </div>
+            {isCustomRange ? (
+              <Typography.Text className="dashboard-time-inline-hint" type="secondary">
+                Custom window locked for auto-refresh
+              </Typography.Text>
+            ) : null}
+          </div>
+          {isTimeMenuOpen ? (
+            <div
+              className="dashboard-time-popover"
+              role="dialog"
+              aria-label="Dashboard time range selector"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="dashboard-time-popover-header">
+                <ClockCircleOutlined />
+                <span>Time Range</span>
+              </div>
+              {/* Vertical preset stack frees horizontal room while keeping time shortcuts one click away. */}
+              <div className="dashboard-time-preset-stack" role="group" aria-label="Dashboard time presets">
+                <Button block type={timePreset === '1h' ? 'primary' : 'default'} onClick={() => void handlePresetSelection('1h')}>1H</Button>
+                <Button block type={timePreset === '24h' ? 'primary' : 'default'} onClick={() => void handlePresetSelection('24h')}>24H</Button>
+                <Button block type={timePreset === '7d' ? 'primary' : 'default'} onClick={() => void handlePresetSelection('7d')}>7D</Button>
+                <Button block type={timePreset === 'all' ? 'primary' : 'default'} onClick={() => void handlePresetSelection('all')}>ALL TIME</Button>
+                <Button
+                  block
+                  className="dashboard-time-custom-button"
+                  type={timePreset === 'custom' ? 'primary' : 'default'}
+                  onClick={() => void handlePresetSelection('custom')}
+                >
+                  CUSTOM
+                </Button>
+              </div>
+              {/* Keep custom inputs docked at the bottom of the popover and lock them until Custom is active. */}
+              <div
+                className={`dashboard-custom-time-grid${isCustomPresetActive ? ' is-active' : ' is-disabled'}`}
+                aria-disabled={!isCustomPresetActive}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="dashboard-custom-time-field">
+                  <Typography.Text type="secondary">Start</Typography.Text>
+                  <Space.Compact style={{ width: '100%', marginTop: 4 }}>
+                    <DatePicker
+                      format="YYYY-MM-DD"
+                      style={{ width: '62%' }}
+                      disabled={!isCustomPresetActive}
+                      getPopupContainer={(trigger) => trigger.parentElement || timeMenuRef.current || document.body}
+                      value={customRange?.[0] ?? null}
+                      onChange={(v) => setCustomRange([v, customRange?.[1] ?? null])}
+                    />
+                    <Input
+                      style={{ width: '38%' }}
+                      disabled={!isCustomPresetActive}
+                      value={customStartTimeText}
+                      placeholder="HH:mm:ss"
+                      onChange={(e) => setCustomStartTimeText(sanitizeTimeText(e.target.value))}
+                    />
+                  </Space.Compact>
+                </div>
+                <div className="dashboard-custom-time-field">
+                  <Typography.Text type="secondary">End</Typography.Text>
+                  <Space.Compact style={{ width: '100%', marginTop: 4 }}>
+                    <DatePicker
+                      format="YYYY-MM-DD"
+                      style={{ width: '46%' }}
+                      disabled={!isCustomPresetActive}
+                      getPopupContainer={(trigger) => trigger.parentElement || timeMenuRef.current || document.body}
+                      value={customRange?.[1] ?? null}
+                      onChange={(v) => setCustomRange([customRange?.[0] ?? null, v])}
+                    />
+                    <Input
+                      style={{ width: '30%' }}
+                      disabled={!isCustomPresetActive}
+                      value={customEndTimeText}
+                      placeholder="HH:mm:ss"
+                      onChange={(e) => setCustomEndTimeText(sanitizeTimeText(e.target.value))}
+                    />
+                    <Button style={{ width: '24%' }} disabled={!isCustomPresetActive} onClick={handleSetEndToNow}>Now</Button>
+                  </Space.Compact>
+                </div>
+                {/* Surface custom-range errors inline so invalid windows are immediately obvious. */}
+                {isCustomPresetActive && customRangeValidationError ? (
+                  <Typography.Text className="dashboard-custom-time-error" type="danger">
+                    {customRangeValidationError}
+                  </Typography.Text>
+                ) : null}
+              </div>
+              <div className="dashboard-time-actions">
+                {isCustomPresetActive ? (
+                  <Button type="primary" disabled={!isCustomRangeValid} onClick={() => void applyTimeSelection()}>
+                    Apply Custom
+                  </Button>
+                ) : null}
+                <Button disabled={isCustomPresetActive && !isCustomRangeValid} onClick={handleSaveDefaultTimeWindow}>
+                  Set as Default
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Merge the former sub-tabs into one command-center flow so all analytics stay visible at once. */}
+      <div className="dashboard-section-stack">
+      {/* Flatten KPI wrappers so the grid itself owns the spacing and sizing contract. */}
+      <div className="dashboard-kpi-grid dashboard-kpi-grid-compact">
+        {renderOverviewMetricCard('Alerts in Last Hour', animatedRecentAlerts, 'kpi_last_hour', 'Refresh Alerts in Last Hour')}
+        {renderOverviewMetricCard('Total Alerts', animatedTotalAlerts, 'kpi_total_alerts', 'Refresh Total Alerts')}
+        {renderOverviewMetricCard('Data Sources', animatedDataSources, 'kpi_data_sources', 'Refresh Data Sources')}
+        {renderOverviewMetricCard('Enabled SIEM Rules', animatedEnabledRules, 'kpi_enabled_rules', 'Refresh Enabled SIEM Rules')}
+        {renderOverviewMetricCard('Detections (Last Hour)', animatedDetections, 'kpi_detections_1h', 'Refresh Detections in Last Hour')}
       </div>
 
       {/* Row 1: Pie#1 + Bar#1 */}
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={10}>
-          <Card title="Alert Category Breakdown" extra={panelRefresh('category_breakdown', 'Refresh Alert Category Breakdown')}>
+          <Card className="dashboard-equal-card" title="Alert Category Breakdown" extra={panelRefresh('category_breakdown', 'Refresh Alert Category Breakdown')}>
             {hasEntries(categoryBreakdown) ? (
               <Pie
                 key={`category-pie-${themeMode}`}
@@ -617,6 +786,7 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={14}>
           {displayData && (
             <Card
+              className="dashboard-equal-card"
               title="Alert Trend"
               extra={
                 <Space>
@@ -706,7 +876,7 @@ const Dashboard: React.FC = () => {
       {/* Row 2: Pie#2 + Bar#2 */}
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={10}>
-          <Card title="Alert Severity Distribution" extra={panelRefresh('severity_distribution', 'Refresh Alert Severity Distribution')}>
+          <Card className="dashboard-equal-card" title="Alert Severity Distribution" extra={panelRefresh('severity_distribution', 'Refresh Alert Severity Distribution')}>
             {hasEntries(severityDistribution) ? (
               <Pie
                 key={`severity-pie-${themeMode}`}
@@ -744,6 +914,7 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={14}>
           {displayData && (
             <Card
+              className="dashboard-equal-card"
               title="Alert Score Trend"
               extra={
                 <Space>
@@ -829,98 +1000,85 @@ const Dashboard: React.FC = () => {
         </Col>
       </Row>
 
-      {/* Tables (responsive) */}
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      {/* Table row uses one stretch-aligned grid line so all cards hold the same height baseline. */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16, alignItems: 'stretch' }}>
         <Col xs={24} md={12} xl={6}>
-          <Card
-            title="Top Source 10 IP"
-            extra={panelRefresh('top_source_ips', 'Refresh Top Source 10 IP')}
-            styles={{ body: { padding: '8px 12px 12px' } }}
-          >
-            <Table
-              size="small"
-              pagination={false}
-              tableLayout="fixed"
-              rowKey={(r) => r.name}
-              columns={[
-                { title: 'IP', dataIndex: 'name', ellipsis: true },
-                { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-              ]}
-              dataSource={(displayData?.top_source_ips ?? []) as any}
-            />
-          </Card>
+          {renderPagedTableCard(
+            'Top Source 10 IP',
+            'top_source_ips',
+            'Refresh Top Source 10 IP',
+            [
+              { title: 'IP', dataIndex: 'name', ellipsis: true },
+              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+            ],
+            (displayData?.top_source_ips ?? []) as any[],
+          )}
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card
-            title="Top 10 Users"
-            extra={panelRefresh('top_users', 'Refresh Top 10 Users')}
-            styles={{ body: { padding: '8px 12px 12px' } }}
-          >
-            <Table
-              size="small"
-              pagination={false}
-              tableLayout="fixed"
-              rowKey={(r) => r.name}
-              columns={[
-                { title: 'User', dataIndex: 'name', ellipsis: true },
-                { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-              ]}
-              dataSource={(displayData?.top_users ?? []) as any}
-            />
-          </Card>
+          {renderPagedTableCard(
+            'Top 10 Users',
+            'top_users',
+            'Refresh Top 10 Users',
+            [
+              { title: 'User', dataIndex: 'name', ellipsis: true },
+              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+            ],
+            (displayData?.top_users ?? []) as any[],
+          )}
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card
-            title="Top 10 Sources"
-            extra={panelRefresh('top_sources', 'Refresh Top 10 Sources')}
-            styles={{ body: { padding: '8px 12px 12px' } }}
-          >
-            <Table
-              size="small"
-              pagination={false}
-              tableLayout="fixed"
-              rowKey={(r) => r.name}
-              columns={[
-                { title: 'Source', dataIndex: 'name', ellipsis: true },
-                { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-              ]}
-              dataSource={(displayData?.top_sources ?? []) as any}
-            />
-          </Card>
+          {renderPagedTableCard(
+            'Top 10 Sources',
+            'top_sources',
+            'Refresh Top 10 Sources',
+            [
+              { title: 'Source', dataIndex: 'name', ellipsis: true },
+              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+            ],
+            (displayData?.top_sources ?? []) as any[],
+          )}
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card
-            title="Top 10 Rules"
-            extra={panelRefresh('top_rules', 'Refresh Top 10 Rules')}
-            styles={{ body: { padding: '8px 12px 12px' } }}
-          >
-            <Table
-              size="small"
-              pagination={false}
-              tableLayout="fixed"
-              rowKey={(r) => r.name}
-              columns={[
-                {
-                  title: 'Rule',
-                  dataIndex: 'name',
-                  ellipsis: true,
-                  render: (value: string) => (
-                    <span style={{ display: 'inline-block', width: '100%', wordBreak: 'break-all' }}>{value}</span>
-                  ),
-                },
-                { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-              ]}
-              dataSource={(displayData?.top_rules ?? []) as any}
-            />
-          </Card>
+          {renderPagedTableCard(
+            'Top 10 Rules',
+            'top_rules',
+            'Refresh Top 10 Rules',
+            [
+              {
+                title: 'Rule',
+                dataIndex: 'name',
+                ellipsis: true,
+                render: (value: string) => (
+                  <span style={{ display: 'inline-block', width: '100%', wordBreak: 'break-all' }}>{value}</span>
+                ),
+              },
+              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+            ],
+            (displayData?.top_rules ?? []) as any[],
+          )}
         </Col>
       </Row>
+
+      {/* Surface the funnel directly after overview metrics to remove the extra tab hop. */}
+      <div className="dashboard-section-block">
+        <AlertFunnelChart
+          startTime={timeParams.start_time}
+          endTime={timeParams.end_time}
+          allTime={timeParams.all_time}
+        />
+      </div>
+
+      {/* Keep the 5-stage correlation pipeline continuously visible beneath the conversion funnel. */}
+      <div className="dashboard-section-block">
+        <AlertSankeyChart startTime={timeParams.start_time} endTime={timeParams.end_time} />
+      </div>
+      </div>
 
       <Modal title={`Raw dashboard data ${debugKey ? ` - ${debugKey}` : ''}`} open={debugModalVisible} onCancel={() => setDebugModalVisible(false)} footer={<Button onClick={() => setDebugModalVisible(false)}>Close</Button>} width={800}>
         <pre style={{ maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{getDebugContent()}</pre>
       </Modal>
 
-    </>
+    </div>
   );
 };
 
