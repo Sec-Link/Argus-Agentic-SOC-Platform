@@ -27,6 +27,7 @@ from django.utils import timezone
 from django.core.cache import cache
 
 from .models import Alert, ESIntegrationConfig
+from detections.models import LocalDetectionRule
 
 MOCK_FILE = Path(__file__).resolve().parent / 'mock_alerts.json'
 
@@ -337,6 +338,22 @@ def _ensure_alert_identity(doc: Dict, fallback_index: str | None = None) -> str:
         return aid
     raw = json.dumps({'doc': doc, 'idx': fallback_index}, sort_keys=True, default=str, ensure_ascii=True)
     return f"fp_{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"[:64]
+
+
+def _enrich_rule_names(alerts: List[Dict]) -> List[Dict]:
+    """Inject rule_name into alert dicts via a single bulk DB lookup."""
+    rule_ids = {a.get('rule_id') for a in alerts if a.get('rule_id')}
+    if not rule_ids:
+        return alerts
+    name_map = dict(
+        LocalDetectionRule.objects.filter(rule_uuid__in=rule_ids, is_deleted=False)
+        .values_list('rule_uuid', 'name')
+    )
+    for alert in alerts:
+        rid = alert.get('rule_id')
+        if rid and rid in name_map:
+            alert['rule_name'] = name_map[rid]
+    return alerts
 
 
 def _serialize_alert_row(row: Alert) -> Dict:
@@ -770,7 +787,8 @@ class AlertService:
                 )
                 elapsed_ms = int((time.time() - start_time) * 1000)
                 logger.info('list_alerts force_db cached_count=%d elapsed_ms=%d', len(cached), elapsed_ms)
-                return [_serialize_alert_row(r) for r in cached], 'db'
+                serialized = _enrich_rule_names([_serialize_alert_row(r) for r in cached])
+                return serialized, 'db'
             except Exception as e:
                 logger.exception('DB read failed in force_db mode: %s', e)
                 return [], 'db'
@@ -783,7 +801,7 @@ class AlertService:
                 if cached:
                     elapsed_ms = int((time.time() - start_time) * 1000)
                     logger.info('list_alerts db cache hit cached_count=%d elapsed_ms=%d', len(cached), elapsed_ms)
-                    return [_serialize_alert_row(r) for r in cached], 'db'
+                    return _enrich_rule_names([_serialize_alert_row(r) for r in cached]), 'db'
             except Exception as e:
                 logger.exception('DB read failed, falling back to ES/mock: %s', e)
 
