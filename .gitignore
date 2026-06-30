@@ -38,4 +38,11 @@ Thumbs.db
 tmp_cache/
 # MITRE ATT&CK data is fetched during deployment by sync_mitre_attack_dicts.
 backend/detections/mitre_attack_stub.json
+
+# Claude Code local config — contains personal settings and MCP credentials
+.claude/settings.json
+.claude/settings.local.json
+.mcp.json
+
+# TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo

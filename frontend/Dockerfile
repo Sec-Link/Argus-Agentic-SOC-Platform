@@ -19,6 +19,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_OUTPUT_MODE=standalone
 
 # 安全加固：创建非 root 用户运行 Node.js 进程
 RUN addgroup --system --gid 1001 nodejs

@@ -6,6 +6,7 @@ import secrets
 import hashlib
 from datetime import timedelta
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.utils import timezone, dateparse
 from .models import Task, TaskRun
 from integrations.models import Integration
@@ -471,10 +472,12 @@ def execute_task(task: Task) -> TaskRun:
                         # Enforce policy-defined keys strictly when configured.
                         if policy_match_keys:
                             parts = []
+                            missing = []
                             for key in policy_match_keys:
                                 val = get_field(doc, key)
                                 if val is None or val == '':
-                                    return ''
+                                    missing.append(key)
+                                    continue
                                 if isinstance(val, (dict, list)):
                                     try:
                                         val = json.dumps(val, ensure_ascii=True, sort_keys=True)
@@ -483,7 +486,15 @@ def execute_task(task: Task) -> TaskRun:
                                 else:
                                     val = str(val)
                                 parts.append(val if len(policy_match_keys) == 1 else f"{key}={val}")
-                            return "|".join(parts)
+                            if parts:
+                                if missing:
+                                    log_lines.append(
+                                        f"Correlation key fallback: missing policy keys {missing}, using available keys only"
+                                    )
+                                return "|".join(parts)
+                            log_lines.append(
+                                f"Correlation key fallback: missing all policy keys {policy_match_keys}, using alert identity"
+                            )
 
                         parts = []
                         for key in policy_match_keys:
@@ -525,18 +536,36 @@ def execute_task(task: Task) -> TaskRun:
                             occurred_at=occurred_at,
                         )
 
+                    def create_ticket_from_alert(payload):
+                        """Create a ticket locally so orchestrator jobs do not depend on self-HTTP auth."""
+                        event_siem_id = str(payload.get('event_siem_id') or '').strip()
+                        if event_siem_id:
+                            existing_ticket = EventTicket.objects.filter(
+                                event_siem_id=event_siem_id,
+                                is_deleted=False,
+                            ).first()
+                            if existing_ticket:
+                                return existing_ticket, False
+
+                        ticket = EventTicket(
+                            event_siem_id=event_siem_id or None,
+                            title=_truncate_text(payload.get('title') or 'SIEM Alert', 255) or 'SIEM Alert',
+                            description=payload.get('description') or '',
+                            alert_message=payload.get('alert_message') or '',
+                            priority=payload.get('priority') or 'medium',
+                            status=payload.get('status') or 'new',
+                            create_uid=payload.get('create_uid') or 'siem',
+                        )
+                        ticket.full_clean(exclude=['ticket_number'])
+                        ticket.save()
+                        return ticket, True
+
                     for doc in docs or []:
                         if not eval_conditions(doc, conditions):
                             skipped_count += 1
                             continue
                         matched_count += 1
                         correlation_key = build_correlation_key(doc)
-                        if policy_match_keys and not correlation_key:
-                            skipped_count += 1
-                            log_lines.append(
-                                f"Skipped alert for ticketing: missing one or more correlation keys {policy_match_keys}"
-                            )
-                            continue
 
                         payload = {
                             'event_siem_id': doc.get('alert_id') or doc.get('event_id') or doc.get('es_id'),
@@ -589,32 +618,24 @@ def execute_task(task: Task) -> TaskRun:
                                         continue
                                     log_lines.append("Correlation miss: no ticket matched")
 
-                            base_url = os.getenv('TICKETS_API_BASE', 'http://localhost:8000/api/v1/tickets/')
-                            token = os.getenv('TICKETS_API_TOKEN')
-                            if not token:
-                                raise Exception('TICKETS_API_TOKEN is not set')
-                            headers = {
-                                'Authorization': f'Token {token}',
-                                'Content-Type': 'application/json',
-                            }
-                            resp = requests.post(base_url, json=payload, headers=headers, timeout=15)
-                            if resp.status_code not in (200, 201):
-                                log_lines.append(f"Ticket API error ({resp.status_code}): {resp.text}")
-                                skipped_count += 1
-                                continue
-                            ticket_data = resp.json() if resp.content else {}
-                            ticket_number = ticket_data.get('ticket_number')
-                            if not ticket_number:
-                                log_lines.append("Ticket API response missing ticket_number")
-                                skipped_count += 1
-                                continue
-                            created_count += 1
+                            ticket, was_created = create_ticket_from_alert(payload)
+                            ticket_number = ticket.ticket_number
+                            if was_created:
+                                created_count += 1
+                                log_lines.append(f"Created ticket={ticket_number} for alert_id={alert_id}")
+                            else:
+                                attached_count += 1
+                                log_lines.append(f"Existing ticket={ticket_number} reused for alert_id={alert_id}")
                             update_target_table(alert_id, ticket_number)
                             if correlation_enabled:
                                 correlation_key = build_correlation_key(doc)
                                 record_correlation_event(ticket_number, alert_id, occurred_at, correlation_key)
+                        except ValidationError as e:
+                            log_lines.append(f"Ticket validation failed for alert_id={doc.get('alert_id')}: {e}")
+                            skipped_count += 1
+                            had_nonfatal_errors = True
                         except Exception as e:
-                            log_lines.append(f"Ticket API request failed: {str(e)}")
+                            log_lines.append(f"Ticket creation failed for alert_id={doc.get('alert_id')}: {str(e)}")
                             skipped_count += 1
                             had_nonfatal_errors = True
                     log_lines.append(
