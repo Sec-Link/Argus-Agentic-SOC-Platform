@@ -44,3 +44,11 @@ tmp_cache/
 
 # TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo
+
+# Jekyll / GitHub Pages — local build artifacts
+docs/Gemfile
+docs/Gemfile.lock
+docs/_site/
+docs/.sass-cache/
+docs/.jekyll-cache/
+docs/.jekyll-metadata
