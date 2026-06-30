@@ -110,6 +110,7 @@ class LocalDetectionFieldMapping(models.Model):
     sigma_field = models.CharField(max_length=255)
     splunk_field = models.CharField(max_length=255, blank=True, default="")
     elastic_field = models.CharField(max_length=255, blank=True, default="")
+    elastic_is_multivalue = models.BooleanField(default=False)
     elastic_index_patterns = models.JSONField(default=list, blank=True)
     created_by = models.CharField(max_length=150, blank=True, default="")
     updated_by = models.CharField(max_length=150, blank=True, default="")

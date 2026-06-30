@@ -125,6 +125,7 @@ class DetectionMappingListView(APIView):
             "sigma_field": str(data["sigma"]).strip(),
             "splunk_field": str(data.get("splunk") or ""),
             "elastic_field": str(data.get("elastic") or ""),
+            "elastic_is_multivalue": bool(data.get("elastic_is_multivalue")),
             "elastic_index_patterns": [str(item).strip() for item in data.get("elastic_index_patterns", []) if str(item).strip()],
             "category": str(data.get("category") or ""),
             "data_source": str(data.get("data_source") or ""),

@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Card, Input, Modal, Popconfirm, Space, Table } from "antd";
+import { Button, Card, Checkbox, Input, Modal, Popconfirm, Space, Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 
 import { guessElasticIndexPatternsFromProfile } from "./utils";
@@ -9,6 +9,7 @@ type LocalMapRow = {
   sigma: string;
   splunk: string;
   elastic: string;
+  elastic_is_multivalue?: boolean;
   elastic_index_patterns?: string[];
   mapping_profile?: string;
   category?: string;
@@ -21,6 +22,7 @@ type MappingDraft = {
   sigma: string;
   splunk: string;
   elastic: string;
+  elastic_is_multivalue: boolean;
   elastic_index_patterns: string;
   category: string;
   data_source: string;
@@ -61,6 +63,7 @@ export default function DetectionMappings(props: Props) {
         row.sigma,
         row.splunk,
         row.elastic,
+        row.elastic_is_multivalue ? "multivalue" : "single value",
         row.category,
         row.data_source,
         row.event_category,
@@ -76,6 +79,13 @@ export default function DetectionMappings(props: Props) {
     { title: "Sigma", dataIndex: "sigma", key: "sigma" },
     { title: "Splunk", dataIndex: "splunk", key: "splunk" },
     { title: "Elastic ECS", dataIndex: "elastic", key: "elastic" },
+    {
+      title: "Multivalue",
+      dataIndex: "elastic_is_multivalue",
+      key: "elastic_is_multivalue",
+      width: 120,
+      render: (value) => (value ? "Yes" : "No"),
+    },
     {
       title: "Elastic Index Patterns",
       key: "elastic_index_patterns",
@@ -96,6 +106,10 @@ export default function DetectionMappings(props: Props) {
   ];
 
   const setField = (key: keyof MappingDraft, value: string) => {
+    props.onSetDraft({ ...props.draft, [key]: value });
+  };
+
+  const setBoolField = (key: keyof MappingDraft, value: boolean) => {
     props.onSetDraft({ ...props.draft, [key]: value });
   };
 
@@ -171,6 +185,9 @@ export default function DetectionMappings(props: Props) {
           <Input placeholder="Mapping Profile" value={props.draft.mapping_profile} onChange={(e) => setField("mapping_profile", e.target.value)} />
           <Input placeholder="Sigma Field" value={props.draft.sigma} onChange={(e) => setField("sigma", e.target.value)} />
           <Input placeholder="Elastic ECS Field" value={props.draft.elastic} onChange={(e) => setField("elastic", e.target.value)} />
+          <Checkbox checked={props.draft.elastic_is_multivalue} onChange={(e) => setBoolField("elastic_is_multivalue", e.target.checked)}>
+            Elastic field is multivalue
+          </Checkbox>
           <Input.TextArea
             placeholder={"Elastic Index Patterns, one per line or comma separated\nlogs-*\nwinlogbeat-*"}
             value={props.draft.elastic_index_patterns}

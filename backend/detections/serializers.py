@@ -34,6 +34,7 @@ class DetectionMappingSerializer(serializers.ModelSerializer):
             "sigma",
             "splunk",
             "elastic",
+            "elastic_is_multivalue",
             "elastic_index_patterns",
         )
 
@@ -44,6 +45,7 @@ class DetectionMappingSaveSerializer(serializers.Serializer):
     sigma = serializers.CharField(required=True, allow_blank=False)
     splunk = serializers.CharField(required=False, allow_blank=True, default="")
     elastic = serializers.CharField(required=False, allow_blank=True, default="")
+    elastic_is_multivalue = serializers.BooleanField(required=False, default=False)
     elastic_index_patterns = serializers.ListField(
         child=serializers.CharField(allow_blank=False),
         required=False,
