@@ -171,7 +171,7 @@ export default function Sidebar({
             aria-label="Go to dashboard"
           >
             <img
-              src="/seclink-logo.svg"
+              src="/seclink-logo.png"
               alt="Argus logo"
               width={40}
               height={40}

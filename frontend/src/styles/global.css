@@ -460,17 +460,24 @@ html, body {
   min-width: 980px;
   --dashboard-sankey-plot-left: 84px;
   --dashboard-sankey-plot-right: 88px;
-  --dashboard-sankey-stage-columns: 1.2fr 1.08fr 0.94fr 0.94fr 1.08fr;
+  /* nodeWidth / 2 = 10px: shifts anchor from column edge to column center */
+  --dashboard-sankey-node-half: 10px;
 }
 
-/* Sankey stage overlay: share one grid/inset system for headers and column guides. */
+/* Stage overlay: flex with space-between so zero-width anchors land at exactly
+   the same proportional positions that ECharts justify places each node column. */
 .dashboard-sankey-stage-guide,
 .dashboard-sankey-stage-header {
   position: relative;
-  display: grid;
-  grid-template-columns: var(--dashboard-sankey-stage-columns);
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  /* Outer margins align to the ECharts plot area */
   margin-left: var(--dashboard-sankey-plot-left);
   margin-right: var(--dashboard-sankey-plot-right);
+  /* Inner padding shifts anchors from plot edges to column centres */
+  padding-left: var(--dashboard-sankey-node-half);
+  padding-right: var(--dashboard-sankey-node-half);
 }
 
 .dashboard-sankey-stage-guide {
@@ -481,30 +488,37 @@ html, body {
   z-index: 0;
 }
 
-/* Dashed separators make stage ownership clearer without overpowering the chart. */
+/* Each divider is a zero-width flex anchor; space-between places them at the
+   exact column-centre x-coordinates that ECharts uses for each depth level. */
 .dashboard-sankey-stage-divider {
+  flex: 0 0 0;
+  align-self: stretch;
   border-left: 1px dashed transparent;
 }
 
-/* Center each stage title over its corresponding Sankey lane. */
+/* Stage header sits one level above the guide. */
 .dashboard-sankey-stage-header {
-  gap: 0;
+  align-items: center;
+  min-height: 28px;
   margin-bottom: 4px;
   z-index: 1;
 }
 
+/* Zero-width anchor: the Typography text is absolutely centred on this point. */
 .dashboard-sankey-stage-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  padding: 0 8px;
-  text-align: center;
+  flex: 0 0 0;
+  position: relative;
+  overflow: visible;
 }
 
 .dashboard-sankey-stage-cell .ant-typography {
-  width: 100%;
-  text-wrap: balance;
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  text-align: center;
+  width: max-content;
 }
 
 /* Keep the Sankey subtitle aligned to the same visual plot rail. */
@@ -565,7 +579,6 @@ html, body {
     min-width: 760px;
     --dashboard-sankey-plot-left: 72px;
     --dashboard-sankey-plot-right: 64px;
-    --dashboard-sankey-stage-columns: 1.14fr 1.05fr 0.94fr 0.94fr 1.12fr;
   }
 }
 
@@ -597,7 +610,6 @@ html, body {
     min-width: 640px;
     --dashboard-sankey-plot-left: 60px;
     --dashboard-sankey-plot-right: 56px;
-    --dashboard-sankey-stage-columns: 1.08fr 1fr 0.96fr 0.96fr 1fr;
   }
 
   /* Compact mobile labels stay centered while preserving stage readability. */

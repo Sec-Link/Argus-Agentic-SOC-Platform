@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import { fetchAlerts } from 'services/alerts';
 import type { Alert } from 'types';
@@ -305,7 +306,27 @@ const AlertList: React.FC = () => {
             width: 100,
             ellipsis: true,
             render: (_: any, row: any) => normalizeText(pick(row, ['source_index', '_index'])),
-          }
+          },
+          {
+            title: 'Detection Rule',
+            dataIndex: 'rule_name',
+            key: 'rule_name',
+            width: 180,
+            ellipsis: true,
+            render: (_: any, row: any) => {
+              const name = row.rule_name || row.rule_id;
+              const id = row.rule_id;
+              if (!name) return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
+              if (id) {
+                return (
+                  <Link href={`/detections/rules/${id}`} onClick={(e) => e.stopPropagation()}>
+                    {String(name)}
+                  </Link>
+                );
+              }
+              return <span>{String(name)}</span>;
+            },
+          },
           ]}
         />
       </div>
@@ -353,6 +374,21 @@ const AlertList: React.FC = () => {
                 {normalizeText(pick(selectedAlert, ['description', 'details', 'event.reason', 'raw_message']))}
               </div>
             </div>
+
+            {(selectedAlert.rule_id || selectedAlert.rule_name) && (
+              <div>
+                <Text strong>Detection Rule</Text>
+                <div style={{ marginTop: 6 }}>
+                  {selectedAlert.rule_id ? (
+                    <Link href={`/detections/rules/${selectedAlert.rule_id}`}>
+                      {selectedAlert.rule_name || selectedAlert.rule_id}
+                    </Link>
+                  ) : (
+                    <span>{selectedAlert.rule_name}</span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div>
               <Text strong>Raw Context</Text>
