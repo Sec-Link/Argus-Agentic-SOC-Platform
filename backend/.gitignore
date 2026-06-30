@@ -1,49 +1,38 @@
+# Node.js dependencies
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/.next.bak-*/
+frontend/out/
+frontend/.turbo/
+frontend/.next-dev.log
+frontend/legacy-spa/dist/
+frontend/legacy-spa/node_modules/
+
+# Logs
+logs/
+*.log
+
 # Environment variables
 .env
-.env.local
-.env.*.local
-env
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Django
-*.log
-local_settings.py
-db.sqlite3
-/media/
-/staticfiles/
-
-# IDE
+# IDE settings
 .vscode/
 .idea/
 *.iml
-*.swp
-*.swo
-*~
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
+
+# pyc files
+**/__pycache__/*.pyc
+*.pyc
+*.pyo
+*.pyd
+
+# tmp cache
+tmp_cache/

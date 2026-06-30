@@ -2,6 +2,7 @@ import csv
 import difflib
 import io
 import json
+import re
 import uuid
 from itertools import zip_longest
 
@@ -11,9 +12,10 @@ from .models import (
     LocalDetectionDeployment,
     LocalDetectionFieldMapping,
     LocalDetectionRule,
+    LocalDetectionRuleMitreAttack,
     LocalDetectionRuleVersion,
 )
-from .sigma import build_kibana_threat_from_tags, build_rule_detail_metadata, extract_rule_id, extract_rule_meta
+from .sigma import build_kibana_threat_from_tags, build_rule_detail_metadata, extract_rule_id, extract_rule_meta, parse_mitre_attack_tags
 
 
 def user_name_from_request(request) -> str:
@@ -22,6 +24,31 @@ def user_name_from_request(request) -> str:
         return ""
     return str(getattr(user, "username", "") or getattr(user, "email", "") or getattr(user, "id", "") or "")
 
+
+def sync_rule_mitre_attack_mappings(rule: LocalDetectionRule, tags: list[str] | None) -> None:
+    rows = parse_mitre_attack_tags(tags)
+    payload = rule.payload if isinstance(rule.payload, dict) else {}
+    kibana_meta = payload.get("kibana_metadata") if isinstance(payload.get("kibana_metadata"), dict) else {}
+    sigma_rule_id = str(rule.rule_uuid or "").strip()
+    kibana_rule_id = str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or kibana_meta.get("remote_id") or "").strip()
+
+    LocalDetectionRuleMitreAttack.objects.filter(rule_id=sigma_rule_id).delete()
+    if not rows:
+        return
+    LocalDetectionRuleMitreAttack.objects.bulk_create(
+        [
+            LocalDetectionRuleMitreAttack(
+                rule_id=sigma_rule_id,
+                kibana_rule_id=kibana_rule_id,
+                tactic_id=row["tactic_id"],
+                tactic_name=row["tactic_name"],
+                technique_id=row["technique_id"],
+                technique_name=row["technique_name"],
+            )
+            for row in rows
+        ],
+        ignore_conflicts=True,
+    )
 
 def append_rule_version(
     rule: LocalDetectionRule,
@@ -91,7 +118,7 @@ def summarize_payload_changes(previous_payload: dict | None, next_payload: dict 
         ("name", "Rule Name"),
         ("enabled", "Enabled"),
         ("type", "Rule Type"),
-        ("query", "ES|QL Query"),
+        ("query", "Detection Query"),
         ("description", "Description"),
         ("kibana_metadata", "Kibana Metadata"),
     ]
@@ -153,7 +180,7 @@ def serialize_legacy_rule(rule: LocalDetectionRule) -> dict:
         "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
         "publish_status": "published" if kibana_meta.get("published") else "unpublished",
         "kibana_enabled": bool(kibana_meta.get("enabled", False)),
-        "kibana_rule_id": str(kibana_meta.get("rule_id") or ""),
+        "kibana_rule_id": str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or kibana_meta.get("remote_id") or ""),
     }
 
 
@@ -257,6 +284,7 @@ def save_local_rule(
                 change_type="create",
                 change_summary=[{"field": "rule", "label": "Rule", "type": "created", "message": "Created rule"}],
             )
+            sync_rule_mitre_attack_mappings(rule, payload.get("tags"))
             return rule
 
         previous_payload = dict(rule.payload or {})
@@ -273,11 +301,13 @@ def save_local_rule(
             change_type="update",
             change_summary=summarize_payload_changes(previous_payload, payload),
         )
+        sync_rule_mitre_attack_mappings(rule, payload.get("tags"))
         return rule
 
 
 def soft_delete_local_rule(*, rule: LocalDetectionRule, actor: str) -> None:
     with transaction.atomic():
+        LocalDetectionRuleMitreAttack.objects.filter(rule_id=rule.rule_uuid).delete()
         rule.is_deleted = True
         rule.version += 1
         rule.updated_by = actor
@@ -390,6 +420,20 @@ def import_mapping_files(*, files, actor: str) -> dict:
     skipped = 0
     results = []
 
+    def parse_index_patterns(value) -> list[str]:
+        if isinstance(value, list):
+            raw_values = value
+        else:
+            raw_values = re.split(r"[\r\n,;]+", str(value or ""))
+        patterns = []
+        seen = set()
+        for item in raw_values:
+            pattern = str(item or "").strip()
+            if pattern and pattern not in seen:
+                seen.add(pattern)
+                patterns.append(pattern)
+        return patterns
+
     def upsert_row(row: dict) -> str:
         nonlocal created, updated, skipped
         profile = str(row.get("mapping_profile") or row.get("profile") or "").strip()
@@ -406,6 +450,7 @@ def import_mapping_files(*, files, actor: str) -> dict:
             "event_category": str(row.get("event_category") or row.get("event") or ""),
             "splunk_field": str(row.get("splunk") or row.get("splunk_field") or ""),
             "elastic_field": str(row.get("elastic") or row.get("elastic_field") or ""),
+            "elastic_index_patterns": parse_index_patterns(row.get("elastic_index_patterns") or row.get("index_patterns") or row.get("indices")),
             "updated_by": actor,
         }
         obj, is_created = LocalDetectionFieldMapping.objects.update_or_create(
@@ -529,6 +574,7 @@ def export_mapping_bundle(*, mapping_ids: list[str] | None = None) -> dict:
             "sigma": row.sigma_field,
             "splunk": row.splunk_field,
             "elastic": row.elastic_field,
+            "elastic_index_patterns": row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else [],
         }
         for row in rows
     ]
@@ -543,7 +589,7 @@ def export_mapping_csv(*, mapping_ids: list[str] | None = None) -> str:
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=["mapping_profile", "category", "data_source", "event_category", "sigma", "splunk", "elastic"],
+        fieldnames=["mapping_profile", "category", "data_source", "event_category", "sigma", "splunk", "elastic", "elastic_index_patterns"],
     )
     writer.writeheader()
     for row in rows:
@@ -556,6 +602,7 @@ def export_mapping_csv(*, mapping_ids: list[str] | None = None) -> str:
                 "sigma": row.sigma_field,
                 "splunk": row.splunk_field,
                 "elastic": row.elastic_field,
+                "elastic_index_patterns": ", ".join(row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else []),
             }
         )
     return output.getvalue()

@@ -40,7 +40,12 @@ export default function DetectionRuleDetail(props: Props) {
   const meta = props.detail.meta || {};
   const compiled = props.detail.compiled || {};
   const logSourceParts = [meta.product, meta.service, meta.category].filter((value) => String(value || "").trim());
-  const esqlPreview = applyIndexPatternsToEsql(compiled.esql || "*", parseIndexPatterns(props.elasticIndexPatternsText));
+  const compiledLanguage = String(compiled.language || (compiled.lucene ? "lucene" : "esql")).toLowerCase();
+  const queryLabel = compiledLanguage === "lucene" ? "Lucene" : "ES|QL";
+  const queryPreview =
+    compiledLanguage === "lucene"
+      ? String(compiled.lucene || "*")
+      : applyIndexPatternsToEsql(compiled.esql || "*", parseIndexPatterns(props.elasticIndexPatternsText));
   const [selectedVersion, setSelectedVersion] = React.useState<number | undefined>(undefined);
   const formatVersionTime = (value: any) => {
     const raw = String(value || "").trim();
@@ -71,7 +76,7 @@ export default function DetectionRuleDetail(props: Props) {
     props.detailTab === "sigma"
       ? meta.detection_preview || props.detail.yaml || ""
       : props.detailTab === "esql"
-        ? esqlPreview
+        ? queryPreview
         : "";
 
   return (
@@ -111,8 +116,8 @@ export default function DetectionRuleDetail(props: Props) {
         }
       >
         <Space wrap>
-          <Typography.Text type="secondary">Rule ID: {props.kibanaMetadata.rule_id || "-"}</Typography.Text>
-          <Typography.Text type="secondary">Remote ID: {props.kibanaMetadata.remote_id || "-"}</Typography.Text>
+          <Typography.Text type="secondary">Sigma Rule ID: {props.kibanaMetadata.rule_id || "-"}</Typography.Text>
+          <Typography.Text type="secondary">Kibana Rule ID: {props.kibanaMetadata.remote_id || "-"}</Typography.Text>
           <Button size="small" disabled={!props.kibanaMetadata.published || Boolean(props.kibanaMetadata.enabled)} onClick={() => props.onSyncKibanaEnabled(true)}>Enable</Button>
           <Button size="small" disabled={!props.kibanaMetadata.published || !Boolean(props.kibanaMetadata.enabled)} onClick={() => props.onSyncKibanaEnabled(false)}>Disable</Button>
           <Popconfirm title="Delete the detection rule from Kibana?" okText="Delete" cancelText="Cancel" onConfirm={props.onDeleteKibanaRule}>
@@ -128,13 +133,15 @@ export default function DetectionRuleDetail(props: Props) {
 
       <Space style={{ marginBottom: 10 }}>
         <Button type={props.detailTab === "sigma" ? "primary" : "default"} onClick={() => props.onSetDetailTab("sigma")}>Sigma</Button>
-        <Button type={props.detailTab === "esql" ? "primary" : "default"} onClick={() => props.onSetDetailTab("esql")}>ES|QL</Button>
+        <Button type={props.detailTab === "esql" ? "primary" : "default"} onClick={() => props.onSetDetailTab("esql")}>{queryLabel}</Button>
         <Button type={props.detailTab === "version" ? "primary" : "default"} onClick={() => props.onSetDetailTab("version")}>Versions</Button>
       </Space>
 
       {compiled.error ? (
         <Card size="small" style={{ marginBottom: 12 }}>
-          <Typography.Text type="danger">{compiled.error}</Typography.Text>
+          <Typography.Text type={compiledLanguage === "lucene" ? "warning" : "danger"}>
+            {compiledLanguage === "lucene" ? `ES|QL compile failed, using Lucene fallback: ${compiled.error}` : compiled.error}
+          </Typography.Text>
         </Card>
       ) : null}
 
@@ -194,7 +201,7 @@ export default function DetectionRuleDetail(props: Props) {
       {props.detailTab === "esql" ? (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)", gap: 16 }}>
           <Space direction="vertical" style={{ width: "100%" }} size={16}>
-            <Card size="small" title="ES|QL Query">
+            <Card size="small" title={`${queryLabel} Query`}>
               <Space direction="vertical" style={{ width: "100%" }} size={10}>
                 <Typography.Text type="secondary">
                   Index patterns belong to the Elastic detection rule itself and will be submitted as the detection rule `index` field.

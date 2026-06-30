@@ -11,7 +11,7 @@ frontend/.turbo/
 frontend/.next-dev.log
 frontend/legacy-spa/dist/
 frontend/legacy-spa/node_modules/
-
+*.tsbuildinfo
 # Logs
 logs/
 *.log
@@ -36,6 +36,8 @@ Thumbs.db
 
 # tmp cache
 tmp_cache/
+# MITRE ATT&CK data is fetched during deployment by sync_mitre_attack_dicts.
+backend/detections/mitre_attack_stub.json
 
 # Claude Code local config — contains personal settings and MCP credentials
 .claude/settings.json

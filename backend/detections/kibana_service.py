@@ -119,8 +119,11 @@ def normalize_rule_payload(payload: dict, fallback_id: str | None = None) -> tup
 
 def serialize_published_rule(rule: LocalDetectionRule) -> dict:
     payload = dict(rule.payload or {})
-    payload["id"] = rule.rule_uuid
-    payload.setdefault("rule_id", payload.get("rule_id") or rule.rule_uuid)
+    sigma_rule_id = str(rule.rule_uuid or "").strip()
+    kibana_remote_id = str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or "").strip()
+    payload["id"] = sigma_rule_id
+    payload["rule_id"] = sigma_rule_id
+    payload["kibana_rule_id"] = kibana_remote_id
     payload["name"] = rule.name
     payload["type"] = rule.rule_type
     payload["enabled"] = bool(rule.enabled)
@@ -135,16 +138,17 @@ def serialize_published_rule(rule: LocalDetectionRule) -> dict:
 def is_kibana_rule_payload(payload: dict) -> bool:
     language = str(payload.get("language") or "").strip().lower()
     rule_type = str(payload.get("type") or "").strip().lower()
-    return language == "esql" or rule_type == "esql"
+    if rule_type == "esql" and language == "esql":
+        return True
+    if rule_type == "query" and language in {"lucene", "kuery", "kql"}:
+        return True
+    return False
 
 
 def rule_lookup_params(payload: dict) -> dict:
-    rule_id = str(payload.get("rule_id") or "").strip()
-    rule_object_id = str(payload.get("id") or "").strip()
-    if rule_id:
-        return {"rule_id": rule_id}
-    if rule_object_id:
-        return {"id": rule_object_id}
+    kibana_object_id = str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or "").strip()
+    if kibana_object_id:
+        return {"id": kibana_object_id}
     return {}
 
 
@@ -160,6 +164,7 @@ def sanitize_kibana_rule_payload(payload: dict) -> dict:
         threat = build_kibana_threat_from_tags(tags)
     if threat:
         data["threat"] = threat
+    data.pop("mitre_attack", None)
     return data
 
 
@@ -173,9 +178,9 @@ def apply_kibana_response_to_payload(payload: dict, remote: dict) -> dict:
         remote_id = str(remote.get("id") or "").strip()
         remote_rule_id = str(remote.get("rule_id") or "").strip()
         if remote_id:
-            next_payload["id"] = remote_id
+            next_payload["kibana_rule_id"] = remote_id
         if remote_rule_id:
-            next_payload["rule_id"] = remote_rule_id
+            next_payload["kibana_api_rule_id"] = remote_rule_id
     return next_payload
 
 
@@ -189,30 +194,47 @@ def create_published_rule(payload: dict, actor: str) -> tuple[int, dict]:
             return status_code, remote
         if isinstance(remote, dict):
             normalized = apply_kibana_response_to_payload(normalized, remote)
-            rule_uuid = str(normalized.get("id") or rule_uuid)
 
     with transaction.atomic():
-        if LocalDetectionRule.objects.filter(rule_uuid=rule_uuid, is_deleted=False).exists():
-            return 409, {"detail": f"Rule already exists: {rule_uuid}"}
-        rule = LocalDetectionRule.objects.create(
-            rule_uuid=rule_uuid,
-            name=str(normalized.get("name") or rule_uuid),
-            enabled=bool(normalized.get("enabled", False)),
-            rule_type=str(normalized.get("type") or "query"),
-            severity=str(normalized.get("severity") or "low"),
-            risk_score=int(normalized.get("risk_score") or 50),
-            version=1,
-            payload=normalized,
-            created_by=actor,
-            updated_by=actor,
-        )
+        rule = LocalDetectionRule.objects.filter(rule_uuid=rule_uuid, is_deleted=False).first()
+        if rule:
+            previous_payload = dict(rule.payload or {})
+            merged_payload = {**previous_payload, **normalized}
+            rule.version += 1
+            rule.payload = merged_payload
+            rule.name = str(normalized.get("name") or rule.name or rule_uuid)
+            rule.enabled = bool(normalized.get("enabled", False))
+            rule.rule_type = str(normalized.get("type") or rule.rule_type or "query")
+            rule.severity = str(normalized.get("severity") or rule.severity or "low")
+            rule.risk_score = int(normalized.get("risk_score") or rule.risk_score or 50)
+            rule.updated_by = actor
+            rule.save()
+            version = rule.version
+            change_type = "publish"
+            payload_for_version = merged_payload
+        else:
+            rule = LocalDetectionRule.objects.create(
+                rule_uuid=rule_uuid,
+                name=str(normalized.get("name") or rule_uuid),
+                enabled=bool(normalized.get("enabled", False)),
+                rule_type=str(normalized.get("type") or "query"),
+                severity=str(normalized.get("severity") or "low"),
+                risk_score=int(normalized.get("risk_score") or 50),
+                version=1,
+                payload=normalized,
+                created_by=actor,
+                updated_by=actor,
+            )
+            version = 1
+            change_type = "create"
+            payload_for_version = normalized
         append_rule_version(
             rule,
-            version=1,
-            payload=normalized,
+            version=version,
+            payload=payload_for_version,
             changed_by=actor,
-            change_type="create",
-            change_summary=[{"field": "rule", "label": "Rule", "type": "created", "message": "Created published rule"}],
+            change_type=change_type,
+            change_summary=[{"field": "rule", "label": "Rule", "type": "modified", "message": "Published rule to Kibana"}],
         )
     return 201, serialize_published_rule(rule)
 
