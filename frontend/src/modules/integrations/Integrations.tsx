@@ -518,7 +518,7 @@ const Integrations: React.FC = () => {
           <Button type="primary" onClick={(e) => { e.stopPropagation(); card.onConfigure(); }}>
             {card.isInstalled ? 'Configure' : 'Setup Integration'}
           </Button>
-          {card.isInstalled && card.onUninstall ? (
+          {card.isInstalled && card.onUninstall && !isReadonly ? (
             <Button danger onClick={(e) => { e.stopPropagation(); card.onUninstall?.(); }}>
               Delete
             </Button>

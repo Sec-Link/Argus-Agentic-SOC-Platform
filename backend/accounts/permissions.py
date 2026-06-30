@@ -68,6 +68,16 @@ class RbacModelPermissions(BasePermission):
         return all(user.has_perm(p) for p in perms)
 
 
+class DenyReadonlyUser(BasePermission):
+    """Block all write actions for users whose profile has is_readonly=True."""
+
+    def has_permission(self, request, view):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        from accounts.services import is_user_readonly
+        return not is_user_readonly(getattr(request, "user", None))
+
+
 class HasDjangoPermissions(BasePermission):
     def _get_required(self, request, view) -> Optional[Iterable[str]]:
         mapping = getattr(view, "required_permissions", None)

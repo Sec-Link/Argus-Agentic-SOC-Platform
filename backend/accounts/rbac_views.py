@@ -11,7 +11,6 @@ COMMON_APP_LABELS = {
     "accounts",
     "integrations",
     "alerts",
-    "dashboards",
     # Legacy "datasource" permissions are intentionally not exposed here.
     # Data ingestion ownership now lives under Integrations and Data Pipeline.
     "orchestrator",

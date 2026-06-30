@@ -1004,22 +1004,24 @@ export default function SlaTicketListView(props: Props) {
           <Row gutter={[12, 12]}>
             {filtered.slice(0, 60).map((t) => (
               <Col key={t.ticket_number} xs={24} md={12} xl={8}>
+                {/* Summary cards use explicit text hierarchy classes so dark mode can raise contrast safely. */}
                 <Card
+                  className="sla-summary-ticket-card"
                   size="small"
                   title={
                     <Space size={8} wrap>
-                      <a onClick={() => onOpenDetail(t.ticket_number)}>{t.ticket_number}</a>
+                      <a className="sla-summary-ticket-link" onClick={() => onOpenDetail(t.ticket_number)}>{t.ticket_number}</a>
                       {renderStatusTag(t.status)}
                       {renderSeverityTag(t.priority)}
                     </Space>
                   }
                 >
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{t.title}</div>
-                  <div style={{ color: 'rgba(0,0,0,0.6)' }}>Owner: {t.assigned_user_username || 'Unassigned'}</div>
-                  <div style={{ color: 'rgba(0,0,0,0.6)' }}>
+                  <div className="sla-summary-ticket-title">{t.title}</div>
+                  <div className="sla-summary-ticket-meta">Owner: {t.assigned_user_username || 'Unassigned'}</div>
+                  <div className="sla-summary-ticket-meta">
                     SLA: TTA {formatDuration(t.sla_summary?.mtta_seconds)} / TTR {formatDuration(t.sla_summary?.mttr_seconds)}
                   </div>
-                  <div style={{ color: 'rgba(0,0,0,0.45)', marginTop: 6, fontSize: 12 }}>
+                  <div className="sla-summary-ticket-timestamp">
                     Created: {formatTimestamp(t.created_time)}
                   </div>
                 </Card>
