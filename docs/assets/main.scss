@@ -1,7 +1,6 @@
 ---
 ---
 
-/* Import minima base — this line is required for GitHub Pages to apply the theme base styles */
 @import "minima";
 
 /* ─── Design tokens ─────────────────────────────────────────────────────────── */
@@ -12,17 +11,17 @@
   --border:        #30363d;
   --text-primary:  #e6edf3;
   --text-muted:    #8b949e;
-  --accent:        #0d9488;   /* teal — primary brand */
+  --accent:        #0d9488;
   --accent-light:  #14b8a6;
   --accent-amber:  #f59e0b;
   --link:          #58a6ff;
   --link-hover:    #79c0ff;
   --code-bg:       #161b22;
   --code-border:   #21262d;
-  --nav-height:    56px;
+  --sidebar-width: 240px;
 }
 
-/* ─── Global reset / base ────────────────────────────────────────────────────── */
+/* ─── Global reset ───────────────────────────────────────────────────────────── */
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
@@ -30,89 +29,105 @@ body {
                Arial, sans-serif;
   font-size: 15px;
   line-height: 1.7;
+  margin: 0;
+  padding: 0;
 }
 
-/* ─── Site header / nav ──────────────────────────────────────────────────────── */
-.site-header {
-  background-color: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  min-height: var(--nav-height);
+/* ─── Sidebar layout ─────────────────────────────────────────────────────────── */
+.site-wrapper {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 28px 0 24px;
   position: sticky;
   top: 0;
-  z-index: 100;
+  height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
-.site-title,
-.site-title:visited {
-  color: var(--text-primary);
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 20px;
+  font-size: 15px;
   font-weight: 700;
+  color: var(--text-primary) !important;
+  text-decoration: none !important;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
   letter-spacing: -0.02em;
-  font-size: 18px;
-  text-decoration: none;
+  line-height: 1.3;
+
+  &:hover { color: var(--accent-light) !important; }
+}
+
+.sidebar-brand-accent {
+  color: var(--accent);
+  font-size: 16px;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px;
+  gap: 2px;
+}
+
+.nav-link {
+  display: block;
+  padding: 9px 12px;
+  color: var(--text-muted) !important;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none !important;
+  border-radius: 6px;
+  transition: color 150ms ease, background 150ms ease;
 
   &:hover {
-    color: var(--accent-light);
-    text-decoration: none;
+    color: var(--text-primary) !important;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  &.active {
+    color: var(--accent-light) !important;
+    background: rgba(13, 148, 136, 0.14);
+    font-weight: 600;
   }
 }
 
-/* Accent dot before site title for SOC brand feel */
-.site-title::before {
-  content: "▸ ";
-  color: var(--accent);
+.site-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.site-nav {
-  background-color: var(--bg-secondary);
-
-  .page-link {
-    color: var(--text-muted);
-    font-size: 13px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 4px 10px;
-    border-radius: 4px;
-    transition: color 150ms, background 150ms;
-
-    &:hover {
-      color: var(--accent-light);
-      background: rgba(13, 148, 136, 0.1);
-      text-decoration: none;
-    }
-  }
-}
-
-/* Hamburger menu (mobile) */
-.site-nav .menu-icon > svg path {
-  fill: var(--text-muted);
-}
-
-@media screen and (max-width: 600px) {
-  .site-nav {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background-color: var(--bg-card);
-
-    .trigger {
-      background-color: var(--bg-card);
-    }
-
-    .page-link {
-      color: var(--text-primary);
-    }
-  }
-}
-
-/* ─── Page wrapper ───────────────────────────────────────────────────────────── */
+/* ─── Page content area ──────────────────────────────────────────────────────── */
 .page-content {
   background-color: var(--bg-primary);
-  padding: 40px 0;
+  padding: 48px 0 64px;
+  flex: 1;
 }
 
 .wrapper {
-  max-width: 860px;
+  max-width: 900px;
+  padding-right: 48px;
+  padding-left: 48px;
+  margin: 0;
 }
+
+/* ─── Hide minima's top header ───────────────────────────────────────────────── */
+.site-header { display: none !important; }
 
 /* ─── Headings ───────────────────────────────────────────────────────────────── */
 h1, h2, h3, h4, h5, h6 {
@@ -147,26 +162,13 @@ a {
   color: var(--link);
   text-decoration: none;
 
-  &:hover {
-    color: var(--link-hover);
-    text-decoration: underline;
-  }
-
-  &:visited {
-    color: var(--link);
-  }
+  &:hover { color: var(--link-hover); text-decoration: underline; }
+  &:visited { color: var(--link); }
 }
 
 /* ─── Paragraphs & lists ─────────────────────────────────────────────────────── */
-p, li {
-  color: var(--text-primary);
-}
-
-ul, ol {
-  li {
-    margin-bottom: 4px;
-  }
-}
+p, li { color: var(--text-primary); }
+ul, ol li { margin-bottom: 4px; }
 
 blockquote {
   border-left: 3px solid var(--accent);
@@ -180,52 +182,59 @@ blockquote {
   p { color: var(--text-muted); margin: 0; }
 }
 
-/* ─── Tables ─────────────────────────────────────────────────────────────────── */
+/* ─── Tables — override minima stripe with dark theme ────────────────────────── */
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: collapse !important;
   margin: 20px 0;
   font-size: 14px;
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border) !important;
+  background-color: transparent !important;
 }
 
 thead {
-  background: var(--bg-card);
+  background: var(--bg-card) !important;
 }
 
 th {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--text-primary) !important;   /* was --text-muted, too dim */
+  font-size: 12px !important;
+  font-weight: 600 !important;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 14px !important;
+  border-bottom: 1px solid var(--border) !important;
+  border-left: none !important;
+  border-right: none !important;
   text-align: left;
+  background: var(--bg-card) !important;
 }
 
+/* Force all td to use light text — minima's zebra stripe sets dark text */
 td {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-primary);
+  padding: 10px 14px !important;
+  border-bottom: 1px solid var(--border) !important;
+  border-left: none !important;
+  border-right: none !important;
+  color: var(--text-primary) !important;
   vertical-align: top;
+  background-color: var(--bg-primary) !important;
 }
 
-tr:last-child td {
-  border-bottom: none;
+tr:last-child td { border-bottom: none !important; }
+
+/* Subtle alternating rows — dark-on-dark, not light-on-dark */
+tr:nth-child(even) td {
+  background-color: var(--bg-secondary) !important;
 }
 
-tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-/* Highlight first column (often a key/variable name) */
+/* Accent the first column (key / variable name) */
 td:first-child {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13px;
-  color: var(--accent-light);
+  font-size: 13px !important;
+  color: var(--accent-light) !important;
   white-space: nowrap;
 }
 
@@ -262,15 +271,15 @@ pre {
   background: var(--code-bg);
   border-radius: 8px;
 
-  .k, .kd, .kn, .kp, .kr, .kt { color: #ff7b72; }  /* keywords */
-  .s, .s1, .s2, .se, .si       { color: #a5d6ff; }  /* strings */
-  .c, .cm, .c1, .cs             { color: #8b949e; font-style: italic; } /* comments */
-  .n, .na                       { color: #e6edf3; }  /* names */
-  .nb                           { color: #79c0ff; }  /* builtins */
-  .mi, .mf, .mh, .mo            { color: #f2cc60; }  /* numbers */
-  .o, .ow                       { color: #ff7b72; }  /* operators */
-  .nf, .fm                      { color: #d2a8ff; }  /* function names */
-  .nc, .nn                      { color: #f0883e; }  /* class names */
+  .k, .kd, .kn, .kp, .kr, .kt { color: #ff7b72; }
+  .s, .s1, .s2, .se, .si       { color: #a5d6ff; }
+  .c, .cm, .c1, .cs             { color: #8b949e; font-style: italic; }
+  .n, .na                       { color: #e6edf3; }
+  .nb                           { color: #79c0ff; }
+  .mi, .mf, .mh, .mo            { color: #f2cc60; }
+  .o, .ow                       { color: #ff7b72; }
+  .nf, .fm                      { color: #d2a8ff; }
+  .nc, .nn                      { color: #f0883e; }
 }
 
 /* ─── Horizontal rules ───────────────────────────────────────────────────────── */
@@ -280,40 +289,60 @@ hr {
   margin: 36px 0;
 }
 
-/* ─── Site footer ────────────────────────────────────────────────────────────── */
+/* ─── Footer ─────────────────────────────────────────────────────────────────── */
 .site-footer {
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 13px;
+  padding: 16px 0;
 
   a, a:visited { color: var(--text-muted); }
-  a:hover      { color: var(--link); }
+  a:hover { color: var(--link); }
 }
 
-/* ─── Home page post list (minima) ──────────────────────────────────────────── */
-.home {
-  h2.post-list-heading {
-    color: var(--text-muted);
-    font-size: 1rem;
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ─── Mobile — collapse sidebar to top bar ───────────────────────────────────── */
+@media screen and (max-width: 768px) {
+  .site-wrapper { flex-direction: column; }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    min-width: 0;
+    position: static;
+    padding: 16px 0 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
   }
-}
 
-/* ─── Responsive ─────────────────────────────────────────────────────────────── */
-@media screen and (max-width: 640px) {
+  .sidebar-brand {
+    padding: 0 16px 12px;
+    margin-bottom: 0;
+    border-bottom: none;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 8px 12px 0;
+    gap: 4px;
+  }
+
+  .wrapper {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
   h1 { font-size: 1.5rem; }
   h2 { font-size: 1.2rem; }
 
-  table {
-    display: block;
-    overflow-x: auto;
-  }
-
-  pre {
-    font-size: 12px;
-  }
-
-  td:first-child {
-    white-space: normal;
-  }
+  table { display: block; overflow-x: auto; }
+  pre { font-size: 12px; }
+  td:first-child { white-space: normal; }
 }

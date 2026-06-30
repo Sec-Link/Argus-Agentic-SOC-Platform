@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  {%- include head.html -%}
+  <body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+        <a class="sidebar-brand" href="{{ '/' | relative_url }}">
+          <span class="sidebar-brand-accent">▸</span>
+          Argus
+        </a>
+        <nav class="sidebar-nav">
+          {%- for page_path in site.header_pages -%}
+            {%- assign nav_page = site.pages | where: "path", page_path | first -%}
+            {%- if nav_page -%}
+              <a href="{{ nav_page.url | relative_url }}"
+                 class="nav-link{% if page.url == nav_page.url %} active{% endif %}">
+                {{- nav_page.title -}}
+              </a>
+            {%- endif -%}
+          {%- endfor -%}
+        </nav>
+      </aside>
+
+      <!-- ── Main content ── -->
+      <div class="site-body">
+        <main class="page-content" aria-label="Content">
+          <div class="wrapper">
+            {{ content }}
+          </div>
+        </main>
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>{{ site.title }}</span>
+            {%- if site.github_username -%}
+              <a href="https://github.com/{{ site.github_username }}/{{ site.github_repo | default: '' }}">GitHub</a>
+            {%- endif -%}
+          </div>
+        </footer>
+      </div>
+
+    </div>
+  </body>
+</html>
