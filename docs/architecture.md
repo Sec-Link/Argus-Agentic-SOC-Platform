@@ -1,57 +1,150 @@
+---
+layout: default
+title: "Architecture"
+---
+
 # Architecture Overview
 
-This document describes the overall architecture, major components.
+This document describes the overall architecture, major components, and data flow of the Argus Agentic SOC Platform.
 
-## Purpose
-This document provides a concise, English-language reference for developers and operators that need to understand the code layout, runtime topology, and primary API entry points for the SIEM / SOC platform.
+---
 
-## High-level architecture
+## System Diagram
 
-The project uses a classic frontend-backend separation:
+<!--
+  IMAGE PLACEHOLDER — how to reference images on GitHub Pages:
 
-- Frontend: Next.js (App Router) + React + Ant Design — provides the UI, page routing, and a proxy route handler for API requests.
-- Backend: Django 6 + Django REST Framework — provides REST APIs, business logic, and orchestration capabilities.
-- Database: PostgreSQL is the primary persistent store.
-- Optional: Elasticsearch for alert ingestion/search (can be configured per deployment).
+  1. Place your diagram file in docs/assets/images/ (e.g., architecture-diagram.png)
+  2. Reference it with relative_url filter so it works under the /ECHO-Agentic-SOC-Platform/ baseurl:
 
-## Backend apps (concise)
-- `accounts`: Authentication, OTP, RBAC utilities.
-- `alerts`: Alert ingestion, caching, dashboard aggregation endpoints.
-- `tickets`: SLA-aware ticket CRUD, status transitions, attachments, logs, SLA metrics.
-- `dashboards`: Dashboard metadata, layout and widget definitions, editor APIs.
-- `integrations`: External connector metadata and connection testing (DB/ES/etc.).
-- `cmdb`: Asset/CI management and sample import helpers.
-- `correlation`: Policy & event stubs for correlation features.
-- `workflows`: SOAR-style workflow definitions and execution engine.
-- `orchestrator`: Scheduled tasks, runs, and execution utilities.
-- `ai_assistant`: AI assistant, MCP gateway and JSON-RPC tooling.
-- `siem_project`: Django project settings, URL routing, middleware.
+  ![Architecture Diagram]({{ '/assets/images/architecture-diagram.png' | relative_url }})
 
-## Frontend code map (important files/areas)
-- App shell & routing: `frontend/src/app` (Next.js App Router pages and layout)
-- API proxy: `frontend/src/app/api/v1/[...path]/route.ts` (forwards requests to backend)
-- API client / utils: `frontend/src/lib` or `frontend/src/services` (Axios wrappers)
-- Modules: `frontend/src/modules` (domain UIs, e.g. `tickets`, `dashboards`, `integrations`)
-- Components: `frontend/src/components` (shared UI pieces)
+  WITHOUT relative_url the image will 404 on GitHub Pages because the site lives at a subpath.
+-->
 
-## Database & Migrations
-- Django models are the single source of truth for schema.
-- Migrations (Django `migrations/` files) record schema changes and should be tracked in Git for existing deployments.
-- For a brand-new deployment you can create the schema from models by running `python manage.py migrate` (migrations still recommended to be present in repo to provide a deterministic history).
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Security Analyst / SOC Operator               │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ Browser
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Frontend — Next.js 15 + React 18 + Ant Design 5                 │
+│  Operator console: dashboards, alerts, tickets, CMDB, workflows  │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │ /api/v1/* (proxy route handler)
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Backend — Django 6 + DRF                                        │
+│  REST APIs · Business logic · RBAC · Orchestration               │
+│                                                                  │
+│  alerts │ tickets │ cmdb │ dashboards │ integrations             │
+│  correlation │ workflows │ orchestrator │ ai_assistant │ accounts │
+└──────┬─────────────────────────────────────┬─────────────────────┘
+       │                                     │ optional
+       ▼                                     ▼
+┌──────────────┐                    ┌──────────────────────┐
+│  PostgreSQL  │                    │  Elasticsearch        │
+│  (primary)   │                    │  (alert ingestion)    │
+└──────────────┘                    └──────────────────────┘
+```
 
-## Production notes
-- Use `docker-compose.prod.yml` or Kubernetes manifests in `k8s/` for containerized deployment.
-- Ensure `SECRET_KEY`, `ALLOWED_HOSTS`, and database credentials are set securely.
-- When deploying to an existing database, always run migrations and review potential conflicts (e.g., duplicated columns/migration order issues).
+---
 
-## Security and best practices
-- Keep `SECRET_KEY` out of VCS and set it via environment variables in production.
-- Use HTTPS and set `CSRF_TRUSTED_ORIGINS` and `ALLOWED_HOSTS` appropriately.
-- Sanitize and validate all integration inputs; prefer parameterized queries and ORM usage.
-- Limit AI/MCP tool access with authentication and auditing.
+## Frontend
 
-## Troubleshooting checklist (common issues)
-- Backend 500s often come from DB schema mismatch — run `python manage.py showmigrations` and `python manage.py migrate`.
-- If you see `ProgrammingError: column "X" of relation "Y" already exists`, check migration history and whether migrations were applied out-of-order.
-- Next.js module not found errors often indicate moved/deleted files under `frontend/src/`—update imports or remove references.
-- React/Antd runtime warnings (e.g., `message` usage) may be fixed by using hooks/components instead of static imports.
+**Stack:** Next.js 15 App Router · React 18 · Ant Design 5
+
+- `frontend/src/app/` — page routes and root layout
+- `frontend/src/app/api/v1/[...path]/route.ts` — API proxy: forwards all `/api/v1/*` requests to the Django backend, centralising auth headers
+- `frontend/src/modules/` — domain UI modules (`alerts`, `tickets`, `dashboards`, `detections`, etc.)
+- `frontend/src/components/` — shared UI components (layout, header, sidebar)
+- `frontend/src/services/` — Axios-based API client wrappers per domain
+
+---
+
+## Backend
+
+**Stack:** Django 6 · Django REST Framework · DRF Token Auth
+
+The backend is split into domain-focused Django apps, each responsible for its own models, serializers, views, and URL routing.
+
+| App | Responsibility |
+|-----|---------------|
+| `accounts` | Authentication, OTP, user management, RBAC helpers |
+| `alerts` | Alert ingestion, caching, dashboard aggregation, ES/webhook sync |
+| `tickets` | SLA-aware ticket CRUD, lifecycle transitions, work logs, attachments |
+| `dashboards` | Dashboard chart stats: funnel, Sankey, SLA metrics |
+| `detections` | Sigma-based detection rule management and Elasticsearch rule push |
+| `integrations` | External connector metadata and connectivity testing |
+| `cmdb` | Asset inventory (CI management) and audit logs |
+| `correlation` | Alert→ticket auto-creation policy with configurable match keys |
+| `workflows` | SOAR-style workflow definitions, steps, and execution engine |
+| `workflow_interfaces` | External webhook/ingest interface endpoints |
+| `orchestrator` | Scheduled task definitions, execution records, and dispatch |
+| `ai_assistant` | AI conversation, MCP tool registry, skill config, external MCP server management |
+| `siem_project` | Django project settings, top-level URL routing, middleware |
+
+---
+
+## Data Layer
+
+- **PostgreSQL 16** is the primary datastore for all platform objects (alerts, tickets, rules, assets, etc.)
+- **Elasticsearch** is an optional external alert source. When configured, the backend syncs alerts from an ES index into PostgreSQL for the UI to consume.
+- Django ORM + migrations are the single source of truth for schema. Run `python manage.py migrate` on every deployment.
+
+---
+
+## Intelligence Layer (AI Assistant + MCP)
+
+The `ai_assistant` app exposes:
+
+- **Conversational chat** endpoint (`/api/v1/ai-assistant/chat`) for ticket analysis
+- **MCP JSON-RPC gateway** (`/api/v1/mcp`) compatible with the Model Context Protocol
+- **Built-in MCP tools**: ticket context retrieval, similar-case search, CMDB asset lookup, observable extraction
+- **External MCP server management**: register, start/stop, and monitor third-party MCP servers
+
+---
+
+## Automation Layer
+
+Two complementary automation engines:
+
+| Engine | Role |
+|--------|------|
+| **Orchestrator** | Time-based task scheduling with execution records and audit trail |
+| **Workflows** | Event-driven process logic — API call sequences, condition branches, SOAR patterns |
+
+---
+
+## Deployment Topology
+
+```
+Docker Compose (dev):     frontend:3000 → backend:8000 → db:5432
+Docker Compose (prod):    nginx:80 → frontend → backend:8000 → db:5432
+Kubernetes:               Ingress → frontend Deployment → backend Deployment → PostgreSQL StatefulSet
+```
+
+See `docker-compose.dev.yml`, `docker-compose.prod.yml`, and `k8s/` for manifests.
+
+---
+
+## Security Design
+
+- All API routes require `Authorization: Token <token>` (DRF Token Auth)
+- RBAC enforced per-view via `accounts.permissions.RbacModelPermissions`
+- Read-only user flag (`is_readonly`) blocks all write operations via `DenyReadonlyUser` middleware
+- `SECRET_KEY`, `POSTGRES_PASSWORD`, and similar secrets must be provided via environment variables — never committed to VCS
+- MCP tool access is gated by authentication; audit logs are written for all tool invocations
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| Backend 500 on startup | DB schema mismatch | `python manage.py showmigrations` + `migrate` |
+| `column already exists` error | Out-of-order migrations | Check migration history, squash if needed |
+| Frontend API calls return 401 | Missing or expired token | Re-login; check token storage in browser |
+| No alerts in UI | ES not configured or sync not run | Check Integrations page; trigger manual sync |
+| AI chat fails | MCP tool errors | Check `ai_assistant` logs; verify external MCP server status |

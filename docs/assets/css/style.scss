@@ -1,0 +1,319 @@
+---
+---
+
+/* Import minima base — this line is required for GitHub Pages to apply the theme base styles */
+@import "minima";
+
+/* ─── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --bg-primary:    #0d1117;
+  --bg-secondary:  #161b22;
+  --bg-card:       #1c2128;
+  --border:        #30363d;
+  --text-primary:  #e6edf3;
+  --text-muted:    #8b949e;
+  --accent:        #0d9488;   /* teal — primary brand */
+  --accent-light:  #14b8a6;
+  --accent-amber:  #f59e0b;
+  --link:          #58a6ff;
+  --link-hover:    #79c0ff;
+  --code-bg:       #161b22;
+  --code-border:   #21262d;
+  --nav-height:    56px;
+}
+
+/* ─── Global reset / base ────────────────────────────────────────────────────── */
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica,
+               Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+/* ─── Site header / nav ──────────────────────────────────────────────────────── */
+.site-header {
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  min-height: var(--nav-height);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.site-title,
+.site-title:visited {
+  color: var(--text-primary);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-size: 18px;
+  text-decoration: none;
+
+  &:hover {
+    color: var(--accent-light);
+    text-decoration: none;
+  }
+}
+
+/* Accent dot before site title for SOC brand feel */
+.site-title::before {
+  content: "▸ ";
+  color: var(--accent);
+}
+
+.site-nav {
+  background-color: var(--bg-secondary);
+
+  .page-link {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 4px 10px;
+    border-radius: 4px;
+    transition: color 150ms, background 150ms;
+
+    &:hover {
+      color: var(--accent-light);
+      background: rgba(13, 148, 136, 0.1);
+      text-decoration: none;
+    }
+  }
+}
+
+/* Hamburger menu (mobile) */
+.site-nav .menu-icon > svg path {
+  fill: var(--text-muted);
+}
+
+@media screen and (max-width: 600px) {
+  .site-nav {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background-color: var(--bg-card);
+
+    .trigger {
+      background-color: var(--bg-card);
+    }
+
+    .page-link {
+      color: var(--text-primary);
+    }
+  }
+}
+
+/* ─── Page wrapper ───────────────────────────────────────────────────────────── */
+.page-content {
+  background-color: var(--bg-primary);
+  padding: 40px 0;
+}
+
+.wrapper {
+  max-width: 860px;
+}
+
+/* ─── Headings ───────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: 2rem;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 10px;
+  margin-bottom: 28px;
+}
+
+h2 {
+  font-size: 1.4rem;
+  color: var(--accent-light);
+  margin-top: 40px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+h3 {
+  font-size: 1.1rem;
+  color: var(--text-primary);
+  margin-top: 28px;
+}
+
+/* ─── Links ──────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--link);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--link-hover);
+    text-decoration: underline;
+  }
+
+  &:visited {
+    color: var(--link);
+  }
+}
+
+/* ─── Paragraphs & lists ─────────────────────────────────────────────────────── */
+p, li {
+  color: var(--text-primary);
+}
+
+ul, ol {
+  li {
+    margin-bottom: 4px;
+  }
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  background: var(--bg-card);
+  padding: 12px 18px;
+  margin: 20px 0;
+  border-radius: 0 6px 6px 0;
+  color: var(--text-muted);
+  font-style: normal;
+
+  p { color: var(--text-muted); margin: 0; }
+}
+
+/* ─── Tables ─────────────────────────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  font-size: 14px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+thead {
+  background: var(--bg-card);
+}
+
+th {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  vertical-align: top;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Highlight first column (often a key/variable name) */
+td:first-child {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  color: var(--accent-light);
+  white-space: nowrap;
+}
+
+/* ─── Code ───────────────────────────────────────────────────────────────────── */
+code, tt {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  color: #d2a8ff;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 8px;
+  padding: 18px 20px;
+  overflow-x: auto;
+  margin: 20px 0;
+
+  code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #e6edf3;
+    font-size: 13px;
+  }
+}
+
+/* Rouge syntax highlighting — GitHub dark palette */
+.highlight {
+  background: var(--code-bg);
+  border-radius: 8px;
+
+  .k, .kd, .kn, .kp, .kr, .kt { color: #ff7b72; }  /* keywords */
+  .s, .s1, .s2, .se, .si       { color: #a5d6ff; }  /* strings */
+  .c, .cm, .c1, .cs             { color: #8b949e; font-style: italic; } /* comments */
+  .n, .na                       { color: #e6edf3; }  /* names */
+  .nb                           { color: #79c0ff; }  /* builtins */
+  .mi, .mf, .mh, .mo            { color: #f2cc60; }  /* numbers */
+  .o, .ow                       { color: #ff7b72; }  /* operators */
+  .nf, .fm                      { color: #d2a8ff; }  /* function names */
+  .nc, .nn                      { color: #f0883e; }  /* class names */
+}
+
+/* ─── Horizontal rules ───────────────────────────────────────────────────────── */
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 36px 0;
+}
+
+/* ─── Site footer ────────────────────────────────────────────────────────────── */
+.site-footer {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+
+  a, a:visited { color: var(--text-muted); }
+  a:hover      { color: var(--link); }
+}
+
+/* ─── Home page post list (minima) ──────────────────────────────────────────── */
+.home {
+  h2.post-list-heading {
+    color: var(--text-muted);
+    font-size: 1rem;
+  }
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────────────────── */
+@media screen and (max-width: 640px) {
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.2rem; }
+
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+
+  pre {
+    font-size: 12px;
+  }
+
+  td:first-child {
+    white-space: normal;
+  }
+}

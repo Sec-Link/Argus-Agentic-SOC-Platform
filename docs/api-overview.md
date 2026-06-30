@@ -1,3 +1,8 @@
+---
+layout: default
+title: "API Reference"
+---
+
 # API Overview
 
 This document tracks the current code structure, key APIs, database mappings, and schema entrypoints for the SIEM platform.

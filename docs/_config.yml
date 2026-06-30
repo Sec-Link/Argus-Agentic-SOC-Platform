@@ -1,0 +1,38 @@
+title: "Argus — Agentic SOC Platform"
+description: >-
+  AI-native Security Operations Center platform for unified alert ingestion,
+  incident investigation, MITRE ATT&CK correlation, and automated response.
+baseurl: "/ECHO-Agentic-SOC-Platform"
+url: "https://sec-link.github.io"
+
+theme: minima
+
+# Navigation bar order — must match actual filenames in docs/
+header_pages:
+  - quickstart.md
+  - installation.md
+  - architecture.md
+  - configuration.md
+  - api-overview.md
+  - faq.md
+
+# Social / repo links shown in minima footer
+github_username: Sec-Link
+
+# Markdown engine
+markdown: kramdown
+highlighter: rouge
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+# Jekyll build exclusions
+exclude:
+  - .DS_Store
+  - "*.sh"
+  - Gemfile
+  - Gemfile.lock
+
+# Plugins supported by GitHub Pages
+plugins:
+  - jekyll-seo-tag
