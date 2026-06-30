@@ -2,7 +2,7 @@ title: "Argus — Agentic SOC Platform"
 description: >-
   AI-native Security Operations Center platform for unified alert ingestion,
   incident investigation, MITRE ATT&CK correlation, and automated response.
-baseurl: "/ECHO-Agentic-SOC-Platform"
+baseurl: "/Argus-Agentic-SOC-Platform"
 url: "https://sec-link.github.io"
 
 theme: minima
