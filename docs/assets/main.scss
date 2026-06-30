@@ -285,42 +285,60 @@ pre code {
   font-size: 13px;
 }
 
-/* Rouge syntax highlighting */
+/* Rouge syntax highlighting — all !important to beat minima's light theme */
 .highlight {
   background-color: #161b22 !important;
   border-radius: 8px;
 }
 
-/* Reset all highlight spans to avoid minima's light-theme token colors */
-.highlight span { color: #e6edf3; }
+/* Base reset: every unmatched token falls back to readable white */
+.highlight span { color: #e6edf3 !important; }
+
+/* Token overrides */
 .highlight .k,
 .highlight .kd,
 .highlight .kn,
 .highlight .kp,
 .highlight .kr,
-.highlight .kt  { color: #ff7b72; }
+.highlight .kt  { color: #ff7b72 !important; }
 .highlight .s,
 .highlight .s1,
 .highlight .s2,
 .highlight .se,
-.highlight .si  { color: #a5d6ff; }
+.highlight .si  { color: #a5d6ff !important; }
 .highlight .c,
 .highlight .cm,
 .highlight .c1,
-.highlight .cs  { color: #8b949e; font-style: italic; }
+.highlight .cs  { color: #8b949e !important; font-style: italic; }
 .highlight .n,
-.highlight .na  { color: #e6edf3; }
-.highlight .nb  { color: #79c0ff; }
+.highlight .na  { color: #e6edf3 !important; }
+.highlight .nb  { color: #79c0ff !important; }
 .highlight .mi,
 .highlight .mf,
 .highlight .mh,
-.highlight .mo  { color: #f2cc60; }
+.highlight .mo  { color: #f2cc60 !important; }
 .highlight .o,
-.highlight .ow  { color: #ff7b72; }
+.highlight .ow  { color: #ff7b72 !important; }
 .highlight .nf,
-.highlight .fm  { color: #d2a8ff; }
+.highlight .fm  { color: #d2a8ff !important; }
 .highlight .nc,
-.highlight .nn  { color: #f0883e; }
+.highlight .nn  { color: #f0883e !important; }
+/* Shell flags (e.g. -i, -9) — nd/ni/no classes in Rouge bash lexer */
+.highlight .nd,
+.highlight .ni,
+.highlight .no  { color: #e6edf3 !important; }
+/* Generic tokens minima tints dark blue */
+.highlight .g,
+.highlight .gd,
+.highlight .ge,
+.highlight .gr,
+.highlight .gh,
+.highlight .gi,
+.highlight .go,
+.highlight .gp,
+.highlight .gs,
+.highlight .gu,
+.highlight .gt  { color: #e6edf3 !important; }
 
 /* ── Horizontal rules ──────────────────────────────────────────────────────── */
 hr {
