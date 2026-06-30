@@ -259,18 +259,18 @@ table td:first-child {
 
 /* ── Code ──────────────────────────────────────────────────────────────────── */
 code, tt {
-  background-color: #161b22;
-  border: 1px solid #21262d;
+  background-color: #161b22 !important;
+  border: 1px solid #21262d !important;
   border-radius: 4px;
   padding: 2px 6px;
   font-size: 13px;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  color: #d2a8ff;
+  color: #d2a8ff !important;
 }
 
 pre {
-  background-color: #161b22;
-  border: 1px solid #21262d;
+  background-color: #161b22 !important;
+  border: 1px solid #21262d !important;
   border-radius: 8px;
   padding: 18px 20px;
   overflow-x: auto;
@@ -278,15 +278,21 @@ pre {
 }
 
 pre code {
-  background: none;
-  border: none;
+  background: none !important;
+  border: none !important;
   padding: 0;
-  color: #e6edf3;
+  color: #e6edf3 !important;
   font-size: 13px;
 }
 
 /* Rouge syntax highlighting */
-.highlight { background-color: #161b22; border-radius: 8px; }
+.highlight {
+  background-color: #161b22 !important;
+  border-radius: 8px;
+}
+
+/* Reset all highlight spans to avoid minima's light-theme token colors */
+.highlight span { color: #e6edf3; }
 .highlight .k,
 .highlight .kd,
 .highlight .kn,
