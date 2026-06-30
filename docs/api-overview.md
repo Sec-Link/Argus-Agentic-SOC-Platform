@@ -33,6 +33,7 @@ This document tracks the current code structure, key APIs, database mappings, an
 - `siem_project`: Project settings and top-level URL routing
 
 ## Frontend Code Map
+
 | Area | Path | Purpose |
 | --- | --- | --- |
 | Project URL map | `backend/siem_project/urls.py` | Top-level API routing and app inclusion |
@@ -47,6 +48,7 @@ This document tracks the current code structure, key APIs, database mappings, an
 ## API & Key Endpoints
 
 ### Authentication
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Auth | `/api/v1/auth/login/` | POST | User login | `backend/accounts/views.py` |
@@ -55,6 +57,7 @@ This document tracks the current code structure, key APIs, database mappings, an
 | Auth | `/api/v1/accounts/change-password/` | POST | Change current password | `backend/accounts/urls.py` |
 
 ### Accounts / RBAC
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Users | `/api/v1/accounts/users/` | GET/POST | List or create users | `backend/accounts/urls.py` |
@@ -65,6 +68,7 @@ This document tracks the current code structure, key APIs, database mappings, an
 | Permissions | `/api/v1/permissions/` | various | Permission-related routes | `backend/siem_project/urls.py` |
 
 ### Alerts
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Alerts list | `/api/v1/alerts/list/` | GET | Paginated alert list | `backend/alerts/urls.py` |
@@ -75,6 +79,7 @@ This document tracks the current code structure, key APIs, database mappings, an
 | ES diagnostics | `/api/v1/alerts/debug/es_status/` | GET | Elasticsearch status diagnostics | `backend/alerts/urls.py` |
 
 ### Tickets
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Tickets | `/api/v1/tickets/` | GET/POST | List or create tickets | `backend/tickets/urls.py` |
@@ -85,6 +90,7 @@ This document tracks the current code structure, key APIs, database mappings, an
 | Resolve | `/api/v1/tickets/{ticket_number}/resolve/` | POST | Resolve a ticket | `backend/tickets/views.py` |
 
 ### CMDB
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Assets | `/api/v1/cmdb/assets/` | GET/POST | Asset inventory CRUD | `backend/cmdb/urls.py` |
@@ -95,12 +101,14 @@ This document tracks the current code structure, key APIs, database mappings, an
 | Log detail | `/api/v1/cmdb/logs/{id}/` | GET/PUT/PATCH/DELETE | Audit log CRUD | `backend/cmdb/urls.py` |
 
 ### Correlation
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Policy | `/api/v1/correlation/policy/` | GET/POST | Fetch or update correlation policy | `backend/correlation/urls.py` |
 | Events | `/api/v1/correlation/events/` | GET | Correlation event stream / mock series | `backend/correlation/urls.py` |
 
 ### Dashboards / Integrations / Orchestrator
+
 These routes are registered in `backend/siem_project/urls.py` via DRF routers, so the exact set of list/detail actions depends on each ViewSet implementation.
 
 | Area | Endpoint | Method | Purpose | Backend ref |
@@ -112,6 +120,7 @@ These routes are registered in `backend/siem_project/urls.py` via DRF routers, s
 | Task request logs | `/api/v1/task_request_logs/` | GET/POST | Task request logs | `backend/orchestrator/views.py` |
 
 ### Special Integration Utilities
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | ES test | `/api/v1/integrations/test_es` | GET/POST | Test Elasticsearch connectivity | `backend/siem_project/urls.py` |
@@ -119,6 +128,7 @@ These routes are registered in `backend/siem_project/urls.py` via DRF routers, s
 | ES mapping preview | `/api/v1/integrations/preview_es_mapping` | GET/POST | Preview ES field mappings | `backend/siem_project/urls.py` |
 
 ### Workflow Engine
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Action templates | `/api/v1/workflows/action-templates/` | GET/POST | Action template CRUD | `backend/workflows/urls.py` |
@@ -129,6 +139,7 @@ These routes are registered in `backend/siem_project/urls.py` via DRF routers, s
 | Workflow stats | `/api/v1/workflows/stats/` | GET | Workflow statistics | `backend/workflows/urls.py` |
 
 ### Workflow Interfaces
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | Interface endpoints | `/api/v1/interfaces/endpoints/` | GET/POST | External endpoint registry | `backend/workflow_interfaces/urls.py` |
@@ -136,6 +147,7 @@ These routes are registered in `backend/siem_project/urls.py` via DRF routers, s
 | Webhook ingest | `/api/v1/interfaces/webhooks/{endpoint_id}/` | POST | Webhook-style ingest endpoint | `backend/workflow_interfaces/urls.py` |
 
 ### AI Assistant / MCP
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | AI connectivity | `/api/v1/ai-assistant/test-connectivity` | GET/POST | Health/connectivity check | `backend/siem_project/urls.py` |
@@ -157,4 +169,3 @@ These routes are registered in `backend/siem_project/urls.py` via DRF routers, s
 | MCP similar cases | `/api/v1/mcp/ticket-search/similar-cases` | GET/POST | Find similar tickets | `backend/siem_project/urls.py` |
 | MCP CMDB lookup | `/api/v1/mcp/cmdb/asset-lookup` | GET/POST | Asset lookup | `backend/siem_project/urls.py` |
 | MCP observables extract | `/api/v1/mcp/observables/extract` | POST | Extract observables | `backend/siem_project/urls.py` |
-
