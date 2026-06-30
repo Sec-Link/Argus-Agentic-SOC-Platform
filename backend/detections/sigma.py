@@ -415,7 +415,45 @@ def _elastic_index_patterns_for_profiles(candidates: list[str]) -> list[str]:
                 patterns.append(pattern)
     return patterns
 
+def _elastic_multivalue_fields_for_profiles(candidates: list[str]) -> list[str]:
+    rows = LocalDetectionFieldMapping.objects.filter(
+        mapping_profile__in=candidates,
+        elastic_is_multivalue=True,
+    ).order_by("id")
+    fields = []
+    seen = set()
+    for row in rows:
+        field = str(row.elastic_field or row.sigma_field or "").strip()
+        if field and field not in seen:
+            seen.add(field)
+            fields.append(field)
+    return fields
 
+
+def _escape_esql_string(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _rewrite_multivalue_equals_to_match(query: str, multivalue_fields: list[str]) -> str:
+    source = str(query or "")
+    fields = [field for field in multivalue_fields if field]
+    if not source or not fields:
+        return source
+
+    literal = r'(?P<value>"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|-?\d+(?:\.\d+)?)'
+    for field in sorted(fields, key=len, reverse=True):
+        pattern = re.compile(rf'(?<![\w.])(?P<field>{re.escape(field)})\s*==\s*{literal}')
+
+        def replace(match):
+            raw_value = match.group("value")
+            if raw_value.startswith(("\"", "'")) and raw_value.endswith(("\"", "'")):
+                value = raw_value[1:-1]
+            else:
+                value = raw_value
+            return f'MATCH({match.group("field")}, "{_escape_esql_string(value)}")'
+
+        source = pattern.sub(replace, source)
+    return source
 def _apply_index_patterns_to_esql(query: str, index_patterns: list[str]) -> str:
     source = str(query or "").strip()
     patterns = [str(item or "").strip() for item in index_patterns if str(item or "").strip()]
@@ -495,11 +533,13 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
     parsed = load_rule_document(yaml_text)
     candidates = _mapping_candidates(parsed)
     index_patterns = _elastic_index_patterns_for_profiles(candidates)
+    multivalue_fields = _elastic_multivalue_fields_for_profiles(candidates)
     components = _sigma_runtime()
 
     try:
         esql_queries = _render_queries(components["ESQLBackend"], yaml_text, candidates)
-        esql = _apply_index_patterns_to_esql(_join_queries(esql_queries), index_patterns)
+        esql = _rewrite_multivalue_equals_to_match(_join_queries(esql_queries), multivalue_fields)
+        esql = _apply_index_patterns_to_esql(esql, index_patterns)
         return {
             "profiles": candidates,
             "elastic_index_patterns": index_patterns,
@@ -528,4 +568,3 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
             "esql": "*",
             "error": f"ES|QL: {esql_error} | Lucene: {lucene_error}",
         }
-
