@@ -104,6 +104,21 @@ def submit(execution: WorkflowExecution) -> WorkflowExecution:
     return execution
 
 
+def cancel(execution: WorkflowExecution) -> WorkflowExecution:
+    """Forward a cancellation request to Prefect for the backing flow run.
+
+    The caller is responsible for updating the local ``WorkflowExecution``
+    row; this only propagates intent to Prefect. Idempotent when the flow run
+    is already terminal.
+    """
+    if not execution.task_result_id:
+        return execution
+    prefect_client.cancel_flow_run(execution.task_result_id)
+    logger.info('Requested Prefect cancel for flow run %s (execution %s)', execution.task_result_id, execution.id)
+    return execution
+
+
+
 def sync_status(execution: WorkflowExecution) -> WorkflowExecution:
     if not execution.task_result_id:
         return execution

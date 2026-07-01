@@ -184,14 +184,6 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
-# Django tasks backend (immediate execution by default).
-# TASKS must be a dict of backends keyed by alias (default required).
-TASKS = {
-    'default': {
-        'BACKEND': 'django.tasks.backends.immediate.ImmediateBackend',
-    },
-}
-
 # Orchestrator schedule polling window (seconds).
 ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS = int(os.getenv('ORCHESTRATOR_SCHEDULE_INTERVAL_SECONDS', '30'))
 
@@ -223,7 +215,7 @@ EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.Email
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.feishu.cn')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'customer@seclink.info')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', 'PQWCPj6HdNKB9Uu8')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'true').lower() in ('true', '1', 'yes')
 EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'false').lower() in ('true', '1', 'yes')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'noreply@localhost')

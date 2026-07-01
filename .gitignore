@@ -4,6 +4,19 @@
 .env.*.local
 env
 
+# Node / Next.js
+node_modules/
+.next/
+
+# Python virtualenvs
+.venv/
+
+# Tooling
+.claude/
+
+# Runtime-generated workflow manifests
+backend/workflows/flows/generated/
+
 # Python
 __pycache__/
 *.py[cod]
