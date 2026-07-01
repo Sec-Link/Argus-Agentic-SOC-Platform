@@ -3,12 +3,26 @@ Generic Prefect flow for dynamic SOAR workflows.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List
+import json
+import os
+import sys
 
 from prefect import flow, get_run_logger
 
-from ..condition_evaluator import evaluate_condition_object, resolve_context_path
-from ..tasks import (
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'siem_project.settings')
+
+import django
+
+django.setup()
+
+from workflows.condition_evaluator import evaluate_condition_object, resolve_context_path
+from workflows.tasks import (
     block_ip_task,
     create_ticket_task,
     delay_task,
@@ -22,8 +36,6 @@ from ..tasks import (
     send_webhook_task,
     update_ticket_task,
 )
-import json
-from pathlib import Path
 
 MANIFESTS_DIR = Path(__file__).resolve().parent / 'generated'
 

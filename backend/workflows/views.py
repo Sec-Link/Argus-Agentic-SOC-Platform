@@ -27,6 +27,7 @@ from .models import (
     WorkflowExecution,
     WorkflowStep,
     WorkflowSchedule,
+    TicketWorkflowBinding,
 )
 from .serializers import (
     ActionTemplateSerializer,
@@ -40,8 +41,11 @@ from .serializers import (
     WorkflowStepCreateSerializer,
     WorkflowStepSerializer,
     WorkflowScheduleSerializer,
+    TicketWorkflowBindingSerializer,
 )
 from . import prefect_client
+from .parameter_binder import bind_workflow_parameters
+from .ticket_invocation import dispatch_ticket_event, find_callable_workflows, get_ticket_workplan, invoke_workflow_from_ticket
 
 
 logger = logging.getLogger(__name__)
@@ -168,6 +172,20 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         if prefect_client.is_configured(None):
             workflow.prefect_deployment_id = prefect_client.resolve_deployment_id(None)
             workflow.save(update_fields=['prefect_deployment_id'])
+
+    @action(detail=True, methods=['post'], url_path='execute')
+    def execute(self, request, pk=None):
+        workflow = self.get_object()
+        serializer = WorkflowExecuteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        execution = execute_workflow(
+            workflow=workflow,
+            trigger_source=serializer.validated_data.get('trigger_source', 'manual'),
+            trigger_data=serializer.validated_data.get('trigger_data', {}),
+            executed_by=request.user if request.user.is_authenticated else None,
+        )
+        response = WorkflowExecutionDetailSerializer(execution)
+        return Response(response.data, status=status.HTTP_201_CREATED)
 
     @staticmethod
     def _prefect_schedule_payload(schedule: WorkflowSchedule | None) -> Dict[str, Any] | None:
@@ -699,3 +717,106 @@ class WorkflowImportView(APIView):
             {'error': 'Provide one of: file upload, filename, or workflow_definition payload.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+
+class TicketWorkflowBindingViewSet(viewsets.ModelViewSet):
+    serializer_class = TicketWorkflowBindingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = TicketWorkflowBinding.objects.select_related('workflow', 'created_by')
+        workflow_id = self.request.query_params.get('workflow')
+        if workflow_id:
+            queryset = queryset.filter(workflow_id=workflow_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class TicketCallablePlaybookSuggestView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        workflows = find_callable_workflows()
+        serializer = WorkflowListSerializer(workflows, many=True)
+        return Response({'results': serializer.data, 'count': workflows.count()})
+
+
+class TicketCallablePlaybookSchemaView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, workflow_id):
+        workflow = find_callable_workflows().filter(id=workflow_id).first()
+        if not workflow:
+            return Response({'error': 'Workflow not found or not callable from ticket'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'workflow_id': str(workflow.id),
+            'workflow_name': workflow.name,
+            'inputs_schema': workflow.inputs_schema,
+            'allowed_invoker_roles': workflow.allowed_invoker_roles,
+        })
+
+
+class TicketCallablePlaybookInvokeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'ticket_playbook_invoke'
+
+    def post(self, request, workflow_id):
+        workflow = find_callable_workflows().filter(id=workflow_id).first()
+        if not workflow:
+            return Response({'error': 'Workflow not found or not callable from ticket'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed_roles = workflow.allowed_invoker_roles or []
+        if allowed_roles:
+            user_roles = set(request.user.groups.values_list('name', flat=True))
+            if not user_roles.intersection(set(allowed_roles)):
+                return Response({'error': 'You do not have permission to invoke this playbook'}, status=status.HTTP_403_FORBIDDEN)
+
+        ticket_data = request.data.get('ticket') or {}
+        if not isinstance(ticket_data, dict) or not ticket_data.get('ticket_number'):
+            return Response({'error': 'ticket.ticket_number is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            execution = invoke_workflow_from_ticket(
+                workflow=workflow,
+                ticket_data=ticket_data,
+                user_inputs=request.data.get('inputs') or {},
+                executed_by=request.user,
+                comment=request.data.get('comment', ''),
+            )
+        except Exception as exc:
+            return Response({'error': f'Workflow invocation failed: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'execution_id': str(execution.id),
+            'status': execution.status,
+            'trigger_source': execution.trigger_source,
+        }, status=status.HTTP_201_CREATED)
+
+
+class TicketWorkflowDispatchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        trigger_event = request.data.get('trigger_event')
+        if trigger_event not in ('on_create', 'on_status_change'):
+            return Response({'error': "trigger_event must be 'on_create' or 'on_status_change'"}, status=status.HTTP_400_BAD_REQUEST)
+
+        ticket_data = request.data.get('ticket') or {}
+        if not isinstance(ticket_data, dict) or not ticket_data.get('ticket_number'):
+            return Response({'error': 'ticket.ticket_number is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = dispatch_ticket_event(trigger_event, ticket_data, executed_by=request.user)
+        return Response(result, status=status.HTTP_202_ACCEPTED)
+
+
+class TicketWorkflowWorkplanView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        ticket_number = str(request.query_params.get('ticket_number') or '').strip()
+        if not ticket_number:
+            return Response({'error': 'ticket_number is required'}, status=status.HTTP_400_BAD_REQUEST)
+        items = get_ticket_workplan(ticket_number)
+        return Response({'ticket_number': ticket_number, 'results': items, 'count': len(items)})

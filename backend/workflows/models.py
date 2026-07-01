@@ -121,6 +121,20 @@ class Workflow(models.Model):
         blank=True,
         help_text="Filter conditions for automatic triggers (JSON)"
     )
+    inputs_schema = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Input definitions for ticket-context workflow invocation."
+    )
+    is_callable_from_ticket = models.BooleanField(
+        default=False,
+        help_text="Whether this workflow can be invoked from ticket context."
+    )
+    allowed_invoker_roles = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Django group names allowed to invoke this workflow from tickets."
+    )
 
     # Scheduling (for scheduled trigger type)
     schedule_cron = models.CharField(
@@ -201,6 +215,40 @@ class Workflow(models.Model):
             )
 
         return new_workflow
+
+
+class TicketWorkflowBinding(models.Model):
+    LABEL_LOGIC = [
+        ('AND', 'All labels must match'),
+        ('OR', 'Any label may match'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    workflow = models.ForeignKey(
+        Workflow,
+        on_delete=models.CASCADE,
+        related_name='ticket_workflow_bindings',
+    )
+    label_filters = models.JSONField(default=list, blank=True)
+    label_filter_logic = models.CharField(max_length=3, choices=LABEL_LOGIC, default='AND')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ticket_workflow_bindings',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = 'Ticket Workflow Binding'
+        verbose_name_plural = 'Ticket Workflow Bindings'
+
+    def __str__(self):
+        return f"{self.name} -> {self.workflow.name}"
 
 
 class WorkflowStep(models.Model):

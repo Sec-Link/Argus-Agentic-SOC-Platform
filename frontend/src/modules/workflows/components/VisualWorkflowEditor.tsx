@@ -44,6 +44,7 @@ import {
   Typography,
   List,
   Popconfirm,
+  Empty,
 } from 'antd';
 import {
   SaveOutlined,
@@ -55,6 +56,7 @@ import {
   PlusOutlined,
   SettingOutlined,
   BranchesOutlined,
+  TagsOutlined,
 } from '@ant-design/icons';
 import {
   getWorkflow,
@@ -66,6 +68,10 @@ import {
   createSavedWorkflowNode,
   updateSavedWorkflowNode,
   deleteSavedWorkflowNode,
+  listTicketWorkflowBindings,
+  createTicketWorkflowBinding,
+  updateTicketWorkflowBinding,
+  deleteTicketWorkflowBinding,
 } from 'services/workflows';
 import { fetchSlaTicketFieldChoices } from 'services/tickets';
 import { listInterfaceEndpoints } from 'services/interfaces';
@@ -75,6 +81,7 @@ import type {
   ActionInfo,
   WorkflowEdge,
   SavedWorkflowNode,
+  TicketWorkflowBinding,
 } from 'services/workflows';
 import type { InterfaceEndpoint } from 'services/interfaces';
 import { nodeTypes } from './CustomNodes';
@@ -181,6 +188,16 @@ const getApiErrorMessage = (err: any, fallback: string): string => {
   if (typeof data?.detail === 'string') return data.detail;
   if (typeof data?.error === 'string') return data.error;
   return fallback;
+};
+
+const normalizeBindingLabelFilters = (value: any): Array<{ label_name: string; label_value: string }> => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => ({
+      label_name: String(item?.label_name || '').trim(),
+      label_value: item?.label_value == null ? '' : String(item.label_value).trim(),
+    }))
+    .filter((item) => item.label_name);
 };
 
 const normalizeTriggerRules = (value: any): TriggerRule[] => {
@@ -344,6 +361,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
 }) => {
   const [modal, modalContextHolder] = Modal.useModal();
   const [form] = Form.useForm();
+  const [bindingForm] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [availableActions, setAvailableActions] = useState<ActionInfo[]>([]);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
@@ -365,6 +383,9 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [ticketBinding, setTicketBinding] = useState<TicketWorkflowBinding | null>(null);
+  const [bindingLoading, setBindingLoading] = useState(false);
+  const [bindingSaving, setBindingSaving] = useState(false);
 
   const isNew = !workflowId;
 
@@ -414,6 +435,35 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       setSavedNodes([]);
     }
   }, []);
+
+  const refreshTicketBinding = useCallback(async () => {
+    if (!workflowId) {
+      setTicketBinding(null);
+      bindingForm.resetFields();
+      return;
+    }
+
+    setBindingLoading(true);
+    try {
+      const data = await listTicketWorkflowBindings({ workflow: workflowId });
+      const existing = Array.isArray(data) ? data[0] || null : null;
+      setTicketBinding(existing);
+      bindingForm.setFieldsValue({
+        name: existing?.name || `${workflow?.name || 'Workflow'} ticket binding`,
+        label_filter_logic: existing?.label_filter_logic || 'AND',
+        label_filters: existing?.label_filters?.length ? existing.label_filters : [{ label_name: '', label_value: '' }],
+      });
+    } catch {
+      setTicketBinding(null);
+      bindingForm.setFieldsValue({
+        name: `${workflow?.name || 'Workflow'} ticket binding`,
+        label_filter_logic: 'AND',
+        label_filters: [{ label_name: '', label_value: '' }],
+      });
+    } finally {
+      setBindingLoading(false);
+    }
+  }, [workflowId, workflow?.name, bindingForm]);
 
   const handleTriggerTypeChange = useCallback(
     (triggerType: string) => {
@@ -553,6 +603,10 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   useEffect(() => {
     refreshSavedNodes();
   }, [refreshSavedNodes]);
+
+  useEffect(() => {
+    refreshTicketBinding();
+  }, [refreshTicketBinding]);
 
   useEffect(() => {
     const loadInterfaces = async () => {
@@ -905,6 +959,57 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const onConditionEdit = () => {
     if (selectedNode?.type === 'condition') {
       setConditionModalVisible(true);
+    }
+  };
+
+  const saveTicketBinding = async () => {
+    if (!workflowId) return;
+    setBindingSaving(true);
+    try {
+      const values = await bindingForm.validateFields();
+      const labelFilters = normalizeBindingLabelFilters(values.label_filters);
+      const labelFilterLogic: TicketWorkflowBinding['label_filter_logic'] = values.label_filter_logic === 'OR' ? 'OR' : 'AND';
+      const payload: Partial<TicketWorkflowBinding> = {
+        name: values.name,
+        workflow: workflowId,
+        label_filter_logic: labelFilterLogic,
+        label_filters: labelFilters,
+      };
+
+      const saved = ticketBinding
+        ? await updateTicketWorkflowBinding(ticketBinding.id, payload)
+        : await createTicketWorkflowBinding(payload);
+      setTicketBinding(saved);
+      bindingForm.setFieldsValue({
+        name: saved.name,
+        label_filter_logic: saved.label_filter_logic,
+        label_filters: saved.label_filters?.length ? saved.label_filters : [{ label_name: '', label_value: '' }],
+      });
+      message.success('Ticket label binding saved');
+    } catch (err: any) {
+      if (err?.errorFields) return;
+      message.error(getApiErrorMessage(err, 'Failed to save ticket label binding'));
+    } finally {
+      setBindingSaving(false);
+    }
+  };
+
+  const removeTicketBinding = async () => {
+    if (!ticketBinding) return;
+    setBindingSaving(true);
+    try {
+      await deleteTicketWorkflowBinding(ticketBinding.id);
+      setTicketBinding(null);
+      bindingForm.setFieldsValue({
+        name: `${workflow?.name || 'Workflow'} ticket binding`,
+        label_filter_logic: 'AND',
+        label_filters: [{ label_name: '', label_value: '' }],
+      });
+      message.success('Ticket label binding deleted');
+    } catch (err: any) {
+      message.error(getApiErrorMessage(err, 'Failed to delete ticket label binding'));
+    } finally {
+      setBindingSaving(false);
     }
   };
 
@@ -1306,6 +1411,87 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
               </Row>
             </Form>
           </Card>
+
+          {!isNew && (
+            <Card
+              title={
+                <Space>
+                  <TagsOutlined />
+                  Ticket Labels
+                </Space>
+              }
+              size="small"
+              style={{ marginBottom: 16 }}
+              loading={bindingLoading}
+            >
+              <Form form={bindingForm} layout="vertical" size="small" preserve={false}>
+                <Form.Item name="name" label="Binding Name" rules={[{ required: true, message: 'Binding name is required' }]}>
+                  <Input placeholder="e.g. Critical ticket routing" />
+                </Form.Item>
+                <Form.Item name="label_filter_logic" label="Label Logic" rules={[{ required: true }]}>
+                  <Select
+                    options={[
+                      { value: 'AND', label: 'AND' },
+                      { value: 'OR', label: 'OR' },
+                    ]}
+                  />
+                </Form.Item>
+                <Form.List name="label_filters">
+                  {(fields, { add, remove }) => (
+                    <div>
+                      {fields.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No labels" />}
+                      {fields.map((field) => (
+                        <div
+                          key={field.key}
+                          style={{
+                            padding: 8,
+                            marginBottom: 8,
+                            border: '1px solid var(--workflow-border, #f0f0f0)',
+                            borderRadius: 6,
+                          }}
+                        >
+                          <Form.Item
+                            {...field}
+                            name={[field.name, 'label_name']}
+                            rules={[{ required: true, message: 'Required' }]}
+                            style={{ marginBottom: 8 }}
+                          >
+                            <Input placeholder="label_name" />
+                          </Form.Item>
+                          <Form.Item {...field} name={[field.name, 'label_value']} style={{ marginBottom: 8 }}>
+                            <Input placeholder="label_value" />
+                          </Form.Item>
+                          <Button danger size="small" block onClick={() => remove(field.name)}>
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                      <Button size="small" onClick={() => add({ label_name: '', label_value: '' })} style={{ marginBottom: 12 }}>
+                        Add Label
+                      </Button>
+                    </div>
+                  )}
+                </Form.List>
+                <Space wrap>
+                  <Button type="primary" size="small" loading={bindingSaving} onClick={saveTicketBinding}>
+                    Save Labels
+                  </Button>
+                  {ticketBinding && (
+                    <Popconfirm
+                      title="Delete this ticket label binding?"
+                      onConfirm={removeTicketBinding}
+                      okText="Yes"
+                      cancelText="No"
+                    >
+                      <Button danger size="small" loading={bindingSaving}>
+                        Delete Binding
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
+              </Form>
+            </Card>
+          )}
 
           <ActionPalette
             actions={availableActions}

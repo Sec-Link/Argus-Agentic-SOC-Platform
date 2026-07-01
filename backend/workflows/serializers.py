@@ -12,8 +12,21 @@ from .models import (
     StepExecution,
     SavedWorkflowNode,
     WorkflowSchedule,
+    TicketWorkflowBinding,
 )
 from .publisher import get_published_state
+
+
+class WorkflowPublishedStateMixin:
+    def _get_published_state(self, obj):
+        cache = getattr(self, '_published_state_cache', None)
+        if cache is None:
+            cache = {}
+            self._published_state_cache = cache
+        key = obj.pk
+        if key not in cache:
+            cache[key] = get_published_state(obj)
+        return cache[key]
 
 
 class ActionTemplateSerializer(serializers.ModelSerializer):
@@ -100,7 +113,30 @@ class WorkflowScheduleSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class WorkflowListSerializer(serializers.ModelSerializer):
+class TicketWorkflowBindingSerializer(serializers.ModelSerializer):
+    workflow_name = serializers.CharField(source='workflow.name', read_only=True)
+
+    class Meta:
+        model = TicketWorkflowBinding
+        fields = [
+            'id', 'name', 'workflow', 'workflow_name',
+            'label_filters', 'label_filter_logic',
+            'created_by', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+
+    def validate_label_filters(self, value):
+        if value in (None, ''):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError('label_filters must be a list')
+        for item in value:
+            if not isinstance(item, dict) or not str(item.get('label_name') or '').strip():
+                raise serializers.ValidationError('Each label filter must include label_name')
+        return value
+
+
+class WorkflowListSerializer(WorkflowPublishedStateMixin, serializers.ModelSerializer):
     """Serializer for listing workflows (minimal data)."""
     created_by_username = serializers.CharField(
         source='created_by.username',
@@ -117,7 +153,8 @@ class WorkflowListSerializer(serializers.ModelSerializer):
         model = Workflow
         fields = [
             'id', 'name', 'description', 'trigger_type', 'execution_engine',
-            'prefect_deployment_id',
+            'prefect_deployment_id', 'inputs_schema', 'is_callable_from_ticket',
+            'allowed_invoker_roles',
             'is_active', 'is_draft', 'version', 'published_version', 'published_at', 'has_unpublished_changes',
             'tags', 'created_by', 'created_by_username',
             'step_count', 'execution_count', 'last_execution',
@@ -143,16 +180,16 @@ class WorkflowListSerializer(serializers.ModelSerializer):
         return None
 
     def get_published_version(self, obj):
-        return get_published_state(obj).get('published_version')
+        return self._get_published_state(obj).get('published_version')
 
     def get_published_at(self, obj):
-        return get_published_state(obj).get('published_at')
+        return self._get_published_state(obj).get('published_at')
 
     def get_has_unpublished_changes(self, obj):
-        return get_published_state(obj).get('has_unpublished_changes')
+        return self._get_published_state(obj).get('has_unpublished_changes')
 
 
-class WorkflowDetailSerializer(serializers.ModelSerializer):
+class WorkflowDetailSerializer(WorkflowPublishedStateMixin, serializers.ModelSerializer):
     """Serializer for workflow detail view (includes steps)."""
     created_by_username = serializers.CharField(
         source='created_by.username',
@@ -168,7 +205,8 @@ class WorkflowDetailSerializer(serializers.ModelSerializer):
         model = Workflow
         fields = [
             'id', 'name', 'description', 'trigger_type', 'execution_engine',
-            'prefect_deployment_id',
+            'prefect_deployment_id', 'inputs_schema', 'is_callable_from_ticket',
+            'allowed_invoker_roles',
             'trigger_conditions',
             'schedule_cron', 'is_active', 'is_draft', 'version', 'published_version', 'published_at', 'has_unpublished_changes', 'tags',
             'edges', 'created_by', 'created_by_username', 'steps',
@@ -178,13 +216,13 @@ class WorkflowDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_published_version(self, obj):
-        return get_published_state(obj).get('published_version')
+        return self._get_published_state(obj).get('published_version')
 
     def get_published_at(self, obj):
-        return get_published_state(obj).get('published_at')
+        return self._get_published_state(obj).get('published_at')
 
     def get_has_unpublished_changes(self, obj):
-        return get_published_state(obj).get('has_unpublished_changes')
+        return self._get_published_state(obj).get('has_unpublished_changes')
 
 
 class WorkflowCreateSerializer(serializers.ModelSerializer):
@@ -195,7 +233,8 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
         model = Workflow
         fields = [
             'id', 'name', 'description', 'trigger_type', 'execution_engine',
-            'prefect_deployment_id',
+            'prefect_deployment_id', 'inputs_schema', 'is_callable_from_ticket',
+            'allowed_invoker_roles',
             'trigger_conditions',
             'schedule_cron', 'is_active', 'is_draft', 'version', 'tags', 'edges', 'steps'
         ]

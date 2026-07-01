@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
-import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, generateSlaTicketAiAssistant, generateSlaTicketAiMention, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
+import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
 
 type Props = {
   ticket: SlaTicketDetail;
@@ -18,6 +18,22 @@ type Props = {
   onUploadWorkLogImage?: (file: File) => Promise<SlaTicketAttachment>;
   onRefresh: () => void;
   loading?: boolean;
+};
+
+type TicketCallablePlaybook = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type TicketWorkplanItem = {
+  execution_id: string;
+  workflow_name: string;
+  status: string;
+  trigger_source: string;
+  progress_percent?: number;
+  created_at?: string;
+  error_message?: string;
 };
 
 const statusLabel: Record<string, string> = {
@@ -412,6 +428,11 @@ export default function SlaTicketDetailView(props: Props) {
   const [resolveForm] = Form.useForm();
   const [commentDraft, setCommentDraft] = useState('');
   const [commentSending, setCommentSending] = useState(false);
+  const [playbookOptions, setPlaybookOptions] = useState<TicketCallablePlaybook[]>([]);
+  const [playbookSuggestOpen, setPlaybookSuggestOpen] = useState(false);
+  const [playbookLoading, setPlaybookLoading] = useState(false);
+  const [workplanItems, setWorkplanItems] = useState<TicketWorkplanItem[]>([]);
+  const [workplanLoading, setWorkplanLoading] = useState(false);
   const [editableLabels, setEditableLabels] = useState<Array<{ label_name: string; label_value: string }>>([]);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelValue, setNewLabelValue] = useState('');
@@ -460,6 +481,25 @@ export default function SlaTicketDetailView(props: Props) {
     setChatNextBefore(null);
   }, [ticket.ticket_number]);
 
+  useEffect(() => {
+    let alive = true;
+    setWorkplanLoading(true);
+    (async () => {
+      try {
+        const res = await fetchTicketPlaybookWorkplan(ticket.ticket_number);
+        const rows = Array.isArray(res?.results) ? res.results : [];
+        if (alive) setWorkplanItems(rows);
+      } catch {
+        if (alive) setWorkplanItems([]);
+      } finally {
+        if (alive) setWorkplanLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [ticket.ticket_number]);
+
   const buildAiBasePayload = () => {
     const aiEnabled = localStorage.getItem('siem_ai_enabled') !== '0';
     const aiApiKey = localStorage.getItem('siem_ai_api_key') || '';
@@ -475,6 +515,54 @@ export default function SlaTicketDetailView(props: Props) {
       base_url: aiBaseUrl || undefined,
       timeout_seconds: aiTimeout,
     };
+  };
+
+  const buildTicketPlaybookPayload = () => ({
+    ticket_number: ticket.ticket_number,
+    title: ticket.title,
+    status: ticket.status,
+    priority: ticket.priority,
+    event_category: ticket.event_category,
+    event_result: ticket.event_result,
+    event_platform: ticket.event_platform,
+    event_sources: ticket.event_sources,
+    alert_message: ticket.alert_message,
+    labels: ticket.labels || [],
+  });
+
+  const loadPlaybookOptions = async (): Promise<TicketCallablePlaybook[]> => {
+    if (playbookLoading) return playbookOptions;
+    if (playbookOptions.length) return playbookOptions;
+    setPlaybookLoading(true);
+    try {
+      const res = await fetchTicketCallablePlaybooks();
+      const rows = Array.isArray(res?.results) ? res.results : [];
+      const next = rows.map((row: any) => ({
+        id: String(row.id),
+        name: String(row.name || row.id),
+        description: row.description ? String(row.description) : '',
+      }));
+      setPlaybookOptions(next);
+      return next;
+    } catch (err: any) {
+      const apiError = err?.response?.data?.error || err?.response?.data?.detail;
+      message.error(apiError ? String(apiError) : 'Failed to load playbooks');
+      return [];
+    } finally {
+      setPlaybookLoading(false);
+    }
+  };
+
+  const handleCommentDraftChange = (value: string) => {
+    setCommentDraft(value);
+    const shouldOpen = value.trim() === '@' || value.trim().startsWith('@playbook');
+    setPlaybookSuggestOpen(shouldOpen);
+    if (shouldOpen) loadPlaybookOptions();
+  };
+
+  const selectPlaybook = (playbook: TicketCallablePlaybook) => {
+    setCommentDraft(`@playbook ${playbook.name}`);
+    setPlaybookSuggestOpen(false);
   };
 
   const buildChatContext = () => {
@@ -675,6 +763,30 @@ export default function SlaTicketDetailView(props: Props) {
           return;
         }
         await askAiByMention(prompt);
+      } else if (text.toLowerCase().startsWith('@playbook')) {
+        const playbookName = text.replace(/^@playbook\s*/i, '').trim();
+        if (!playbookName) {
+          message.warning('Please choose a playbook');
+          setPlaybookSuggestOpen(true);
+          await loadPlaybookOptions();
+          return;
+        }
+        const options = playbookOptions.length ? playbookOptions : await loadPlaybookOptions();
+        const selected = options.find((item) => item.name.toLowerCase() === playbookName.toLowerCase());
+        if (!selected) {
+          message.warning('Playbook not found, please choose from the list');
+          setPlaybookSuggestOpen(true);
+          return;
+        }
+        const res = await invokeTicketCallablePlaybook(selected.id, {
+          ticket: buildTicketPlaybookPayload(),
+          inputs: {},
+          comment: text,
+        });
+        if (props.onAddWorkLog) {
+          await props.onAddWorkLog(`Invoked playbook: ${selected.name}\nExecution ID: ${res?.execution_id || '-'}\nStatus: ${res?.status || '-'}`);
+        }
+        message.success('Playbook invocation started');
       } else if (props.onAddWorkLog) {
         await props.onAddWorkLog(text);
       } else {
@@ -1354,14 +1466,65 @@ export default function SlaTicketDetailView(props: Props) {
                 )}
               </Card>
 
+              <Card size="small" title="Work Plan" loading={workplanLoading}>
+                {workplanItems.length ? (
+                  <List
+                    size="small"
+                    dataSource={workplanItems}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <div style={{ width: '100%' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                            <Typography.Text strong>{item.workflow_name}</Typography.Text>
+                            <Tag color={item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'blue'}>{item.status}</Tag>
+                          </div>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {item.trigger_source} · {formatTimestamp(item.created_at)}
+                          </Typography.Text>
+                          {item.error_message ? (
+                            <div style={{ marginTop: 4 }}>
+                              <Typography.Text type="danger" style={{ fontSize: 12 }}>{item.error_message}</Typography.Text>
+                            </div>
+                          ) : null}
+                        </div>
+                      </List.Item>
+                    )}
+                  />
+                ) : (
+                  <Empty description="No playbook executions yet" />
+                )}
+              </Card>
+
               <Card size="small">
                 <Input.TextArea
                   value={commentDraft}
-                  onChange={(e) => setCommentDraft(e.target.value)}
+                  onChange={(e) => handleCommentDraftChange(e.target.value)}
                   placeholder="Comment or use suggestions from AI Assistant..."
                   autoSize={{ minRows: 2, maxRows: 4 }}
                   disabled={commentSending}
                 />
+                {playbookSuggestOpen ? (
+                  <Card size="small" style={{ marginTop: 8 }} bodyStyle={{ padding: 8 }}>
+                    {playbookLoading ? (
+                      <Typography.Text type="secondary">Loading playbooks...</Typography.Text>
+                    ) : playbookOptions.length ? (
+                      <List
+                        size="small"
+                        dataSource={playbookOptions}
+                        renderItem={(item) => (
+                          <List.Item style={{ cursor: 'pointer' }} onClick={() => selectPlaybook(item)}>
+                            <List.Item.Meta
+                              title={<Typography.Text>{item.name}</Typography.Text>}
+                              description={item.description || 'Invoke this playbook from the ticket context'}
+                            />
+                          </List.Item>
+                        )}
+                      />
+                    ) : (
+                      <Typography.Text type="secondary">No callable playbooks</Typography.Text>
+                    )}
+                  </Card>
+                ) : null}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
                   <Button>Attach</Button>
                   <Button type="primary" onClick={sendComment} loading={commentSending} disabled={!commentDraft.trim() || commentSending}>

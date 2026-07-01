@@ -42,8 +42,10 @@ import {
   listPublishedManifests,
   importWorkflowFromManifest,
   importWorkflowFromFile,
+  listTicketWorkflowBindings,
   Workflow,
   WorkflowStats,
+  TicketWorkflowBinding,
 } from 'services/workflows';
 
 interface WorkflowsProps {
@@ -124,6 +126,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [triggerFilter, setTriggerFilter] = useState<string>('');
+  const [bindings, setBindings] = useState<TicketWorkflowBinding[]>([]);
 
   const fetchWorkflows = useCallback(async () => {
     setLoading(true);
@@ -144,6 +147,15 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     }
   }, [search, statusFilter, triggerFilter]);
 
+  const fetchBindings = useCallback(async () => {
+    try {
+      const data = await listTicketWorkflowBindings();
+      setBindings(Array.isArray(data) ? data : []);
+    } catch {
+      setBindings([]);
+    }
+  }, []);
+
   const fetchStats = useCallback(async () => {
     try {
       const data = await getWorkflowStats();
@@ -156,7 +168,12 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   useEffect(() => {
     fetchWorkflows();
     fetchStats();
-  }, [fetchWorkflows, fetchStats]);
+    fetchBindings();
+  }, [fetchWorkflows, fetchStats, fetchBindings]);
+
+  const getWorkflowBindings = useCallback((workflowId: string) => (
+    bindings.filter((item) => item.workflow === workflowId)
+  ), [bindings]);
 
   const handleDelete = async (id: string) => {
     try {
@@ -396,6 +413,29 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       },
     },
     {
+      title: 'Ticket Labels',
+      key: 'ticket_binding',
+      width: 260,
+      render: (_: any, record: Workflow) => {
+        const rows = getWorkflowBindings(record.id);
+        const labels = rows.flatMap((item) => item.label_filters || []);
+        if (!labels.length) return <Tag>Not bound</Tag>;
+        return (
+          <Space size={4} wrap>
+            {labels.map((label, index) => {
+              const name = String(label.label_name || '').trim();
+              const value = label.label_value == null ? '' : String(label.label_value).trim();
+              return (
+                <Tag key={`${name}-${value}-${index}`} color="green">
+                  {value ? `${name}: ${value}` : name}
+                </Tag>
+              );
+            })}
+          </Space>
+        );
+      },
+    },
+    {
       title: 'Last Execution',
       key: 'last_execution',
       width: 150,
@@ -428,11 +468,11 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     {
       title: 'Actions',
       key: 'actions',
-      width: 200,
+      width: 180,
       render: (_: any, record: Workflow) => {
         const running = isWorkflowRunning(record);
         return (
-          <Space size="small">
+          <Space size="small" wrap>
             {running ? (
               // While an execution is in-flight the Execute button is
               // replaced with a Stop button regardless of active/draft state.
@@ -505,6 +545,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   return (
     <div style={{ padding: 24 }}>
       {modalContextHolder}
+
       {/* Stats Cards */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={6}>
@@ -550,9 +591,9 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
 
       {/* Filters and Actions */}
       <Card style={{ marginBottom: 16 }}>
-        <Row gutter={16} align="middle">
-          <Col flex="auto">
-            <Space size="middle">
+        <Row gutter={[16, 12]} align="middle">
+          <Col xs={24} lg={10} xl={9}>
+            <Space size="middle" wrap style={{ width: '100%' }}>
               <Input
                 placeholder="Search workflows..."
                 prefix={<SearchOutlined />}
@@ -589,8 +630,8 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
               </Button>
             </Space>
           </Col>
-          <Col>
-            <Space>
+          <Col xs={24} lg={14} xl={15} style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Space wrap style={{ justifyContent: 'flex-end' }}>
               <Button
                 icon={<ImportOutlined />}
                 onClick={handleImport}
@@ -629,6 +670,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
+          scroll={{ x: 'max-content' }}
         />
       </Card>
     </div>

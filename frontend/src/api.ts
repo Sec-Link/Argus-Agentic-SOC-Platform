@@ -572,6 +572,41 @@ export async function generateSlaTicketAiMention(
   return res.data;
 }
 
+export async function fetchTicketCallablePlaybooks() {
+  const res = await client.get('/workflows/ticket-playbooks/suggest/');
+  return res.data;
+}
+
+export async function fetchTicketCallablePlaybookSchema(workflowId: string) {
+  const res = await client.get(`/workflows/ticket-playbooks/${encodeURIComponent(workflowId)}/inputs-schema/`);
+  return res.data;
+}
+
+export async function invokeTicketCallablePlaybook(
+  workflowId: string,
+  payload: {
+    ticket: Record<string, any>;
+    inputs?: Record<string, any>;
+    comment?: string;
+  }
+) {
+  const res = await client.post(`/workflows/ticket-playbooks/${encodeURIComponent(workflowId)}/invoke/`, payload);
+  return res.data;
+}
+
+export async function dispatchTicketPlaybooks(payload: {
+  trigger_event: 'on_create' | 'on_status_change';
+  ticket: Record<string, any>;
+}) {
+  const res = await client.post('/workflows/ticket-playbooks/dispatch/', payload);
+  return res.data;
+}
+
+export async function fetchTicketPlaybookWorkplan(ticketNumber: string) {
+  const res = await client.get(`/workflows/ticket-playbooks/workplan/?ticket_number=${encodeURIComponent(ticketNumber)}`);
+  return res.data;
+}
+
 export async function testAiAssistantConnectivity(payload: {
   api_key?: string;
   model?: string;
@@ -1066,6 +1101,18 @@ export interface Workflow {
   updated_at: string;
 }
 
+export interface TicketWorkflowBinding {
+  id: string;
+  name: string;
+  workflow: string;
+  workflow_name?: string;
+  label_filters: Array<{ label_name: string; label_value?: string | null }>;
+  label_filter_logic: 'AND' | 'OR';
+  created_by?: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkflowExecution {
   id: string;
   workflow: string;
@@ -1219,6 +1266,30 @@ export async function updateWorkflow(id: string, data: Partial<Workflow>): Promi
 // Delete workflow
 export async function deleteWorkflow(id: string): Promise<void> {
   await client.delete(`${WORKFLOWS_BASE}/workflows/${id}/`);
+}
+
+export async function listTicketWorkflowBindings(params?: {
+  workflow?: string;
+}): Promise<TicketWorkflowBinding[]> {
+  const qs = new URLSearchParams();
+  if (params?.workflow) qs.set('workflow', params.workflow);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const r = await client.get(`${WORKFLOWS_BASE}/ticket-workflow-bindings/${suffix}`);
+  return r.data;
+}
+
+export async function createTicketWorkflowBinding(data: Partial<TicketWorkflowBinding>): Promise<TicketWorkflowBinding> {
+  const r = await client.post(`${WORKFLOWS_BASE}/ticket-workflow-bindings/`, data);
+  return r.data;
+}
+
+export async function updateTicketWorkflowBinding(id: string, data: Partial<TicketWorkflowBinding>): Promise<TicketWorkflowBinding> {
+  const r = await client.patch(`${WORKFLOWS_BASE}/ticket-workflow-bindings/${id}/`, data);
+  return r.data;
+}
+
+export async function deleteTicketWorkflowBinding(id: string): Promise<void> {
+  await client.delete(`${WORKFLOWS_BASE}/ticket-workflow-bindings/${id}/`);
 }
 
 // Execute workflow
