@@ -13,6 +13,8 @@ try {
 const nextConfig = {
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
+  // Keep `next start` compatible in local/dev environments.
+  // Set NEXT_OUTPUT_MODE=standalone only when you explicitly run standalone server.
   output: 'standalone',
   outputFileTracingRoot: path.resolve(__dirname),
   async rewrites() {

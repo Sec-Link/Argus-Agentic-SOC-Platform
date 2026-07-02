@@ -891,30 +891,24 @@ export async function deleteIntegration(id:string){
 
 export default client
 
-// Dashboards API
-export async function listDashboards(){
-  const r = await client.get('/dashboards/')
-  return r.data
+export async function fetchDashboardConversionStats(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+  const qp = new URLSearchParams();
+  // Dashboard chart APIs live under the dashboard module, not tickets.
+  if (params?.all_time) qp.set('all_time', 'true');
+  if (params?.start_time) qp.set('created_from', params.start_time);
+  if (params?.end_time) qp.set('created_to', params.end_time);
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  const r = await client.get(`/dashboards/conversion-stats/${suffix}`);
+  return r.data;
 }
 
-export async function createDashboard(payload:any){
-  const r = await client.post('/dashboards/', payload)
-  return r.data
-}
-
-export async function getDashboard(id:string){
-  const r = await client.get(`/dashboards/${id}/`)
-  return r.data
-}
-
-export async function updateDashboard(id:string, payload:any){
-  const r = await client.put(`/dashboards/${id}/`, payload)
-  return r.data
-}
-
-export async function deleteDashboard(id:string){
-  const r = await client.delete(`/dashboards/${id}/`)
-  return r.data
+export async function fetchDashboardSankeyStats(params?: { start_time?: string; end_time?: string }) {
+  const qp = new URLSearchParams();
+  if (params?.start_time) qp.set('created_from', params.start_time);
+  if (params?.end_time) qp.set('created_to', params.end_time);
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  const r = await client.get(`/dashboards/sankey-stats/${suffix}`);
+  return r.data;
 }
 
 export async function getRbacMe(){
@@ -1488,4 +1482,258 @@ export async function getInterfaceEndpointLogs(id: string): Promise<InterfaceReq
 export async function testInterfaceEndpoint(id: string, payload?: Record<string, any>): Promise<Record<string, any>> {
   const r = await client.post(`/interfaces/endpoints/${id}/test/`, payload || { event: 'manual_test' });
   return r.data;
+}
+
+export type DetectionRuleItem = {
+  id: string;
+  name?: string;
+  type?: 'directory' | 'file' | string;
+  [key: string]: any;
+};
+
+export type DetectionRuleMeta = {
+  title?: string;
+  level?: string;
+  status?: string;
+  description?: string;
+  product?: string;
+  service?: string;
+  category?: string;
+  logsource?: string;
+  profile?: string;
+  tags?: string[];
+  detection_preview?: string;
+};
+
+export type DetectionRuleDetail = {
+  id: string;
+  name?: string;
+  version?: number;
+  yaml?: string;
+  payload?: Record<string, any>;
+  meta?: DetectionRuleMeta;
+  compiled?: {
+    language?: string;
+    lucene?: string;
+    eql?: string;
+    esql?: string;
+    splunk?: string;
+    kql?: string;
+    error?: string;
+    profiles?: string[];
+    elastic_index_patterns?: string[];
+  };
+};
+
+export type DetectionMappingItem = {
+  id: number;
+  category?: string;
+  data_source?: string;
+  event_category?: string;
+  mapping_profile: string;
+  sigma: string;
+  splunk?: string;
+  elastic?: string;
+  elastic_index_patterns?: string[];
+  [key: string]: any;
+};
+
+export async function listDetectionRules(): Promise<DetectionRuleItem[]> {
+  const r = await client.get('/detections/rules/');
+  return r.data;
+}
+
+export async function getDetectionRule(id: string): Promise<DetectionRuleDetail> {
+  const r = await client.get(`/detections/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function saveDetectionRule(id: string, yaml: string, extras?: Record<string, any>): Promise<any> {
+  const r = await client.post(`/detections/rules/${encodeURIComponent(id)}/`, { yaml, ...(extras || {}) });
+  return r.data;
+}
+
+export async function compileDetectionRule(
+  yaml: string,
+): Promise<{ language?: string; lucene?: string; eql?: string; esql?: string; splunk?: string; kql?: string; error?: string; profiles?: string[]; elastic_index_patterns?: string[] }> {
+  const r = await client.post('/detections/rules/compile/', { yaml });
+  return r.data;
+}
+
+export async function deleteDetectionRule(id: string): Promise<any> {
+  const r = await client.delete(`/detections/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function uploadDetectionRules(files: File[]): Promise<any> {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', f));
+  const r = await client.post('/detections/rules/upload/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return r.data;
+}
+
+export async function exportDetectionRules(ids?: string[]): Promise<any> {
+  const r = await client.post('/detections/rules/export/', { ids: Array.isArray(ids) ? ids : [] });
+  return r.data;
+}
+
+export async function listDetectionMappings(): Promise<DetectionMappingItem[]> {
+  const r = await client.get('/detections/mappings/');
+  return Array.isArray(r.data) ? r.data : [];
+}
+
+export async function createDetectionMapping(payload: Record<string, any>): Promise<any> {
+  const r = await client.post('/detections/mappings/', payload);
+  return r.data;
+}
+
+export async function deleteDetectionMappings(ids: Array<string | number>): Promise<any> {
+  const r = await client.delete('/detections/mappings/', { data: { ids: ids.map((item) => String(item)) } });
+  return r.data;
+}
+
+export async function uploadDetectionMappings(files: File[]): Promise<any> {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', f));
+  const r = await client.post('/detections/mappings/upload/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return r.data;
+}
+
+export async function exportDetectionMappings(ids?: Array<string | number>): Promise<Blob> {
+  const r = await client.post('/detections/mappings/export/', { ids: Array.isArray(ids) ? ids.map((item) => String(item)) : [] }, {
+    responseType: 'blob',
+  });
+  return r.data;
+}
+
+export type DetectionDeploymentRecord = {
+  id: string;
+  rule_id: string;
+  rule_name?: string;
+  target: string;
+  action: string;
+  status: string;
+  remote_id?: string;
+  remote_rule_id?: string;
+  message?: string;
+  payload?: Record<string, any>;
+  created_by?: string;
+  created_at: string;
+};
+
+export async function listDetectionDeployments(ruleId?: string): Promise<DetectionDeploymentRecord[]> {
+  const qp = new URLSearchParams();
+  if (ruleId) qp.set('rule_id', ruleId);
+  const query = qp.toString();
+  const r = await client.get(`/detections/deployments/${query ? `?${query}` : ''}`);
+  return Array.isArray(r.data) ? r.data : [];
+}
+
+export async function createDetectionDeployment(payload: {
+  rule_id: string;
+  target: string;
+  action: string;
+  status: string;
+  remote_id?: string;
+  remote_rule_id?: string;
+  message?: string;
+  payload?: Record<string, any>;
+}): Promise<DetectionDeploymentRecord> {
+  const r = await client.post('/detections/deployments/', payload);
+  return r.data;
+}
+
+// Published detection rules (remote target)
+export type PublishedDetectionRule = {
+  id: string;
+  rule_id?: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  risk_score?: number;
+  severity?: string;
+  description?: string;
+  index?: string[];
+  query?: string;
+  language?: string;
+  from?: string;
+  interval?: string;
+  tags?: string[];
+  [key: string]: any;
+};
+
+export async function listPublishedDetectionRules(params?: {
+  page?: number;
+  per_page?: number;
+  filter?: string;
+  sort_field?: string;
+  sort_order?: 'asc' | 'desc';
+}): Promise<{ data: PublishedDetectionRule[]; total: number }> {
+  const safePage = Number.isFinite(Number(params?.page)) && Number(params?.page) > 0
+    ? Math.floor(Number(params?.page))
+    : undefined;
+  const safePerPage = Number.isFinite(Number(params?.per_page)) && Number(params?.per_page) > 0
+    ? Math.floor(Number(params?.per_page))
+    : undefined;
+  const qp = new URLSearchParams();
+  if (safePage) qp.set('page', String(safePage));
+  if (safePerPage) qp.set('per_page', String(safePerPage));
+  if (params?.filter) qp.set('filter', params.filter);
+  if (params?.sort_field) qp.set('sort_field', params.sort_field);
+  if (params?.sort_order) qp.set('sort_order', params.sort_order);
+  const q = qp.toString();
+  const r = await client.get(`/detections/publish/rules/${q ? `?${q}` : ''}`);
+  const body = r.data || {};
+  const data = Array.isArray(body.data) ? body.data : [];
+  const total = Number(body.total || data.length || 0);
+  return { data, total };
+}
+
+export async function getPublishedDetectionRule(id: string): Promise<PublishedDetectionRule> {
+  const r = await client.get(`/detections/publish/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function createPublishedDetectionRule(payload: Record<string, any>): Promise<PublishedDetectionRule> {
+  const r = await client.post('/detections/publish/rules/', payload);
+  return r.data;
+}
+
+export async function updatePublishedDetectionRule(id: string, payload: Record<string, any>): Promise<PublishedDetectionRule> {
+  const r = await client.put(`/detections/publish/rules/${encodeURIComponent(id)}/`, payload);
+  return r.data;
+}
+
+export async function patchPublishedDetectionRule(id: string, payload: Record<string, any>): Promise<PublishedDetectionRule> {
+  const r = await client.patch(`/detections/publish/rules/${encodeURIComponent(id)}/`, payload);
+  return r.data;
+}
+
+export async function deletePublishedDetectionRule(id: string): Promise<any> {
+  const r = await client.delete(`/detections/publish/rules/${encodeURIComponent(id)}/`);
+  return r.data;
+}
+
+export async function getPublishedRuleVersions(id: string): Promise<{ id: string; current_version: number; data: any[] }> {
+  const r = await client.get(`/detections/publish/rules/${encodeURIComponent(id)}/versions/`);
+  return r.data;
+}
+
+export async function rollbackPublishedRuleVersion(id: string, version: number): Promise<any> {
+  const r = await client.post(`/detections/publish/rules/${encodeURIComponent(id)}/rollback/`, { version });
+  return r.data;
+}
+
+export async function previewPublishedDetectionRule(payload: Record<string, any>): Promise<any> {
+  const r = await client.post('/detections/publish/rules/preview/', payload);
+  return r.data;
+}
+
+export async function listPublishedConnectors(): Promise<Array<{ id: string; name: string; connector_type_id?: string }>> {
+  const r = await client.get('/detections/publish/connectors/');
+  return Array.isArray(r.data) ? r.data : [];
 }

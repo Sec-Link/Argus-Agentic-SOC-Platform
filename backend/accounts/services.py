@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 READONLY_GROUP_NAME = "readonly_user"
 PANEL_APP_LABELS = [
     "es_integration",
-    "dashboards",
     "tickets",
     # The legacy "datasource" panel label was retired after the UI domain was
     # consolidated into Integrations and Data Pipeline.

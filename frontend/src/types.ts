@@ -36,6 +36,28 @@ export interface DashboardData {
   top_rules?: Array<{ name: string; count: number }>;
 }
 
+export interface ConversionStats {
+  alerts: number;
+  tickets: number;
+  true_positive: number;
+  security_events: number;
+  incidents: number;
+}
+
+export interface SankeyLink {
+  source: string;
+  target: string;
+  value: number;
+  stage?: string;
+}
+
+export interface SankeyStats {
+  nodes: Array<{ name: string; stage?: string }>;
+  links: SankeyLink[];
+  stages?: string[];
+  summary?: { tickets?: number };
+}
+
 export interface SlaSummary {
   mtta_seconds?: number | null;
   mtti_seconds?: number | null;
