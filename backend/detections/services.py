@@ -611,7 +611,6 @@ def export_mapping_csv(*, mapping_ids: list[str] | None = None) -> str:
                 "splunk": row.splunk_field,
                 "elastic": row.elastic_field,
                 "elastic_is_multivalue": "true" if row.elastic_is_multivalue else "false",
-            "elastic_is_multivalue": bool(row.elastic_is_multivalue),
                 "elastic_index_patterns": ", ".join(row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else []),
             }
         )
