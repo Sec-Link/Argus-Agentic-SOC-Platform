@@ -810,7 +810,6 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-
 class TicketSLAViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only API ViewSet for TicketSLA metrics."""
 

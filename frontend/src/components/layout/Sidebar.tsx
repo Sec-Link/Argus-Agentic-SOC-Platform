@@ -28,10 +28,10 @@ function iconByKey(key: RouteKey) {
   if (key === 'tickets') return <UnorderedListOutlined />;
   if (key === 'assets') return <HddOutlined />;
   if (key === 'integrations') return <AppstoreOutlined />;
-  if (key === 'dashboards') return <DashboardOutlined />;
   if (key === 'orchestrator') return <DeploymentUnitOutlined />;
   if (key === 'interfaces') return <ApiOutlined />;
   if (key === 'correlation') return <LineChartOutlined />;
+  if (key === 'detection') return <BellOutlined />;
   if (key === 'workflows') return <BranchesOutlined />;
   if (key === 'workflow-executions') return <RadarChartOutlined />;
   if (key === 'permissions') return <LockOutlined />;
@@ -77,11 +77,11 @@ export default function Sidebar({
     tickets: 'Tickets',
     assets: 'Assets',
     integrations: labelOverrides.integrations || 'Integrations',
-    dashboards: labelOverrides.dashboards || 'Dashboards',
     // Singular: platform-level engines/config domains.
     orchestrator: labelOverrides.orchestrator || 'Orchestrator',
     interfaces: labelOverrides.interfaces || 'Interfaces',
     correlation: labelOverrides.correlation || 'Correlation',
+    detection: labelOverrides.detection || 'Detection',
     permissions: labelOverrides.permissions || 'Access Management',
     // Shortened for compact enterprise sidebar wording.
     'registration-approvals': labelOverrides['registration-approvals'] || 'Approvals',
@@ -99,8 +99,7 @@ export default function Sidebar({
       // Gerund parent for high-level monitoring domain.
       title: 'Monitoring',
       icon: <DashboardOutlined />,
-      // Dashboards moved here from the deprecated "Data & Platform" section.
-      items: ['dashboard', 'dashboards', 'alerts'],
+      items: ['dashboard', 'alerts'],
     },
     {
       key: 'investigationGroup',
@@ -113,14 +112,14 @@ export default function Sidebar({
       // Renamed from "Setup Pipeline" to match SIEM/SOAR standard terminology.
       title: 'Data Pipeline',
       icon: <DeploymentUnitOutlined />,
-      items: ['integrations', 'orchestrator', 'correlation'],
+      items: ['detection','integrations', 'orchestrator', 'correlation'],
     },
     {
       key: 'automationGroup',
       // Shortened to reduce truncation and redundant wording.
       title: 'Automation',
       icon: <BranchesOutlined />,
-      items: ['interfaces', 'workflows', 'workflow-executions'],
+        items: ['interfaces', 'workflows', 'workflow-executions'],
     },
     {
       key: 'administrationGroup',
@@ -172,14 +171,15 @@ export default function Sidebar({
             aria-label="Go to dashboard"
           >
             <img
-              src="/seclink-logo.jpg"
-              alt="SECLINK logo"
+              src="/seclink-logo.svg"
+              alt="Argus logo"
               width={40}
               height={40}
-              style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }}
+              className="sidebar-brand-logo"
+              style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain' }}
             />
-            <span style={{ fontWeight: 900, letterSpacing: 0.6, fontSize: 22, color: 'var(--text-primary)' }}>
-              ECHO
+            <span className="argus-brand-wordmark argus-brand-wordmark-sidebar">
+              Argus
             </span>
           </div>
           <Button

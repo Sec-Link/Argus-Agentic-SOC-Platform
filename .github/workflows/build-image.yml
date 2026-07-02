@@ -29,10 +29,17 @@ jobs:
     needs: [build-django, build-node]
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App token
+        id: manifest-app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.MANIFEST_APP_ID }}
+          private-key: ${{ secrets.MANIFEST_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
         with:
           ref: main
-          token: ${{ secrets.MICHAEL_ADMIN_PAT }} # 默认即可，用于回推代码
+          token: ${{ steps.manifest-app-token.outputs.token }}
 
       - name: Update Image Tags in YAML
         run: |
@@ -56,8 +63,8 @@ jobs:
 
       - name: Commit and Push
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "manifest-app[bot]"
+          git config --global user.email "manifest-app[bot]@users.noreply.github.com"
           
           # 检查是否有实际变动，防止空提交导致报错
           if git diff --quiet k8s/*.yaml; then

@@ -4,10 +4,10 @@ export type RouteKey =
   | 'tickets'
   | 'assets'
   | 'integrations'
-  | 'dashboards'
   | 'orchestrator'
   | 'interfaces'
   | 'correlation'
+  | 'detection'
   | 'permissions'
   | 'registration-approvals'
   | 'audit-logs'
@@ -22,10 +22,10 @@ export const permissionByKey: Record<RouteKey, string | undefined> = {
   tickets: 'tickets.view_eventticket',
   assets: 'cmdb.view_asset',
   integrations: 'integrations.view_integration',
-  dashboards: 'dashboards.view_dashboard',
   orchestrator: 'orchestrator.view_task',
   interfaces: 'workflow_interfaces.view_interfaceendpoint',
   correlation: 'correlation.view_correlationpolicy',
+  detection: 'integrations.view_integration',
   permissions: 'accounts.view_user',
   'registration-approvals': 'accounts.view_user',
   'audit-logs': 'accounts.view_user',
@@ -41,10 +41,10 @@ export const keyToPath: Record<RouteKey, string> = {
   tickets: '/tickets',
   assets: '/cmdb/assets',
   integrations: '/settings/integrations',
-  dashboards: '/settings/dashboards',
   orchestrator: '/settings/orchestrator',
   interfaces: '/settings/interfaces',
   correlation: '/settings/correlation',
+  detection: '/settings/detection',
   permissions: '/settings/permissions',
   'registration-approvals': '/settings/registration-approvals',
   'audit-logs': '/settings/audit-logs',
@@ -73,10 +73,10 @@ export function resolveRouteKey(pathname: string): { key: RouteKey; ticketNumber
   }
 
   if (p === '/settings/integrations') return { key: 'integrations' };
-  if (p === '/settings/dashboards') return { key: 'dashboards' };
   if (p === '/settings/orchestrator') return { key: 'orchestrator' };
   if (p === '/settings/interfaces') return { key: 'interfaces' };
   if (p === '/settings/correlation') return { key: 'correlation' };
+  if (p === '/settings/detection') return { key: 'detection' };
   if (p === '/settings/permissions') return { key: 'permissions' };
   if (p === '/settings/registration-approvals') return { key: 'registration-approvals' };
   if (p === '/settings/audit-logs') return { key: 'audit-logs' };

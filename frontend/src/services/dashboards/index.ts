@@ -1,8 +1,5 @@
 export {
-  listDashboards,
-  createDashboard,
-  getDashboard,
-  updateDashboard,
-  deleteDashboard,
   queryPreview,
+  fetchDashboardConversionStats,
+  fetchDashboardSankeyStats,
 } from '../../api';
