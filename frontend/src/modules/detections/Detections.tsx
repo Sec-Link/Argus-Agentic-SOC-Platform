@@ -54,7 +54,7 @@ type RuleRow = DetectionRuleItem & {
   kibana_rule_id?: string;
 };
 
-type LocalMapRow = { id: string | number; sigma: string; splunk: string; elastic: string; elastic_index_patterns?: string[]; mapping_profile?: string };
+type LocalMapRow = { id: string | number; sigma: string; splunk: string; elastic: string; elastic_is_multivalue?: boolean; elastic_index_patterns?: string[]; mapping_profile?: string };
 type ConnectorRow = { id: string; name: string; connector_type_id?: string };
 type KibanaMetadata = { published?: boolean; remote_id?: string; rule_id?: string; enabled?: boolean; name?: string; updated_at?: string };
 type MappingDraft = {
@@ -62,6 +62,7 @@ type MappingDraft = {
   sigma: string;
   splunk: string;
   elastic: string;
+  elastic_is_multivalue: boolean;
   elastic_index_patterns: string;
   category: string;
   data_source: string;
@@ -105,6 +106,7 @@ export default function Detections() {
     sigma: "",
     splunk: "",
     elastic: "",
+    elastic_is_multivalue: false,
     elastic_index_patterns: "",
     category: "",
     data_source: "",
@@ -163,6 +165,7 @@ export default function Detections() {
           sigma: String(row.sigma || ""),
           splunk: String(row.splunk || ""),
           elastic: String(row.elastic || ""),
+          elastic_is_multivalue: Boolean(row.elastic_is_multivalue),
           elastic_index_patterns: Array.isArray(row.elastic_index_patterns) ? row.elastic_index_patterns.map((item: any) => String(item || "").trim()).filter(Boolean) : [],
           mapping_profile: String(row.mapping_profile || ""),
           category: String(row.category || ""),
@@ -679,6 +682,7 @@ export default function Detections() {
         sigma: "",
         splunk: "",
         elastic: "",
+        elastic_is_multivalue: false,
         elastic_index_patterns: "",
         category: "",
         data_source: "",
@@ -693,9 +697,9 @@ export default function Detections() {
 
   const handleDownloadMappingTemplate = () => {
     const lines = [
-      "mapping_profile,category,data_source,event_category,sigma,splunk,elastic,elastic_index_patterns",
-      'aws_cloudtrail,,,,"eventName","","event.action","logs-aws.cloudtrail-*"',
-      'aws_cloudtrail,,,,"sourceIPAddress","","source.ip","logs-aws.cloudtrail-*"',
+      "mapping_profile,category,data_source,event_category,sigma,splunk,elastic,elastic_is_multivalue,elastic_index_patterns",
+      'aws_cloudtrail,,,,"eventName","","event.action","false","logs-aws.cloudtrail-*"',
+      'aws_cloudtrail,,,,"sourceIPAddress","","source.ip","false","logs-aws.cloudtrail-*"',
     ];
     downloadText("detection-mappings-template.csv", lines.join("\n"), "text/csv;charset=utf-8");
     message.success("CSV template downloaded");
@@ -812,6 +816,7 @@ export default function Detections() {
                     sigma: "",
                     splunk: "",
                     elastic: "",
+                    elastic_is_multivalue: false,
                     elastic_index_patterns: "",
                     category: "",
                     data_source: "",
@@ -826,6 +831,7 @@ export default function Detections() {
                     sigma: String(row.sigma || ""),
                     splunk: String(row.splunk || ""),
                     elastic: String(row.elastic || ""),
+                    elastic_is_multivalue: Boolean(row.elastic_is_multivalue),
                     elastic_index_patterns: Array.isArray(row.elastic_index_patterns) ? row.elastic_index_patterns.join("\n") : "",
                     category: String(row.category || ""),
                     data_source: String(row.data_source || ""),

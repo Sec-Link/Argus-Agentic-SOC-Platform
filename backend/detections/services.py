@@ -434,6 +434,12 @@ def import_mapping_files(*, files, actor: str) -> dict:
                 patterns.append(pattern)
         return patterns
 
+    def parse_bool(raw) -> bool:
+        if isinstance(raw, bool):
+            return raw
+        value = str(raw or "").strip().lower()
+        return value in {"1", "true", "yes", "y", "on"}
+
     def upsert_row(row: dict) -> str:
         nonlocal created, updated, skipped
         profile = str(row.get("mapping_profile") or row.get("profile") or "").strip()
@@ -450,6 +456,7 @@ def import_mapping_files(*, files, actor: str) -> dict:
             "event_category": str(row.get("event_category") or row.get("event") or ""),
             "splunk_field": str(row.get("splunk") or row.get("splunk_field") or ""),
             "elastic_field": str(row.get("elastic") or row.get("elastic_field") or ""),
+            "elastic_is_multivalue": parse_bool(row.get("elastic_is_multivalue") or row.get("multivalue") or row.get("is_multivalue")),
             "elastic_index_patterns": parse_index_patterns(row.get("elastic_index_patterns") or row.get("index_patterns") or row.get("indices")),
             "updated_by": actor,
         }
@@ -574,6 +581,7 @@ def export_mapping_bundle(*, mapping_ids: list[str] | None = None) -> dict:
             "sigma": row.sigma_field,
             "splunk": row.splunk_field,
             "elastic": row.elastic_field,
+            "elastic_is_multivalue": bool(row.elastic_is_multivalue),
             "elastic_index_patterns": row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else [],
         }
         for row in rows
@@ -589,7 +597,7 @@ def export_mapping_csv(*, mapping_ids: list[str] | None = None) -> str:
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=["mapping_profile", "category", "data_source", "event_category", "sigma", "splunk", "elastic", "elastic_index_patterns"],
+        fieldnames=["mapping_profile", "category", "data_source", "event_category", "sigma", "splunk", "elastic", "elastic_is_multivalue", "elastic_index_patterns"],
     )
     writer.writeheader()
     for row in rows:
@@ -602,6 +610,7 @@ def export_mapping_csv(*, mapping_ids: list[str] | None = None) -> str:
                 "sigma": row.sigma_field,
                 "splunk": row.splunk_field,
                 "elastic": row.elastic_field,
+                "elastic_is_multivalue": "true" if row.elastic_is_multivalue else "false",
                 "elastic_index_patterns": ", ".join(row.elastic_index_patterns if isinstance(row.elastic_index_patterns, list) else []),
             }
         )
