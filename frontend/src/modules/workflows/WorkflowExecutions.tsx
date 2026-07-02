@@ -34,6 +34,7 @@ import {
   listWorkflowExecutions,
   getWorkflowExecution,
   cancelWorkflowExecution,
+  refreshPrefectExecutionStatus,
   listWorkflows,
   WorkflowExecution,
   StepExecution,

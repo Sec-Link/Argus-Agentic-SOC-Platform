@@ -1,6 +1,10 @@
 """
 Workflow Execution Engine
 
+DEPRECATED: Local execution is no longer used. The workflows module now
+relies on Prefect for all execution paths. This file is kept temporarily to
+preserve imports and ease migration, but callers should use Prefect only.
+
 This module handles the orchestration and execution of workflows.
 It contains two main concerns:
 
@@ -16,12 +20,16 @@ It contains two main concerns:
 """
 import logging
 import traceback
-import re
 from typing import Optional, Dict, Any
 from django.utils import timezone
 
 from .models import Workflow, WorkflowStep, WorkflowExecution, StepExecution
 from .actions import ActionRegistry, ActionResult
+from .condition_evaluator import (
+    evaluate_condition_object as shared_evaluate_condition_object,
+    extract_condition_fields as shared_extract_condition_fields,
+    normalize_condition_field as shared_normalize_condition_field,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +38,8 @@ class WorkflowEngine:
     """
     Engine for executing workflows.
 
-    Handles the orchestration of workflow steps, context management,
-    error handling, and result aggregation.
+    Deprecated: kept for backward compatibility only. The Prefect-based
+    execution path is the supported runtime moving forward.
     """
 
     def __init__(self, execution: WorkflowExecution):
@@ -210,134 +218,16 @@ class WorkflowEngine:
             started_at=timezone.now() if status == 'running' else None,
         )
 
-    @staticmethod
-    def _normalize_condition_field(field: str) -> str:
-        field = (field or '').strip()
-        if field.startswith('{{') and field.endswith('}}'):
-            field = field[2:-2].strip()
-        if field.startswith('trigger.data.'):
-            field = 'trigger_data.' + field[len('trigger.data.'):]
-        if field.startswith('trigger.data'):
-            field = field.replace('trigger.data', 'trigger_data', 1)
-        return field
-
-    @staticmethod
-    def _coerce_number(value: Any) -> Optional[float]:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    def _evaluate_condition_rule(self, rule: Dict[str, Any], resolver) -> bool:
-        field = self._normalize_condition_field(rule.get('field', ''))
-        operator = rule.get('operator') or 'equals'
-        compare_to = rule.get('value')
-        if compare_to is None:
-            compare_to = rule.get('compare_to')
-
-        if not field:
-            return True
-
-        value = resolver(field)
-
-        if operator in ('equals', '=='):
-            return value == compare_to
-        if operator in ('not_equals', '!='):
-            return value != compare_to
-        if operator in ('contains',):
-            return compare_to in str(value) if value is not None else False
-        if operator in ('not_contains',):
-            return compare_to not in str(value) if value is not None else True
-        if operator in ('starts_with',):
-            return str(value).startswith(str(compare_to)) if value is not None else False
-        if operator in ('ends_with',):
-            return str(value).endswith(str(compare_to)) if value is not None else False
-        if operator in ('greater_than', '>'):
-            left = self._coerce_number(value)
-            right = self._coerce_number(compare_to)
-            return left is not None and right is not None and left > right
-        if operator in ('less_than', '<'):
-            left = self._coerce_number(value)
-            right = self._coerce_number(compare_to)
-            return left is not None and right is not None and left < right
-        if operator in ('greater_equal', '>='):
-            left = self._coerce_number(value)
-            right = self._coerce_number(compare_to)
-            return left is not None and right is not None and left >= right
-        if operator in ('less_equal', '<='):
-            left = self._coerce_number(value)
-            right = self._coerce_number(compare_to)
-            return left is not None and right is not None and left <= right
-        if operator == 'in_list':
-            if compare_to is None:
-                return False
-            options = [item.strip() for item in str(compare_to).split(',') if item.strip()]
-            return str(value) in options if value is not None else False
-        if operator == 'not_in_list':
-            if compare_to is None:
-                return True
-            options = [item.strip() for item in str(compare_to).split(',') if item.strip()]
-            return str(value) not in options if value is not None else True
-        if operator in ('is_empty',):
-            return value is None or value == ''
-        if operator in ('is_not_empty', 'not_empty'):
-            return value is not None and value != ''
-        if operator == 'matches_regex':
-            if compare_to is None:
-                return False
-            try:
-                return re.search(str(compare_to), str(value or '')) is not None
-            except re.error:
-                return False
-
-        return True
+    # Condition evaluation is delegated to the shared evaluator module to
+    # avoid semantic drift between this (deprecated) local engine and the
+    # Prefect ``condition_task``. See ``backend/workflows/condition_evaluator.py``.
+    _normalize_condition_field = staticmethod(shared_normalize_condition_field)
 
     def _evaluate_condition_object(self, condition: Dict[str, Any], resolver) -> bool:
-        if not condition or not isinstance(condition, dict):
-            return True
-
-        if condition.get('groups'):
-            groups = condition.get('groups') or []
-            logic = (condition.get('logic') or 'AND').upper()
-            results = []
-            for group in groups:
-                rules = group.get('rules') or []
-                group_logic = (group.get('logic') or 'AND').upper()
-                rule_results = [self._evaluate_condition_rule(rule, resolver) for rule in rules]
-                group_result = all(rule_results) if group_logic == 'AND' else any(rule_results)
-                results.append(group_result)
-            return all(results) if logic == 'AND' else any(results)
-
-        if condition.get('field'):
-            return self._evaluate_condition_rule(condition, resolver)
-
-        if condition.get('rules'):
-            logic = (condition.get('logic') or 'AND').upper()
-            rule_results = [self._evaluate_condition_rule(rule, resolver) for rule in condition.get('rules', [])]
-            return all(rule_results) if logic == 'AND' else any(rule_results)
-
-        return True
+        return shared_evaluate_condition_object(condition, resolver)
 
     def _extract_condition_fields(self, condition: Dict[str, Any]) -> list[str]:
-        fields = []
-        if not isinstance(condition, dict):
-            return fields
-
-        if condition.get('field'):
-            fields.append(self._normalize_condition_field(condition.get('field', '')))
-
-        for rule in condition.get('rules', []) or []:
-            if isinstance(rule, dict) and rule.get('field'):
-                fields.append(self._normalize_condition_field(rule.get('field', '')))
-
-        for group in condition.get('groups', []) or []:
-            if not isinstance(group, dict):
-                continue
-            for rule in group.get('rules', []) or []:
-                if isinstance(rule, dict) and rule.get('field'):
-                    fields.append(self._normalize_condition_field(rule.get('field', '')))
-
-        return [f for f in fields if f]
+        return shared_extract_condition_fields(condition)
 
     def _execute_condition_step(self, step: WorkflowStep) -> ActionResult:
         condition = step.condition or {}
@@ -510,12 +400,23 @@ def execute_workflow(
     executed_by=None
 ) -> WorkflowExecution:
     """
-    Create a ``WorkflowExecution`` record and enqueue it as a Django 6.0
-    background task via ``run_workflow_task.enqueue()``.
+    Create a ``WorkflowExecution`` record and dispatch it to the configured
+    execution engine.
 
-    With the default ``ImmediateBackend`` the task runs synchronously in the
-    same thread before this function returns.  Switching to an async backend
-    in settings will make it non-blocking without any code changes here.
+    Two engines are supported:
+
+    - ``local`` (default): the existing Django 6.0 background-task path. With
+      the default ``ImmediateBackend`` the engine runs synchronously before
+      this function returns.
+    - ``prefect``: submits a flow run to the generic Prefect deployment via
+      ``prefect_dispatcher.submit``. The execution returns immediately while
+      Prefect runs the flow asynchronously; status is reconciled by
+      ``prefect_dispatcher.sync_status``.
+
+    If a workflow is marked ``prefect`` but Prefect is not configured (env
+    vars missing), we fall back to the local engine and record the reason in
+    ``error_message`` so the operator can spot the mis-config without losing
+    the run.
 
     Args:
         workflow: The ``Workflow`` instance to run.
@@ -525,12 +426,9 @@ def execute_workflow(
         executed_by: Optional Django ``User`` instance.
 
     Returns:
-        The ``WorkflowExecution`` record (already persisted, status reflects
-        the outcome when using ``ImmediateBackend``).
+        The ``WorkflowExecution`` record (already persisted).
     """
-    from .tasks import run_workflow_task
-
-    # Create the execution record in PENDING state before enqueueing.
+    # Create the execution record in PENDING state before dispatching.
     execution = WorkflowExecution.objects.create(
         workflow=workflow,
         trigger_source=trigger_source,
@@ -539,24 +437,23 @@ def execute_workflow(
         executed_by=executed_by,
     )
 
-    # Enqueue the background task.  With ImmediateBackend this blocks until
-    # completion and the execution status is already updated by the engine.
-    try:
-        task_result = run_workflow_task.enqueue(str(execution.id))
-        # Refresh all fields so the returned object reflects the final state
-        # written by WorkflowEngine (status, completed_steps, result_data, etc.).
-        execution.refresh_from_db()
-        execution.task_result_id = task_result.id
-        execution.save(update_fields=['task_result_id'])
-    except Exception as exc:
-        logger.exception("Failed to enqueue workflow execution %s: %s", execution.id, exc)
-        # Reload to pick up any partial updates written by the engine.
-        execution.refresh_from_db()
-        if execution.status == 'pending':
-            execution.status = 'failed'
-            execution.error_message = str(exc)
-            execution.save(update_fields=['status', 'error_message'])
+    engine_choice = getattr(workflow, 'execution_engine', 'local') or 'local'
 
-    return execution
+    if engine_choice != 'prefect':
+        execution.status = 'failed'
+        execution.error_message = 'Local execution is disabled; use Prefect to run workflows.'
+        execution.completed_at = timezone.now()
+        execution.save(update_fields=['status', 'error_message', 'completed_at'])
+        return execution
 
+    from . import prefect_client, prefect_dispatcher
 
+    deployment_id = getattr(workflow, 'prefect_deployment_id', '') or None
+    if not prefect_client.is_configured(deployment_id):
+        execution.status = 'failed'
+        execution.error_message = 'Prefect not configured (PREFECT_API_URL / PREFECT_DEPLOYMENT_ID missing).'
+        execution.completed_at = timezone.now()
+        execution.save(update_fields=['status', 'error_message', 'completed_at'])
+        return execution
+
+    return prefect_dispatcher.submit(execution)

@@ -19,5 +19,10 @@ export {
   fetchSlaTicketAiChatHistory,
   clearSlaTicketAiChatHistory,
   fetchSlaTicketFieldChoices,
+  fetchTicketCallablePlaybooks,
+  fetchTicketCallablePlaybookSchema,
+  fetchTicketPlaybookWorkplan,
+  dispatchTicketPlaybooks,
+  invokeTicketCallablePlaybook,
   resolveSlaTicket,
 } from '../../api';

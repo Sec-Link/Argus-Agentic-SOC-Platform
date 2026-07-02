@@ -257,12 +257,16 @@ class SendEmailAction(BaseAction):
         subject = self.resolve_variables(config.get('subject', ''), context)
         body = self.resolve_variables(config.get('body', ''), context)
         is_html = config.get('is_html', False)
+        backend_name = getattr(settings, 'EMAIL_BACKEND', '')
+        email_host = getattr(settings, 'EMAIL_HOST', '')
+        email_port = getattr(settings, 'EMAIL_PORT', '')
+        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@siem.local')
 
         try:
             send_mail(
                 subject=subject,
                 message=body if not is_html else '',
-                from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@siem.local'),
+                from_email=from_email,
                 recipient_list=to_list,
                 html_message=body if is_html else None,
                 fail_silently=False,
@@ -270,14 +274,25 @@ class SendEmailAction(BaseAction):
 
             return ActionResult(
                 success=True,
-                data={'sent_to': to_list, 'subject': subject},
-                logs=f"Email sent to {', '.join(to_list)}"
+                data={
+                    'sent_to': to_list,
+                    'subject': subject,
+                    'email_backend': backend_name,
+                    'from_email': from_email,
+                },
+                logs=(
+                    f"Email sent to {', '.join(to_list)} via backend={backend_name}, "
+                    f"host={email_host}, port={email_port}, from={from_email}"
+                )
             )
         except Exception as e:
             return ActionResult(
                 success=False,
                 error=str(e),
-                logs=f"Failed to send email: {e}"
+                logs=(
+                    f"Failed to send email via backend={backend_name}, host={email_host}, "
+                    f"port={email_port}, from={from_email}, recipients={to_list}: {e}"
+                )
             )
 
 
@@ -383,8 +398,12 @@ class CreateTicketAction(BaseAction):
             "description": {"type": "string", "description": "Ticket description"},
             "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "default": "medium"},
             "status": {"type": "string", "default": "new"},
+            "event_category": {"type": "string", "description": "Incident category classification"},
+            "current_assign_group": {"type": "string"},
+            "current_assign_owner": {"type": "string"},
             "assign_group": {"type": "string"},
             "assign_owner": {"type": "string"},
+            "alert_message": {"type": "string", "description": "Raw alert message content"},
             "create_uid": {"type": "string", "description": "Creator user ID"}
         },
         "required": ["title"]
@@ -395,9 +414,17 @@ class CreateTicketAction(BaseAction):
 
         title = self.resolve_variables(config.get('title', ''), context)
         description = self.resolve_variables(config.get('description', ''), context)
-        priority = config.get('priority', 'medium')
-        status = config.get('status', 'new')
+        priority = self.resolve_variables(config.get('priority', 'medium'), context)
+        status = self.resolve_variables(config.get('status', 'new'), context)
         create_uid = self.resolve_variables(config.get('create_uid', ''), context)
+        event_category = self.resolve_variables(config.get('event_category', ''), context)
+        assign_group = self.resolve_variables(
+            config.get('current_assign_group', config.get('assign_group', '')), context
+        )
+        assign_owner = self.resolve_variables(
+            config.get('current_assign_owner', config.get('assign_owner', '')), context
+        )
+        alert_message = self.resolve_variables(config.get('alert_message', ''), context)
 
         try:
             ticket = EventTicket.objects.create(
@@ -405,8 +432,10 @@ class CreateTicketAction(BaseAction):
                 description=description,
                 priority=priority,
                 status=status,
-                current_assign_group=config.get('assign_group', ''),
-                current_assign_owner=config.get('assign_owner', ''),
+                event_category=event_category or None,
+                current_assign_group=assign_group or None,
+                current_assign_owner=assign_owner or None,
+                alert_message=alert_message or None,
                 create_uid=create_uid or None,
             )
 

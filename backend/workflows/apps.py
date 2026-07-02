@@ -13,9 +13,8 @@ class WorkflowsConfig(AppConfig):
     verbose_name = 'SOAR Workflows'
 
     def ready(self):
-        # Import signals to register them
         try:
-            import workflows.signals  # noqa
+            from . import signals  # noqa: F401
         except ImportError:
             pass
 

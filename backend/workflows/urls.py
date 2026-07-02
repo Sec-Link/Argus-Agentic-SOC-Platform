@@ -8,11 +8,23 @@ from rest_framework.routers import SimpleRouter
 
 from .views import (
     ActionTemplateViewSet,
+    PrefectDeploymentListView,
+    PrefectDeploymentSyncView,
     WorkflowViewSet,
     WorkflowStepViewSet,
     WorkflowExecutionViewSet,
     WorkflowStatsView,
+    WorkflowPublishView,
+    WorkflowPublishedListView,
+    WorkflowImportView,
     SavedWorkflowNodeViewSet,
+    WorkflowScheduleViewSet,
+    TicketWorkflowBindingViewSet,
+    TicketCallablePlaybookSuggestView,
+    TicketCallablePlaybookSchemaView,
+    TicketCallablePlaybookInvokeView,
+    TicketWorkflowDispatchView,
+    TicketWorkflowWorkplanView,
 )
 
 # API Router - use SimpleRouter to avoid duplicate format suffix converter registration
@@ -22,12 +34,21 @@ router.register(r'workflows', WorkflowViewSet, basename='workflow')
 router.register(r'executions', WorkflowExecutionViewSet, basename='execution')
 router.register(r'steps', WorkflowStepViewSet, basename='step')
 router.register(r'saved-nodes', SavedWorkflowNodeViewSet, basename='saved-node')
+router.register(r'schedules', WorkflowScheduleViewSet, basename='schedule')
+router.register(r'ticket-workflow-bindings', TicketWorkflowBindingViewSet, basename='ticket-workflow-binding')
 
 # API URL patterns
 urlpatterns = [
     path('', include(router.urls)),
     path('stats/', WorkflowStatsView.as_view(), name='workflow-stats'),
+    path('prefect/deployments/', PrefectDeploymentListView.as_view(), name='prefect-deployments'),
+    path('prefect/sync/', PrefectDeploymentSyncView.as_view(), name='prefect-sync'),
+    path('workflows/<uuid:pk>/publish/', WorkflowPublishView.as_view(), name='workflow-publish'),
+    path('publish/manifests/', WorkflowPublishedListView.as_view(), name='workflow-published-list'),
+    path('import/', WorkflowImportView.as_view(), name='workflow-import'),
+    path('ticket-playbooks/suggest/', TicketCallablePlaybookSuggestView.as_view(), name='ticket-playbook-suggest'),
+    path('ticket-playbooks/<uuid:workflow_id>/inputs-schema/', TicketCallablePlaybookSchemaView.as_view(), name='ticket-playbook-inputs-schema'),
+    path('ticket-playbooks/<uuid:workflow_id>/invoke/', TicketCallablePlaybookInvokeView.as_view(), name='ticket-playbook-invoke'),
+    path('ticket-playbooks/dispatch/', TicketWorkflowDispatchView.as_view(), name='ticket-playbook-dispatch'),
+    path('ticket-playbooks/workplan/', TicketWorkflowWorkplanView.as_view(), name='ticket-playbook-workplan'),
 ]
-
-
-

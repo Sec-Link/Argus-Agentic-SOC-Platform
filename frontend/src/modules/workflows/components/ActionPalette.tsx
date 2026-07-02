@@ -31,7 +31,7 @@ const categoryColors: Record<string, string> = {
   control: '#faad14',
 };
 
-const hiddenSystemActionCategories = new Set(['containment', 'release']);
+const hiddenSystemActionCategories = new Set<string>();
 
 const toCategoryLabel = (value: string): string => {
   if (!value) return 'Uncategorized';

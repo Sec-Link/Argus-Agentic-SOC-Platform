@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { App, Button, Card, Col, DatePicker, Form, Grid, Input, Modal, Row, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType, TableProps } from 'antd/es/table';
 import { Pie } from '@ant-design/plots';
-import { batchDeleteSlaTickets, batchUpdateSlaTickets, createSlaTicket, updateSlaTicket, updateSlaTicketStatus } from 'services/tickets';
+import { batchDeleteSlaTickets, batchUpdateSlaTickets, createSlaTicket, dispatchTicketPlaybooks, updateSlaTicket, updateSlaTicketStatus } from 'services/tickets';
 import { listUsers } from 'services/accounts';
 import type { SlaTicketListItem } from 'types';
 
@@ -663,6 +663,18 @@ export default function SlaTicketListView(props: Props) {
       form.resetFields();
       onRefresh();
       if (created?.ticket_number) {
+        dispatchTicketPlaybooks({
+          trigger_event: 'on_create',
+          ticket: {
+            ticket_number: created.ticket_number,
+            title: created.title,
+            status: created.status,
+            priority: created.priority,
+            event_category: created.event_category,
+            event_result: created.event_result,
+            labels: created.labels || [],
+          },
+        }).catch(() => undefined);
         onOpenDetail(created.ticket_number);
       }
     } catch (err: any) {

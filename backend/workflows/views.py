@@ -3,11 +3,15 @@ Workflow API Views
 
 REST API endpoints for managing workflows, executions, and actions.
 """
+import os
 import re
+import logging
+from typing import Any, Dict
 
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.utils.text import slugify
 
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
@@ -22,6 +26,8 @@ from .models import (
     Workflow,
     WorkflowExecution,
     WorkflowStep,
+    WorkflowSchedule,
+    TicketWorkflowBinding,
 )
 from .serializers import (
     ActionTemplateSerializer,
@@ -34,7 +40,15 @@ from .serializers import (
     WorkflowListSerializer,
     WorkflowStepCreateSerializer,
     WorkflowStepSerializer,
+    WorkflowScheduleSerializer,
+    TicketWorkflowBindingSerializer,
 )
+from . import prefect_client
+from .parameter_binder import bind_workflow_parameters
+from .ticket_invocation import dispatch_ticket_event, find_callable_workflows, get_ticket_workplan, invoke_workflow_from_ticket
+
+
+logger = logging.getLogger(__name__)
 
 
 class ActionTemplateViewSet(viewsets.ModelViewSet):
@@ -58,6 +72,60 @@ class ActionTemplateViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def available_actions(self, request):
         return Response(ActionRegistry.get_action_info())
+
+    @action(detail=False, methods=['post'], url_path='bootstrap-presets')
+    def bootstrap_presets(self, request):
+        presets = [
+            {
+                'action_type': 'block_ip',
+                'name': 'Block IP (Isolation)',
+                'description': 'Block a suspicious IP on the security device',
+                'category': 'containment',
+            },
+            {
+                'action_type': 'disable_user',
+                'name': 'Disable User (Isolation)',
+                'description': 'Disable a compromised user account',
+                'category': 'containment',
+            },
+            {
+                'action_type': 'send_email',
+                'name': 'Security Alert Email',
+                'description': 'Send a security notification email',
+                'category': 'notification',
+            },
+            {
+                'action_type': 'send_webhook',
+                'name': 'Security Alert Webhook',
+                'description': 'Send a security notification webhook',
+                'category': 'notification',
+            },
+        ]
+
+        info = {item['action_type']: item for item in ActionRegistry.get_action_info()}
+        created = 0
+        updated = 0
+        for preset in presets:
+            action_type = preset['action_type']
+            meta = info.get(action_type, {})
+            defaults = {
+                'name': preset['name'],
+                'description': preset['description'],
+                'category': preset['category'],
+                'config_schema': meta.get('config_schema', {}),
+                'default_config': {},
+                'is_active': True,
+            }
+            obj, was_created = ActionTemplate.objects.update_or_create(
+                action_type=action_type,
+                defaults=defaults,
+            )
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+
+        return Response({'created': created, 'updated': updated})
 
 
 class WorkflowViewSet(viewsets.ModelViewSet):
@@ -92,355 +160,237 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 
         return queryset
 
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+    def _prefect_flow_name(self, workflow: Workflow) -> str:
+        return "soar-generic"
 
-    @staticmethod
-    def _resolve_trigger_template(value, trigger_data):
-        if not isinstance(value, str):
-            return value
+    def _ensure_prefect_deployment(self, workflow: Workflow) -> None:
+        if workflow.execution_engine != 'prefect':
+            return
+        deployment_id = (workflow.prefect_deployment_id or '').strip()
+        if deployment_id:
+            return
+        if prefect_client.is_configured(None):
+            workflow.prefect_deployment_id = prefect_client.resolve_deployment_id(None)
+            workflow.save(update_fields=['prefect_deployment_id'])
 
-        trigger_data = trigger_data or {}
-
-        def replace_var(match):
-            var_path = match.group(1)
-            result = trigger_data
-            for key in var_path.split('.'):
-                if isinstance(result, dict):
-                    result = result.get(key, '')
-                else:
-                    result = ''
-                    break
-            return str(result) if result is not None else ''
-
-        return re.sub(r'\{\{(\w+(?:\.\w+)*)\}\}', replace_var, value)
-
-    @staticmethod
-    def _normalize_condition_field(field: str) -> str:
-        field = (field or '').strip()
-        if field.startswith('{{') and field.endswith('}}'):
-            field = field[2:-2].strip()
-        return field
-
-    @classmethod
-    def _uses_ticket_fields(cls, condition: dict) -> bool:
-        if not isinstance(condition, dict):
-            return False
-
-        fields = []
-        if condition.get('field'):
-            fields.append(condition.get('field'))
-        for rule in condition.get('rules', []) or []:
-            if isinstance(rule, dict) and rule.get('field'):
-                fields.append(rule.get('field'))
-        for group in condition.get('groups', []) or []:
-            if not isinstance(group, dict):
-                continue
-            for rule in group.get('rules', []) or []:
-                if isinstance(rule, dict) and rule.get('field'):
-                    fields.append(rule.get('field'))
-
-        for raw in fields:
-            normalized = cls._normalize_condition_field(str(raw or ''))
-            if normalized.startswith('ticket.'):
-                return True
-        return False
-
-    @classmethod
-    def _evaluate_condition_rule_on_ticket(cls, rule: dict, ticket_record: dict) -> bool:
-        if not isinstance(rule, dict):
-            return True
-        field = cls._normalize_condition_field(rule.get('field', ''))
-        operator = rule.get('operator') or 'equals'
-        compare_to = rule.get('value')
-        if compare_to is None:
-            compare_to = rule.get('compare_to')
-
-        if not field:
-            return True
-        if not field.startswith('ticket.'):
-            # Non-ticket field cannot be evaluated in pre-run estimate.
-            return True
-
-        key = field.split('.', 1)[1]
-        mapping = {
-            'ticket_number': 'ticket_number',
-            'status': 'status',
-            'priority': 'priority',
-            'title': 'title',
-            'assign_group': 'current_assign_group',
-            'assign_owner': 'current_assign_owner',
-            'event_category': 'event_category',
-            'event_result': 'event_result',
-        }
-        actual = ticket_record.get(mapping.get(key, key))
-
-        if operator in ('equals', '=='):
-            return actual == compare_to
-        if operator in ('not_equals', '!='):
-            return actual != compare_to
-        if operator == 'contains':
-            return str(compare_to) in str(actual or '')
-        if operator == 'not_contains':
-            return str(compare_to) not in str(actual or '')
-        if operator == 'starts_with':
-            return str(actual or '').startswith(str(compare_to))
-        if operator == 'ends_with':
-            return str(actual or '').endswith(str(compare_to))
-        if operator == 'in_list':
-            opts = [x.strip() for x in str(compare_to or '').split(',') if x.strip()]
-            return str(actual) in opts
-        if operator == 'not_in_list':
-            opts = [x.strip() for x in str(compare_to or '').split(',') if x.strip()]
-            return str(actual) not in opts
-        if operator == 'is_empty':
-            return actual in (None, '')
-        if operator in ('is_not_empty', 'not_empty'):
-            return actual not in (None, '')
-        return True
-
-    @classmethod
-    def _estimate_ticket_condition_impact(cls, condition: dict) -> int:
-        from tickets.models import EventTicket
-
-        if not isinstance(condition, dict) or not cls._uses_ticket_fields(condition):
-            return 0
-
-        records = list(
-            EventTicket.objects.filter(is_deleted=False).values(
-                'ticket_number',
-                'status',
-                'priority',
-                'title',
-                'current_assign_group',
-                'current_assign_owner',
-                'event_category',
-                'event_result',
-            )
-        )
-
-        def eval_condition(obj: dict, rec: dict) -> bool:
-            if obj.get('groups'):
-                logic = (obj.get('logic') or 'AND').upper()
-                group_results = []
-                for group in obj.get('groups', []) or []:
-                    rules = group.get('rules', []) if isinstance(group, dict) else []
-                    group_logic = (group.get('logic') or 'AND').upper() if isinstance(group, dict) else 'AND'
-                    rule_results = [cls._evaluate_condition_rule_on_ticket(rule, rec) for rule in rules]
-                    group_results.append(all(rule_results) if group_logic == 'AND' else any(rule_results))
-                return all(group_results) if logic == 'AND' else any(group_results)
-
-            if obj.get('rules'):
-                logic = (obj.get('logic') or 'AND').upper()
-                rule_results = [cls._evaluate_condition_rule_on_ticket(rule, rec) for rule in obj.get('rules', [])]
-                return all(rule_results) if logic == 'AND' else any(rule_results)
-
-            if obj.get('field'):
-                return cls._evaluate_condition_rule_on_ticket(obj, rec)
-
-            return True
-
-        return sum(1 for rec in records if eval_condition(condition, rec))
-
-    @classmethod
-    def _has_update_ticket_local_scope(cls, action_config: dict, trigger_data: dict) -> bool:
-        if not isinstance(action_config, dict):
-            return False
-
-        ticket_number = str(cls._resolve_trigger_template(action_config.get('ticket_number', ''), trigger_data) or '').strip()
-        title = str(cls._resolve_trigger_template(action_config.get('title', ''), trigger_data) or '').strip()
-        if ticket_number or title:
-            return True
-
-        filters = action_config.get('filters') or {}
-        if not isinstance(filters, dict):
-            filters = {}
-
-        merged_filters = {
-            'priority': action_config.get('match_priority', filters.get('priority', '')),
-            'status': action_config.get('match_status', filters.get('status', '')),
-            'assign_group': action_config.get('match_assign_group', filters.get('assign_group', '')),
-            'assign_owner': action_config.get('match_assign_owner', filters.get('assign_owner', '')),
-            'created_time_from': filters.get('created_time_from'),
-            'created_time_to': filters.get('created_time_to'),
-            'updated_time_from': filters.get('updated_time_from'),
-            'updated_time_to': filters.get('updated_time_to'),
-        }
-        return any(str(v or '').strip() for v in merged_filters.values())
-
-    @classmethod
-    def _estimate_update_ticket_impact(cls, action_config, trigger_data):
-        from tickets.models import EventTicket
-
-        if not isinstance(action_config, dict):
-            action_config = {}
-
-        filters = action_config.get('filters') or {}
-        if not isinstance(filters, dict):
-            filters = {}
-
-        merged_filters = {
-            'priority': action_config.get('match_priority', filters.get('priority', '')),
-            'status': action_config.get('match_status', filters.get('status', '')),
-            'assign_group': action_config.get('match_assign_group', filters.get('assign_group', '')),
-            'assign_owner': action_config.get('match_assign_owner', filters.get('assign_owner', '')),
-            'created_time_from': filters.get('created_time_from'),
-            'created_time_to': filters.get('created_time_to'),
-            'updated_time_from': filters.get('updated_time_from'),
-            'updated_time_to': filters.get('updated_time_to'),
-        }
-
-        ticket_number = str(cls._resolve_trigger_template(action_config.get('ticket_number', ''), trigger_data) or '').strip()
-        title = str(cls._resolve_trigger_template(action_config.get('title', ''), trigger_data) or '').strip()
-
-        if ticket_number:
-            return EventTicket.objects.filter(ticket_number=ticket_number).count()
-        if title:
-            return EventTicket.objects.filter(title=title).count()
-
-        query = EventTicket.objects.all()
-
-        priority = str(cls._resolve_trigger_template(merged_filters.get('priority', ''), trigger_data) or '').strip()
-        status_filter = str(cls._resolve_trigger_template(merged_filters.get('status', ''), trigger_data) or '').strip()
-        assign_group = str(cls._resolve_trigger_template(merged_filters.get('assign_group', ''), trigger_data) or '').strip()
-        assign_owner = str(cls._resolve_trigger_template(merged_filters.get('assign_owner', ''), trigger_data) or '').strip()
-
-        if priority:
-            query = query.filter(priority__iexact=priority)
-        if status_filter:
-            query = query.filter(status__iexact=status_filter)
-        if assign_group:
-            query = query.filter(current_assign_group__iexact=assign_group)
-        if assign_owner:
-            query = query.filter(current_assign_owner__iexact=assign_owner)
-
-        def _parse_dt(value):
-            if not value:
-                return None
-            parsed = parse_datetime(str(value))
-            if parsed and timezone.is_naive(parsed):
-                return timezone.make_aware(parsed)
-            return parsed
-
-        created_from = _parse_dt(merged_filters.get('created_time_from'))
-        created_to = _parse_dt(merged_filters.get('created_time_to'))
-        updated_from = _parse_dt(merged_filters.get('updated_time_from'))
-        updated_to = _parse_dt(merged_filters.get('updated_time_to'))
-
-        if created_from:
-            query = query.filter(created_time__gte=created_from)
-        if created_to:
-            query = query.filter(created_time__lte=created_to)
-        if updated_from:
-            query = query.filter(updated_time__gte=updated_from)
-        if updated_to:
-            query = query.filter(updated_time__lte=updated_to)
-
-        return query.count()
-
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], url_path='execute')
     def execute(self, request, pk=None):
         workflow = self.get_object()
-
-        if not workflow.is_active:
-            return Response({'error': 'Cannot execute inactive workflow'}, status=status.HTTP_400_BAD_REQUEST)
-
         serializer = WorkflowExecuteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        trigger_data = serializer.validated_data.get('trigger_data', {})
-        confirm_mass_update = serializer.validated_data.get('confirm_mass_update', False)
-
-        risky_nodes = []
-        total_estimated_impact = 0
-
-        for step in workflow.steps.filter(is_active=True, action_type='update_ticket'):
-            action_config = step.action_config if isinstance(step.action_config, dict) else {}
-            title = str(self._resolve_trigger_template(action_config.get('title', ''), trigger_data) or '').strip()
-            if title:
-                continue
-
-            estimated_count = self._estimate_update_ticket_impact(action_config, trigger_data)
-
-            # If Update Ticket has no local selector/filter, estimate from nearest
-            # upstream ticket condition so status=resolved vs triaged diverges.
-            if not self._has_update_ticket_local_scope(action_config, trigger_data):
-                upstream_condition = (
-                    workflow.steps.filter(
-                        is_active=True,
-                        node_type='condition',
-                        order__lt=step.order,
-                    )
-                    .order_by('-order')
-                    .first()
-                )
-                if upstream_condition and self._uses_ticket_fields(upstream_condition.condition or {}):
-                    condition_estimate = self._estimate_ticket_condition_impact(upstream_condition.condition or {})
-                    if condition_estimate > 0:
-                        estimated_count = condition_estimate
-
-            total_estimated_impact += estimated_count
-            risky_nodes.append(
-                {
-                    'step_id': str(step.id),
-                    'step_name': step.name,
-                    'estimated_impact_count': estimated_count,
-                }
-            )
-
-        if risky_nodes and not confirm_mass_update:
-            return Response(
-                {
-                    'error': 'Update Ticket step has empty Ticket Title. Confirm before execution.',
-                    'requires_confirmation': True,
-                    'estimated_impact_count': total_estimated_impact,
-                    'affected_nodes': risky_nodes,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
         execution = execute_workflow(
             workflow=workflow,
-            trigger_data=trigger_data,
             trigger_source=serializer.validated_data.get('trigger_source', 'manual'),
+            trigger_data=serializer.validated_data.get('trigger_data', {}),
+            executed_by=request.user if request.user.is_authenticated else None,
+        )
+        response = WorkflowExecutionDetailSerializer(execution)
+        return Response(response.data, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _prefect_schedule_payload(schedule: WorkflowSchedule | None) -> Dict[str, Any] | None:
+        if not schedule:
+            return None
+        if schedule.schedule_type == 'interval':
+            return {'interval': schedule.interval_seconds or 0}
+        return {'cron': schedule.cron or '', 'timezone': schedule.timezone or 'UTC'}
+
+    def _sync_prefect_schedule(self, schedule: WorkflowSchedule | None, workflow: Workflow) -> None:
+        if workflow.execution_engine != 'prefect':
+            return
+        deployment_id = (workflow.prefect_deployment_id or '').strip() or None
+        if not prefect_client.is_configured(deployment_id):
+            return
+        schedule_payload = self._prefect_schedule_payload(schedule)
+        if schedule_payload is None:
+            return
+        try:
+            prefect_client.update_deployment_schedule(
+                deployment_id=prefect_client.resolve_deployment_id(deployment_id),
+                schedule=schedule_payload,
+                is_active=bool(schedule.is_active) if schedule else False,
+            )
+        except prefect_client.PrefectAPIError as exc:
+            logger.warning('Prefect schedule sync failed for workflow %s: %s', workflow.id, exc)
+
+    def _sync_default_schedule(self, workflow: Workflow) -> None:
+        if workflow.trigger_type != 'scheduled' or not workflow.schedule_cron:
+            WorkflowSchedule.objects.filter(workflow=workflow, name='default').update(is_active=False)
+            self._sync_prefect_schedule(None, workflow)
+            return
+
+        schedule, _ = WorkflowSchedule.objects.update_or_create(
+            workflow=workflow,
+            name='default',
+            defaults={
+                'schedule_type': 'cron',
+                'cron': workflow.schedule_cron,
+                'interval_seconds': None,
+                'timezone': 'UTC',
+                'is_active': workflow.is_active,
+                'trigger_source': 'schedule',
+                'trigger_data': {},
+                'created_by': workflow.created_by,
+            },
+        )
+        self._sync_prefect_schedule(schedule, workflow)
+
+    def _sync_prefect_deployment(self, workflow: Workflow) -> None:
+        return
+
+    def perform_create(self, serializer):
+        workflow = serializer.save(created_by=self.request.user)
+        self._sync_default_schedule(workflow)
+        self._ensure_prefect_deployment(workflow)
+        self._sync_prefect_deployment(workflow)
+
+    def perform_update(self, serializer):
+        workflow = serializer.save()
+        self._sync_default_schedule(workflow)
+        self._ensure_prefect_deployment(workflow)
+        self._sync_prefect_deployment(workflow)
+
+
+class PrefectDeploymentListView(APIView):
+    """Expose Prefect deployments so the UI can display them alongside workflows."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not prefect_client.has_api():
+            return Response({'deployments': [], 'error': 'Prefect not configured.'})
+        try:
+            deployments = prefect_client.list_deployments()
+        except prefect_client.PrefectAPIError as exc:
+            return Response({'deployments': [], 'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({'deployments': deployments})
+
+
+class PrefectDeploymentSyncView(APIView):
+    """Sync Prefect deployments into Django workflows for bidirectional visibility."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not prefect_client.has_api():
+            return Response({'synced': 0, 'error': 'Prefect not configured.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        dry_run = str(request.data.get('dry_run', 'false')).lower() == 'true'
+        synced = 0
+        created = 0
+        updated = 0
+        try:
+            deployments = prefect_client.list_deployments()
+        except prefect_client.PrefectAPIError as exc:
+            return Response({'synced': 0, 'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        for dep in deployments:
+            dep_id = dep.get('id') or dep.get('deployment_id')
+            if not dep_id:
+                continue
+            name = dep.get('name') or 'Prefect Deployment'
+            description = dep.get('description') or ''
+
+            defaults = {
+                'description': description,
+                'execution_engine': 'prefect',
+                'is_active': False,
+                'is_draft': True,
+                'tags': list(set((dep.get('tags') or []) + ['prefect'])),
+            }
+
+            if dry_run:
+                synced += 1
+                continue
+
+            obj, was_created = Workflow.objects.update_or_create(
+                prefect_deployment_id=str(dep_id),
+                defaults={
+                    'name': name,
+                    **defaults,
+                },
+            )
+            synced += 1
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+
+        return Response({'synced': synced, 'created': created, 'updated': updated, 'dry_run': dry_run})
+
+
+class WorkflowScheduleViewSet(viewsets.ModelViewSet):
+    queryset = WorkflowSchedule.objects.select_related('workflow')
+    serializer_class = WorkflowScheduleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = WorkflowSchedule.objects.select_related('workflow')
+        workflow_id = self.request.query_params.get('workflow')
+        if workflow_id:
+            queryset = queryset.filter(workflow_id=workflow_id)
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+        return queryset
+
+    @staticmethod
+    def _prefect_schedule_payload(schedule: WorkflowSchedule) -> Dict[str, Any] | None:
+        if schedule.schedule_type == 'interval':
+            return {'interval': schedule.interval_seconds or 0}
+        return {'cron': schedule.cron or '', 'timezone': schedule.timezone or 'UTC'}
+
+    def _sync_prefect_schedule(self, schedule: WorkflowSchedule) -> None:
+        workflow = schedule.workflow
+        if workflow.execution_engine != 'prefect':
+            return
+        deployment_id = (workflow.prefect_deployment_id or '').strip() or None
+        if not prefect_client.is_configured(deployment_id):
+            return
+        try:
+            prefect_client.update_deployment_schedule(
+                deployment_id=prefect_client.resolve_deployment_id(deployment_id),
+                schedule=self._prefect_schedule_payload(schedule),
+                is_active=bool(schedule.is_active),
+            )
+        except prefect_client.PrefectAPIError as exc:
+            logger.warning('Prefect schedule sync failed for schedule %s: %s', schedule.id, exc)
+
+    def perform_create(self, serializer):
+        schedule = serializer.save(created_by=self.request.user)
+        self._sync_prefect_schedule(schedule)
+
+    def perform_update(self, serializer):
+        schedule = serializer.save()
+        self._sync_prefect_schedule(schedule)
+
+    @action(detail=True, methods=['post'])
+    def pause(self, request, pk=None):
+        schedule = self.get_object()
+        schedule.is_active = False
+        schedule.save(update_fields=['is_active'])
+        self._sync_prefect_schedule(schedule)
+        return Response({'status': 'paused'})
+
+    @action(detail=True, methods=['post'])
+    def resume(self, request, pk=None):
+        schedule = self.get_object()
+        schedule.is_active = True
+        schedule.save(update_fields=['is_active'])
+        self._sync_prefect_schedule(schedule)
+        return Response({'status': 'resumed'})
+
+    @action(detail=True, methods=['post'], url_path='execute')
+    def execute_plan(self, request, pk=None):
+        schedule = self.get_object()
+        execution = execute_workflow(
+            workflow=schedule.workflow,
+            trigger_data=schedule.trigger_data or {},
+            trigger_source=schedule.trigger_source or 'schedule',
             executed_by=request.user,
         )
-
         return Response(WorkflowExecutionDetailSerializer(execution).data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=['post'])
-    def clone(self, request, pk=None):
-        workflow = self.get_object()
-        new_workflow = workflow.clone(new_name=request.data.get('name'), user=request.user)
-        return Response(WorkflowDetailSerializer(new_workflow).data, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=['post'])
-    def activate(self, request, pk=None):
-        workflow = self.get_object()
-        workflow.is_active = True
-        workflow.is_draft = False
-        workflow.save(update_fields=['is_active', 'is_draft'])
-        return Response({'status': 'activated'})
-
-    @action(detail=True, methods=['post'])
-    def deactivate(self, request, pk=None):
-        workflow = self.get_object()
-        workflow.is_active = False
-        workflow.save(update_fields=['is_active'])
-        return Response({'status': 'deactivated'})
-
-    @action(detail=True, methods=['get'])
-    def executions(self, request, pk=None):
-        workflow = self.get_object()
-        executions = workflow.executions.all()
-
-        page = self.paginate_queryset(executions)
-        if page is not None:
-            serializer = WorkflowExecutionListSerializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-
-        serializer = WorkflowExecutionListSerializer(executions, many=True)
-        return Response(serializer.data)
 
 
 class WorkflowStepViewSet(viewsets.ModelViewSet):
@@ -507,12 +457,41 @@ class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
 
         return queryset
 
+    def retrieve(self, request, *args, **kwargs):
+        # Opportunistically reconcile non-terminal Prefect-backed executions
+        # with the upstream flow run before serializing. Failures are
+        # swallowed so a Prefect outage never breaks the detail page.
+        execution = self.get_object()
+        if (
+            execution.workflow.execution_engine == 'prefect'
+            and execution.status not in {'completed', 'failed', 'cancelled'}
+            and execution.task_result_id
+        ):
+            try:
+                from . import prefect_dispatcher
+                prefect_dispatcher.sync_status(execution)
+                execution.refresh_from_db()
+            except Exception:  # pragma: no cover - defensive
+                pass
+        serializer = self.get_serializer(execution)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         execution = self.get_object()
 
         if execution.status not in ['pending', 'running', 'paused']:
             return Response({'error': 'Cannot cancel execution in current state'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # For Prefect-backed runs we forward the cancel to Prefect first; the
+        # local DB row is then marked cancelled regardless so the UI reflects
+        # the operator's intent immediately even if Prefect is slow.
+        if execution.workflow.execution_engine == 'prefect' and execution.task_result_id:
+            try:
+                from . import prefect_dispatcher
+                prefect_dispatcher.cancel(execution)
+            except Exception:  # pragma: no cover - defensive
+                pass
 
         execution.status = 'cancelled'
         execution.completed_at = timezone.now()
@@ -525,6 +504,36 @@ class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
                 'task_result_id': execution.task_result_id or None,
             }
         )
+
+    @action(detail=True, methods=['post'], url_path='refresh-prefect-status')
+    def refresh_prefect_status(self, request, pk=None):
+        """
+        Force-sync a Prefect-backed execution from the Prefect Server.
+
+        Used by the executions UI when the operator clicks 'Refresh from
+        Prefect'. Returns the up-to-date detail payload.
+        """
+        execution = self.get_object()
+        if execution.workflow.execution_engine != 'prefect':
+            return Response(
+                {'error': 'Execution is not running on the Prefect engine.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not execution.task_result_id:
+            return Response(
+                {'error': 'No Prefect flow run id recorded for this execution.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            from . import prefect_dispatcher
+            prefect_dispatcher.sync_status(execution)
+            execution.refresh_from_db()
+        except Exception as exc:
+            return Response(
+                {'error': f'Prefect sync failed: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(WorkflowExecutionDetailSerializer(execution).data)
 
     @action(detail=True, methods=['get'])
     def steps(self, request, pk=None):
@@ -590,3 +599,224 @@ class WorkflowStatsView(APIView):
                 'recent_executions': WorkflowExecutionListSerializer(recent_executions, many=True).data,
             }
         )
+
+
+class WorkflowPublishView(APIView):
+    """Publish a Django workflow to persistent Prefect flow files and deployment."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk=None):
+        try:
+            workflow = Workflow.objects.get(pk=pk)
+        except Workflow.DoesNotExist:
+            return Response({'error': 'Workflow not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not workflow.steps.filter(is_active=True).exists():
+            return Response(
+                {'error': 'Cannot publish a workflow with no active steps.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        register_deployment = str(request.data.get('register_deployment', 'true')).lower() == 'true'
+
+        from .publisher import publish_workflow
+        try:
+            result = publish_workflow(workflow, register_deployment=register_deployment)
+        except Exception as exc:
+            logger.exception('Workflow publish failed for workflow %s', workflow.id)
+            return Response(
+                {'error': f'Workflow publish failed: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            'status': 'published',
+            'workflow_id': str(workflow.id),
+            'workflow_name': workflow.name,
+            **result,
+        }, status=status.HTTP_200_OK)
+
+
+class WorkflowPublishedListView(APIView):
+    """List all published workflow manifests available for import."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .publisher import list_published_manifests
+        manifests = list_published_manifests()
+        return Response({'manifests': manifests})
+
+
+class WorkflowImportView(APIView):
+    """Import a workflow from a published manifest file or uploaded JSON."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .publisher import import_workflow_from_manifest, import_workflow_from_json_payload
+
+        update_existing = str(request.data.get('update_existing', 'true')).lower() == 'true'
+
+        uploaded_file = request.FILES.get('file')
+        if uploaded_file:
+            import json
+            try:
+                content = uploaded_file.read().decode('utf-8')
+                payload = json.loads(content)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return Response(
+                    {'error': f'Invalid JSON file: {exc}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            workflow = import_workflow_from_json_payload(
+                payload,
+                created_by=request.user,
+                update_existing=update_existing,
+            )
+            return Response({
+                'status': 'imported',
+                'source': 'upload',
+                'workflow_id': str(workflow.id),
+                'workflow_name': workflow.name,
+            }, status=status.HTTP_201_CREATED)
+
+        filename = request.data.get('filename')
+        if filename:
+            try:
+                workflow = import_workflow_from_manifest(
+                    filename,
+                    created_by=request.user,
+                    update_existing=update_existing,
+                )
+            except FileNotFoundError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                'status': 'imported',
+                'source': 'manifest',
+                'workflow_id': str(workflow.id),
+                'workflow_name': workflow.name,
+            }, status=status.HTTP_201_CREATED)
+
+        workflow_definition = request.data.get('workflow_definition')
+        if isinstance(workflow_definition, dict):
+            workflow = import_workflow_from_json_payload(
+                workflow_definition,
+                created_by=request.user,
+                update_existing=update_existing,
+            )
+            return Response({
+                'status': 'imported',
+                'source': 'payload',
+                'workflow_id': str(workflow.id),
+                'workflow_name': workflow.name,
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(
+            {'error': 'Provide one of: file upload, filename, or workflow_definition payload.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class TicketWorkflowBindingViewSet(viewsets.ModelViewSet):
+    serializer_class = TicketWorkflowBindingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = TicketWorkflowBinding.objects.select_related('workflow', 'created_by')
+        workflow_id = self.request.query_params.get('workflow')
+        if workflow_id:
+            queryset = queryset.filter(workflow_id=workflow_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class TicketCallablePlaybookSuggestView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        workflows = find_callable_workflows()
+        serializer = WorkflowListSerializer(workflows, many=True)
+        return Response({'results': serializer.data, 'count': workflows.count()})
+
+
+class TicketCallablePlaybookSchemaView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, workflow_id):
+        workflow = find_callable_workflows().filter(id=workflow_id).first()
+        if not workflow:
+            return Response({'error': 'Workflow not found or not callable from ticket'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'workflow_id': str(workflow.id),
+            'workflow_name': workflow.name,
+            'inputs_schema': workflow.inputs_schema,
+            'allowed_invoker_roles': workflow.allowed_invoker_roles,
+        })
+
+
+class TicketCallablePlaybookInvokeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'ticket_playbook_invoke'
+
+    def post(self, request, workflow_id):
+        workflow = find_callable_workflows().filter(id=workflow_id).first()
+        if not workflow:
+            return Response({'error': 'Workflow not found or not callable from ticket'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed_roles = workflow.allowed_invoker_roles or []
+        if allowed_roles:
+            user_roles = set(request.user.groups.values_list('name', flat=True))
+            if not user_roles.intersection(set(allowed_roles)):
+                return Response({'error': 'You do not have permission to invoke this playbook'}, status=status.HTTP_403_FORBIDDEN)
+
+        ticket_data = request.data.get('ticket') or {}
+        if not isinstance(ticket_data, dict) or not ticket_data.get('ticket_number'):
+            return Response({'error': 'ticket.ticket_number is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            execution = invoke_workflow_from_ticket(
+                workflow=workflow,
+                ticket_data=ticket_data,
+                user_inputs=request.data.get('inputs') or {},
+                executed_by=request.user,
+                comment=request.data.get('comment', ''),
+            )
+        except Exception as exc:
+            return Response({'error': f'Workflow invocation failed: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'execution_id': str(execution.id),
+            'status': execution.status,
+            'trigger_source': execution.trigger_source,
+        }, status=status.HTTP_201_CREATED)
+
+
+class TicketWorkflowDispatchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        trigger_event = request.data.get('trigger_event')
+        if trigger_event not in ('on_create', 'on_status_change'):
+            return Response({'error': "trigger_event must be 'on_create' or 'on_status_change'"}, status=status.HTTP_400_BAD_REQUEST)
+
+        ticket_data = request.data.get('ticket') or {}
+        if not isinstance(ticket_data, dict) or not ticket_data.get('ticket_number'):
+            return Response({'error': 'ticket.ticket_number is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = dispatch_ticket_event(trigger_event, ticket_data, executed_by=request.user)
+        return Response(result, status=status.HTTP_202_ACCEPTED)
+
+
+class TicketWorkflowWorkplanView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        ticket_number = str(request.query_params.get('ticket_number') or '').strip()
+        if not ticket_number:
+            return Response({'error': 'ticket_number is required'}, status=status.HTTP_400_BAD_REQUEST)
+        items = get_ticket_workplan(ticket_number)
+        return Response({'ticket_number': ticket_number, 'results': items, 'count': len(items)})

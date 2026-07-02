@@ -84,9 +84,30 @@ class Workflow(models.Model):
         ('webhook', 'External Webhook'),
     ]
 
+    EXECUTION_ENGINES = [
+        ('local', 'Local (Django)'),
+        ('prefect', 'Prefect'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200, help_text="Workflow name")
     description = models.TextField(blank=True, help_text="Workflow description")
+
+    # Selects which executor handles this workflow. ``local`` keeps the
+    # original in-process Django engine; ``prefect`` delegates execution to
+    # the configured Prefect deployment via ``prefect_dispatcher``.
+    execution_engine = models.CharField(
+        max_length=20,
+        choices=EXECUTION_ENGINES,
+        default='local',
+        help_text="Engine that runs this workflow: local (Django) or prefect."
+    )
+    prefect_deployment_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text="Optional Prefect deployment id override for this workflow."
+    )
 
     # Trigger configuration
     trigger_type = models.CharField(
@@ -99,6 +120,20 @@ class Workflow(models.Model):
         default=dict,
         blank=True,
         help_text="Filter conditions for automatic triggers (JSON)"
+    )
+    inputs_schema = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Input definitions for ticket-context workflow invocation."
+    )
+    is_callable_from_ticket = models.BooleanField(
+        default=False,
+        help_text="Whether this workflow can be invoked from ticket context."
+    )
+    allowed_invoker_roles = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Django group names allowed to invoke this workflow from tickets."
     )
 
     # Scheduling (for scheduled trigger type)
@@ -180,6 +215,40 @@ class Workflow(models.Model):
             )
 
         return new_workflow
+
+
+class TicketWorkflowBinding(models.Model):
+    LABEL_LOGIC = [
+        ('AND', 'All labels must match'),
+        ('OR', 'Any label may match'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    workflow = models.ForeignKey(
+        Workflow,
+        on_delete=models.CASCADE,
+        related_name='ticket_workflow_bindings',
+    )
+    label_filters = models.JSONField(default=list, blank=True)
+    label_filter_logic = models.CharField(max_length=3, choices=LABEL_LOGIC, default='AND')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ticket_workflow_bindings',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = 'Ticket Workflow Binding'
+        verbose_name_plural = 'Ticket Workflow Bindings'
+
+    def __str__(self):
+        return f"{self.name} -> {self.workflow.name}"
 
 
 class WorkflowStep(models.Model):
@@ -571,3 +640,48 @@ class StepExecution(models.Model):
             return (end_time - self.started_at).total_seconds()
         return 0
 
+
+class WorkflowSchedule(models.Model):
+    """Execution schedules for workflows (cron/interval)."""
+
+    SCHEDULE_TYPES = [
+        ('cron', 'Cron'),
+        ('interval', 'Interval (seconds)'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workflow = models.ForeignKey(
+        Workflow,
+        on_delete=models.CASCADE,
+        related_name='schedules',
+        help_text="Workflow this schedule belongs to",
+    )
+    name = models.CharField(max_length=200, default='default')
+    schedule_type = models.CharField(
+        max_length=20,
+        choices=SCHEDULE_TYPES,
+        default='cron',
+    )
+    cron = models.CharField(max_length=100, blank=True, null=True)
+    interval_seconds = models.PositiveIntegerField(blank=True, null=True)
+    timezone = models.CharField(max_length=64, default='UTC')
+    is_active = models.BooleanField(default=True)
+    trigger_source = models.CharField(max_length=200, default='schedule')
+    trigger_data = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='workflow_schedules',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Workflow Schedule'
+        verbose_name_plural = 'Workflow Schedules'
+
+    def __str__(self):
+        return f"{self.workflow.name} - {self.name}"

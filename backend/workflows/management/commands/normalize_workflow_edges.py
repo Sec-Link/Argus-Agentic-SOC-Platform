@@ -5,7 +5,7 @@ from typing import Iterable, List, Dict, Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from workflows.models import Workflow, WorkflowStep
+from ...models import Workflow, WorkflowStep
 
 
 def _safe_str(value: Any) -> str:
