@@ -794,6 +794,9 @@ export default function SlaTicketDetailView(props: Props) {
         return;
       }
       setCommentDraft('');
+    } catch (err: any) {
+      const apiError = err?.response?.data?.error || err?.response?.data?.detail;
+      message.error(apiError ? String(apiError) : 'Failed to send comment');
     } finally {
       setCommentSending(false);
     }

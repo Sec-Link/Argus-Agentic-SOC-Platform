@@ -60,3 +60,4 @@ db.sqlite3
 # OS
 .DS_Store
 Thumbs.db
+/backend/workflows/sample_workflows/
