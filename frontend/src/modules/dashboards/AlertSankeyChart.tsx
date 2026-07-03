@@ -19,7 +19,6 @@ const STAGE_COLORS: Record<string, string> = {
 };
 const SANKEY_CHART_LEFT = 84;
 const SANKEY_CHART_RIGHT = 88;
-const STAGE_TEMPLATE_COLUMNS = '1.2fr 1.08fr 0.94fr 0.94fr 1.08fr';
 
 const getStoredThemeMode = (): 'light' | 'dark' => {
   // Theme lookup is defensive because dashboard pages may be rendered during Next build.
@@ -64,8 +63,18 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
 
   const option = useMemo<EChartsOption>(() => {
     const labelOverflow = 'break' as const;
+    // Pin each node to its intended column so ECharts doesn't float sinks
+    // (nodes with no outgoing links) to the rightmost position.
+    const STAGE_DEPTH: Record<string, number> = {
+      'MITRE ATT&CK Framework': 0,
+      'Developed Use Cases': 1,
+      'Alerts': 2,
+      'Resolution': 3,
+      'Event Level': 4,
+    };
     const nodes = (stats?.nodes ?? []).map((node) => ({
       ...node,
+      depth: node.stage != null ? STAGE_DEPTH[node.stage] : undefined,
       itemStyle: {
         borderRadius: 8,
         shadowBlur: isDarkTheme ? 12 : 8,
@@ -170,7 +179,6 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
               {
                 '--dashboard-sankey-plot-left': `${SANKEY_CHART_LEFT}px`,
                 '--dashboard-sankey-plot-right': `${SANKEY_CHART_RIGHT}px`,
-                '--dashboard-sankey-stage-columns': STAGE_TEMPLATE_COLUMNS,
               } as React.CSSProperties
             }
           >

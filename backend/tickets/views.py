@@ -1,15 +1,20 @@
+import re
+from copy import deepcopy
+from datetime import datetime, time, timedelta
+import json
+
 from django.db import transaction
 from django.db.models import Avg
-from datetime import datetime, time, timedelta
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
 from rest_framework import status, viewsets
-import json
-from copy import deepcopy
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from alerts.models import Alert as AlertModel
+from detections.models import LocalDetectionRule
+from detections.sigma import ATTACK_TACTIC_MAP
 from .models import EventTicket, TicketSLA, TicketWorkLog, EventTicketAttachment, TicketHandleLog
 from .serializers import (
     EventTicketSerializer,
@@ -25,6 +30,52 @@ from ai_assistant.assistant import AIAssistantError, generate_ai_assistant_outpu
 from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
 from ai_assistant.skill_config import get_enabled_skill_configs
 from ai_assistant.serializers import AIAssistantRequestSerializer
+
+
+def _build_mitre_tags_map(ticket_numbers: list[str]) -> dict[str, list[str]]:
+    """Return {ticket_number: [attack.* tag, ...]} for a page of tickets.
+
+    Uses 3 DB queries (alerts, rules, no N+1).
+    """
+    if not ticket_numbers:
+        return {}
+
+    alert_rows = (
+        AlertModel.objects.filter(ticket_number__in=ticket_numbers)
+        .exclude(rule_id__isnull=True)
+        .exclude(rule_id="")
+        .values("ticket_number", "rule_id")
+        .distinct()
+    )
+    ticket_to_rule_ids: dict[str, set] = {}
+    for row in alert_rows:
+        ticket_to_rule_ids.setdefault(row["ticket_number"], set()).add(row["rule_id"])
+
+    all_rule_ids = {rid for rids in ticket_to_rule_ids.values() for rid in rids}
+    if not all_rule_ids:
+        return {}
+
+    rule_tag_map: dict[str, list] = {}
+    for rule in LocalDetectionRule.objects.filter(
+        rule_uuid__in=all_rule_ids, is_deleted=False
+    ).values("rule_uuid", "payload"):
+        payload = rule["payload"] or {}
+        tags = payload.get("tags") or []
+        rule_tag_map[rule["rule_uuid"]] = [str(t).strip() for t in tags if str(t).strip()]
+
+    result: dict[str, list] = {}
+    for tn, rule_ids in ticket_to_rule_ids.items():
+        attack_tags: list[str] = []
+        seen: set = set()
+        for rid in rule_ids:
+            for tag in rule_tag_map.get(rid, []):
+                normalized = str(tag).strip().lower()
+                if normalized.startswith("attack.") and normalized not in seen:
+                    seen.add(normalized)
+                    attack_tags.append(normalized)
+        if attack_tags:
+            result[tn] = sorted(attack_tags)
+    return result
 
 
 class EventTicketViewSet(viewsets.ModelViewSet):
@@ -82,6 +133,17 @@ class EventTicketViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             return EventTicketListSerializer
         return EventTicketSerializer
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        items = page if page is not None else queryset
+        ticket_numbers = [t.ticket_number for t in items if t.ticket_number]
+        mitre_tags_map = _build_mitre_tags_map(ticket_numbers)
+        serializer = self.get_serializer(items, many=True, context={**self.get_serializer_context(), 'mitre_tags_map': mitre_tags_map})
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
     def perform_create(self, serializer):
         instance = serializer.save()

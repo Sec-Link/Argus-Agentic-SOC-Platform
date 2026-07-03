@@ -452,6 +452,23 @@ export default function SlaTicketListView(props: Props) {
     return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
   };
 
+  const mitreTagColor = (tag: string) => {
+    const t = tag.toLowerCase();
+    if (t.includes('credential')) return 'red';
+    if (t.includes('privilege')) return 'volcano';
+    if (t.includes('initial')) return 'orange';
+    if (t.includes('execution')) return 'gold';
+    if (t.includes('persistence')) return 'lime';
+    if (t.includes('defense')) return 'green';
+    if (t.includes('discovery')) return 'cyan';
+    if (t.includes('lateral')) return 'blue';
+    if (t.includes('collection')) return 'geekblue';
+    if (t.includes('command')) return 'purple';
+    if (t.includes('exfiltration')) return 'magenta';
+    if (t.includes('impact')) return '#f50';
+    return 'default';
+  };
+
   const columns: ColumnsType<SlaTicketListItem> = [
     { title: 'ID', dataIndex: 'ticket_number', key: 'ticket_number', width: 180, render: (v: string) => <a onClick={() => onOpenDetail(v)}>{v}</a> },
     { title: 'Name', dataIndex: 'title', key: 'title', ellipsis: true },
@@ -467,6 +484,31 @@ export default function SlaTicketListView(props: Props) {
           TTA:{formatDuration(r.sla_summary?.mtta_seconds)} / TTR:{formatDuration(r.sla_summary?.mttr_seconds)}
         </span>
       ),
+    },
+    {
+      title: 'MITRE ATT&CK',
+      key: 'mitre_tags',
+      width: 240,
+      render: (_: any, r: SlaTicketListItem) => {
+        const tags = r.mitre_tags;
+        if (!tags || tags.length === 0) return <span style={{ color: 'rgba(127,127,127,0.5)' }}>—</span>;
+        const tacticTags = tags.filter((t) => !t.match(/attack\.t\d{4}/i));
+        const shown = tacticTags.slice(0, 3);
+        const rest = tacticTags.length - shown.length;
+        return (
+          <Space size={4} wrap>
+            {shown.map((tag) => {
+              const label = tag.replace('attack.', '').replace(/-/g, ' ');
+              return (
+                <Tag key={tag} color={mitreTagColor(tag)} style={{ fontSize: 11, padding: '0 6px', margin: 0 }}>
+                  {label}
+                </Tag>
+              );
+            })}
+            {rest > 0 && <Tag style={{ fontSize: 11, padding: '0 6px', margin: 0 }}>+{rest}</Tag>}
+          </Space>
+        );
+      },
     },
     { title: 'Created', dataIndex: 'created_time', key: 'created_time', width: 200, render: (v: string | null | undefined) => formatTimestamp(v) },
   ];

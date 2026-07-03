@@ -255,6 +255,7 @@ class EventTicketListSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True
     )
+    mitre_tags = serializers.SerializerMethodField()
 
     class Meta:
         model = EventTicket
@@ -269,6 +270,7 @@ class EventTicketListSerializer(serializers.ModelSerializer):
             'created_time',
             'updated_time',
             'sla_summary',
+            'mitre_tags',
         ]
         read_only_fields = [
             'ticket_number',
@@ -291,3 +293,7 @@ class EventTicketListSerializer(serializers.ModelSerializer):
             }
         except TicketSLA.DoesNotExist:
             return None
+
+    def get_mitre_tags(self, obj):
+        mitre_tags_map = self.context.get('mitre_tags_map') or {}
+        return mitre_tags_map.get(obj.ticket_number) or []

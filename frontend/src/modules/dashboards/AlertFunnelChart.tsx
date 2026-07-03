@@ -176,8 +176,22 @@ const AlertFunnelChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {funnelRows.map((row) => (
+                <React.Fragment key={row.stage}>
+                  {row.index === 1 && stats?.detection_rules != null && (
+                    <div
+                      style={{
+                        textAlign: 'center',
+                        fontSize: 12,
+                        color: isDarkTheme ? 'rgba(200,220,255,0.72)' : 'rgba(22,119,255,0.8)',
+                        letterSpacing: '0.02em',
+                        margin: '-2px 0',
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      ↓ {stats.detection_rules.toLocaleString()} detection rule{stats.detection_rules !== 1 ? 's' : ''} triggered
+                    </div>
+                  )}
                 <div
-                  key={row.stage}
                   title={`${row.stage}: ${row.value.toLocaleString()} (${row.rate} conversion)`}
                   style={{
                     position: 'relative',
@@ -223,6 +237,7 @@ const AlertFunnelChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
                     </div>
                   </div>
                 </div>
+                </React.Fragment>
               ))}
             </div>
             <Typography.Text

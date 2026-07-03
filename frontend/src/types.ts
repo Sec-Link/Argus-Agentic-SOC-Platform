@@ -5,6 +5,8 @@ export interface Alert {
   message: string;
   description?: string | null;
   source_index: string;
+  rule_id?: string | null;
+  rule_name?: string | null;
 }
 
 export interface DashboardData {
@@ -38,6 +40,7 @@ export interface DashboardData {
 
 export interface ConversionStats {
   alerts: number;
+  detection_rules?: number;
   tickets: number;
   true_positive: number;
   security_events: number;
@@ -81,6 +84,7 @@ export interface SlaTicketListItem {
   created_time: string;
   updated_time: string;
   sla_summary?: SlaSummary | null;
+  mitre_tags?: string[] | null;
 }
 
 export interface SlaTicketDetail extends SlaTicketListItem {
