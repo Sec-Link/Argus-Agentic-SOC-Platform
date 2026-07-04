@@ -1,11 +1,14 @@
-# ECHO-SOC-Platform
+# Argus-Agentic-SOC-Platform
 
-This repository contains the ECHO-SOC-Platform — an AI-native Agentic Security Operations Center (SOC) platform focused on unifying alerts ingestion, incident investigation, ticket collaboration, asset correlation, workflow orchestration, and AI-assisted analysis.
+This repository contains the Argus-Agentic-SOC-Platform — an AI-native Agentic Security Operations Center (SOC) platform focused on unifying alerts ingestion, incident investigation, ticket collaboration, asset correlation, workflow orchestration, and AI-assisted analysis.
 
 The project uses a separated frontend/backend architecture: the frontend is built with Next.js + React to provide the operator console, the backend uses Django + Django REST Framework to provide APIs and orchestration, and PostgreSQL is the primary data store. Elasticsearch is optionally supported as an external alert source.
 
 ---
+<img width="1445" height="703" alt="image" src="https://github.com/user-attachments/assets/e4d1b273-3090-4632-85b9-2b455860e73a" />
 
+
+---
 ## 1. Product Positioning
 
 The platform consolidates core SOC objects into one product with open-source solutions:
@@ -105,6 +108,8 @@ flowchart LR
 4. Data Layer: PostgreSQL is the primary datastore; Elasticsearch is an optional alert source.
 5. Intelligence Layer: AI Assistant offers conversation and tool-call capabilities, exposing MCP-style interfaces.
 6. Automation Layer: Orchestrator and Workflows provide scheduled execution, orchestration, and audit trails.
+More information:
+https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/docs/architecture.md
 
 ---
 
@@ -146,7 +151,7 @@ Elasticsearch (optional)
 ## 6. Repository Layout
 
 ```text
-ECHO-SOC-Platform/
+Argus-Agentic-SOC-Platform/
 ├── backend/                  # Django backend
 │   ├── accounts/
 │   ├── alerts/
@@ -176,86 +181,10 @@ ECHO-SOC-Platform/
 
 ---
 
-## 7. Quick Start
+## 7. User Manual
+https://sec-link.github.io/Argus-Agentic-SOC-Platform/zh/overview/
 
-### 7.1 Requirements
-- Docker
-- Docker Compose
-- GNU Make
-
-We recommend using Docker Compose for local development.
-
-### 7.2 Configure environment variables
-
-Copy the environment template:
-
-```bash
-cp env.example .env
-```
-
-Minimum required values:
-
-```env
-SECRET_KEY=replace-with-a-strong-secret
-DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1,backend
-
-POSTGRES_DB=siem_db
-POSTGRES_USER=siem_user
-POSTGRES_PASSWORD=siem_password
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-
-BACKEND_ORIGIN=http://backend:8000
-```
-
-If you need Elasticsearch as an alert source, configure the ES variables similarly:
-
-```env
-ES_HOST=http://localhost:9200
-ES_USERNAME=elastic
-ES_PASSWORD=your-es-password
-```
-
----
-
-## 8. Running locally
-
-### Development
-
-```bash
-make build-dev
-```
-
-Frontend: `http://localhost:3000`
-Backend API: `http://localhost:8000`
-PostgreSQL: `localhost:5432`
-
-### Production
-
-```bash
-make build-prod
-```
-
-Default access URLs:
-
-- Frontend: `http://localhost`
-- Backend API: `http://localhost:8000`
-
-### Common targets
-
-```bash
-make logs-dev
-make logs-prod
-make restart-dev
-make restart-prod
-make redeploy-dev
-make redeploy-prod
-```
-
----
-
-## 9. API and access
+## 8. API and access
 
 The backend uses `/api/v1/` as the API prefix. Main areas include:
 
@@ -269,34 +198,12 @@ The backend uses `/api/v1/` as the API prefix. Main areas include:
 - `/api/v1/mcp/`: MCP JSON-RPC and tool registry
 
 The frontend proxies `/api/v1/*` requests via a Next.js route handler to the backend service, centralizing browser-side API access.
+More information: 
+https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/docs/api-overview.md
 
 ---
 
-## 10. AI Assistant & MCP
-
-The platform includes an AI Assistant module that provides security-focused capabilities, including:
-
-- Conversational analysis entrypoints
-- Ticket-context queries
-- Similar-case retrieval
-- CMDB asset queries
-- Observable extraction
-- Registration, lifecycle, and monitoring of external MCP servers
-
----
-
-## 11. Scheduling & Automation
-
-The platform contains two automation layers: `workflows` and `orchestrator`:
-
-- `workflows`: define process logic and API call sequences
-- `orchestrator`: define scheduled tasks, execution records, and dispatch
-
-The current default task backend is an in-process immediate executor. For higher concurrency or isolation, consider migrating to an external task backend.
-
----
-
-## 12. Deployment
+## 9. Deployment
 
 ### Docker Compose
 - `docker-compose.dev.yml`: local development
@@ -311,7 +218,7 @@ The `k8s/` directory contains basic deployment manifests:
 
 ---
 
-## 13. Security & Hardening
+## 10. Security & Hardening
 
 In production we recommend:
 
@@ -320,23 +227,18 @@ In production we recommend:
 - Add backups and monitoring for DB, object storage, and logs
 - Configure access boundaries, auditing, and least-privilege for AI/MCP features
 
----
-
-## 14. Use Cases
-
-Use cases include enterprise SOC platforms, automation & orchestration projects, and prototypes that embed AI into investigation workflows.
 
 ---
 
-## 15. License
+## 11. License
 
 Please review `LICENSE.md` before using this project for production, distribution, or hosted services.
 
-## 16. Star History
-<a href="https://www.star-history.com/?repos=Sec-Link%2FECHO-SOC-Platform&type=date&legend=top-left">
+## 12. Star History
+<a href="https://www.star-history.com/?repos=Sec-Link%2FArgus-Agentic-SOC-Platform&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&legend=top-left" />
  </picture>
 </a>
