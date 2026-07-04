@@ -29,3 +29,4 @@ exclude:
 # Plugins supported by GitHub Pages
 plugins:
   - jekyll-seo-tag
+
