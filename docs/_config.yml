@@ -12,6 +12,9 @@ theme: minima
 # Social / repo links shown in minima footer
 github_username: Sec-Link
 
+# Pretty URLs: generate en/overview/index.html instead of en/overview.html
+permalink: pretty
+
 # Markdown engine
 markdown: kramdown
 highlighter: rouge
