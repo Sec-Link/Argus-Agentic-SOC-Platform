@@ -1,6 +1,6 @@
-# ECHO-SOC-Platform
+# Argus-Agentic-SOC-Platform
 
-This repository contains the ECHO-SOC-Platform — an AI-native Agentic Security Operations Center (SOC) platform focused on unifying alerts ingestion, incident investigation, ticket collaboration, asset correlation, workflow orchestration, and AI-assisted analysis.
+This repository contains the Argus-Agentic-SOC-Platform — an AI-native Agentic Security Operations Center (SOC) platform focused on unifying alerts ingestion, incident investigation, ticket collaboration, asset correlation, workflow orchestration, and AI-assisted analysis.
 
 The project uses a separated frontend/backend architecture: the frontend is built with Next.js + React to provide the operator console, the backend uses Django + Django REST Framework to provide APIs and orchestration, and PostgreSQL is the primary data store. Elasticsearch is optionally supported as an external alert source.
 
@@ -146,7 +146,7 @@ Elasticsearch (optional)
 ## 6. Repository Layout
 
 ```text
-ECHO-SOC-Platform/
+Argus-Agentic-SOC-Platform/
 ├── backend/                  # Django backend
 │   ├── accounts/
 │   ├── alerts/
@@ -333,10 +333,10 @@ Use cases include enterprise SOC platforms, automation & orchestration projects,
 Please review `LICENSE.md` before using this project for production, distribution, or hosted services.
 
 ## 16. Star History
-<a href="https://www.star-history.com/?repos=Sec-Link%2FECHO-SOC-Platform&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=Sec-Link%2FArgus-Agentic-SOC-Platform&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Sec-Link/ECHO-SOC-Platform&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&legend=top-left" />
  </picture>
 </a>
