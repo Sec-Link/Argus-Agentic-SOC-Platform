@@ -1,0 +1,6 @@
+---
+layout: null
+---
+[{% assign lng_pages = site.pages | where_exp: "p", "p.lang" %}{% for p in lng_pages %}{% unless forloop.first %},{% endunless %}
+{"title":{{ p.title | jsonify }},"url":{{ p.url | relative_url | jsonify }},"lang":{{ p.lang | jsonify }},"content":{{ p.content | strip_html | normalize_whitespace | truncate: 600 | jsonify }}}{% endfor %}
+]

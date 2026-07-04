@@ -1,20 +1,13 @@
 title: "Argus — Agentic SOC Platform"
 description: >-
-  AI-native Security Operations Center platform for unified alert ingestion,
+  AI-native Security Operations Center for unified alert ingestion,
   incident investigation, MITRE ATT&CK correlation, and automated response.
 baseurl: "/Argus-Agentic-SOC-Platform"
 url: "https://sec-link.github.io"
 
 theme: minima
 
-# Navigation bar order — must match actual filenames in docs/
-header_pages:
-  - quickstart.md
-  - installation.md
-  - architecture.md
-  - configuration.md
-  - api-overview.md
-  - faq.md
+# Navigation is driven by _data/nav.yml — supports bilingual (en/zh) routing
 
 # Social / repo links shown in minima footer
 github_username: Sec-Link

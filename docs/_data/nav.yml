@@ -1,0 +1,28 @@
+modules:
+  - id: overview
+    en_title: "Overview"
+    zh_title: "项目总览"
+  - id: installation
+    en_title: "Installation"
+    zh_title: "安装部署"
+  - id: dashboard
+    en_title: "Dashboard"
+    zh_title: "仪表盘"
+  - id: ticket-handling
+    en_title: "Ticket Handling"
+    zh_title: "工单处理"
+  - id: alerts
+    en_title: "Alerts"
+    zh_title: "告警管理"
+  - id: use-case-management
+    en_title: "Use Case Management"
+    zh_title: "用例管理"
+  - id: data-onboarding
+    en_title: "Data Onboarding"
+    zh_title: "数据接入"
+  - id: docker-deployment
+    en_title: "Docker Deployment"
+    zh_title: "Docker 部署"
+  - id: ai-agent
+    en_title: "AI Agent"
+    zh_title: "AI 智能体"
