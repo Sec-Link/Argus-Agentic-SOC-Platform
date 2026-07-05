@@ -22,7 +22,7 @@ spec:
         fsGroup: 999
       containers:
       - name: django
-        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-backend:v0.7
+        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-backend:v0.71
         ports:
         - containerPort: 8000
         securityContext:
