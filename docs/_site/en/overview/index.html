@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Overview | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Overview" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/en/overview/" />
+<meta property="og:url" content="http://localhost:4000/en/overview/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Overview" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"Overview","url":"http://localhost:4000/en/overview/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/en/overview/"
+               class="nav-link active">Overview</a><a href="/en/installation/"
+               class="nav-link">Installation</a><a href="/en/dashboard/"
+               class="nav-link">Dashboard</a><a href="/en/ticket-handling/"
+               class="nav-link">Ticket Handling</a><a href="/en/alerts/"
+               class="nav-link">Alerts</a><a href="/en/use-case-management/"
+               class="nav-link">Use Case Management</a><a href="/en/data-onboarding/"
+               class="nav-link">Data Onboarding</a><a href="/en/docker-deployment/"
+               class="nav-link">Docker Deployment</a><a href="/en/ai-agent/"
+               class="nav-link">AI Agent</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="argus--agentic-soc-platform">Argus — Agentic SOC Platform</h1>
+
+<p>Argus is an AI-native Security Operations Center (SOC) platform that unifies alert ingestion, incident investigation, detection engineering, and automated response under a single operational interface. Built for modern security teams, it replaces fragmented toolchains with a coherent, evidence-driven workflow powered by AI agents and a flexible SOAR engine.</p>
+
+<h2 id="key-capabilities">Key Capabilities</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Capability</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Unified Alert Ingestion</strong></td>
+      <td>Connects to Elasticsearch (ELK), EDR, SIEM, and other sources via a configurable data pipeline</td>
+    </tr>
+    <tr>
+      <td><strong>AI-Assisted Investigation</strong></td>
+      <td>Per-ticket AI assistant provides alert explanations, risk assessment, IOC extraction, and recommended actions</td>
+    </tr>
+    <tr>
+      <td><strong>Detection Engineering</strong></td>
+      <td>Sigma rule library with field mapping management, multi-backend publishing (Splunk, Elastic), and publish history audit</td>
+    </tr>
+    <tr>
+      <td><strong>Automated Response (SOAR)</strong></td>
+      <td>Visual workflow editor for no-code playbooks with scheduling, webhook triggers, and Prefect orchestration</td>
+    </tr>
+    <tr>
+      <td><strong>SLA Tracking</strong></td>
+      <td>Automatic MTTA / MTTI / MTTC / MTTR calculation with color-coded compliance indicators</td>
+    </tr>
+    <tr>
+      <td><strong>Collaborative War Room</strong></td>
+      <td>Per-ticket workspace for analyst notes, file evidence, handle logs, and AI-generated task lists</td>
+    </tr>
+    <tr>
+      <td><strong>MCP Tool Framework</strong></td>
+      <td>Extensible Model Context Protocol layer enabling AI agents to invoke external security tools at runtime</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="platform-architecture">Platform Architecture</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>┌─────────────────────────────────────────────────────────┐
+│                    Argus Platform                        │
+├──────────────┬──────────────────┬───────────────────────┤
+│   Frontend   │     Backend      │     Data Pipeline     │
+│  (Next.js)   │  (Django REST)   │  ES → Orchestrator →  │
+│   Port 3000  │   Port 8000      │  Correlation → Alerts  │
+└──────────────┴────────┬─────────┴───────────────────────┘
+                        │
+            ┌───────────┼───────────┐
+            │           │           │
+        PostgreSQL    AI Layer    Prefect
+        (Data Store) (OpenAI     (Workflow
+                      compat.)    Engine)
+</code></pre></div></div>
+
+<p>The platform is fully containerized and deployable via Docker Compose. All three tiers — frontend, backend, and database — run as isolated services with well-defined network boundaries.</p>
+
+<h2 id="module-index">Module Index</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Module</th>
+      <th>Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><strong>Overview</strong></td>
+      <td>Platform introduction and navigation guide (this page)</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><strong>Installation</strong></td>
+      <td>Docker-based quick-start deployment</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><strong>Dashboard</strong></td>
+      <td>Real-time monitoring overview and alert statistics</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><strong>Ticket Handling</strong></td>
+      <td>Incident lifecycle management, SLA tracking, War Room, Workflows</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><strong>Alerts</strong></td>
+      <td>Alert ingestion, list view, triage, and correlation</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><strong>Use Case Management</strong></td>
+      <td>Sigma rule library, field mappings, publish history</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><strong>Data Onboarding</strong></td>
+      <td>ELK integration setup, Orchestrator scheduling, Correlation policy</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><strong>Docker Deployment</strong></td>
+      <td>Production-grade Docker Compose orchestration</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><strong>AI Agent</strong></td>
+      <td>AI assistant configuration, MCP tool management, Skills</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="quick-reference">Quick Reference</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Platform URL</td>
+      <td><code class="language-plaintext highlighter-rouge">https://siem.seclink.info/</code></td>
+    </tr>
+    <tr>
+      <td>Login Method</td>
+      <td>Internal Login (username / password)</td>
+    </tr>
+    <tr>
+      <td>Default Landing Page</td>
+      <td>Monitor → Overview (Dashboard)</td>
+    </tr>
+    <tr>
+      <td>Target Users</td>
+      <td>SOC Analysts, Detection Engineers, SIEM Administrators</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>After login the system lands on <strong>Dashboard Overview</strong>. If no data source has been configured, all statistics display as zero. Start at <a href="/en/data-onboarding/">Data Onboarding</a> to connect your first source.</p>
+</blockquote>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">On this page</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'overview';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

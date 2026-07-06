@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>数据接入 | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="数据接入" />
+<meta property="og:locale" content="zh" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/zh/data-onboarding/" />
+<meta property="og:url" content="http://localhost:4000/zh/data-onboarding/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="数据接入" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"数据接入","url":"http://localhost:4000/zh/data-onboarding/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/zh/overview/"
+               class="nav-link">项目总览</a><a href="/zh/installation/"
+               class="nav-link">安装部署</a><a href="/zh/dashboard/"
+               class="nav-link">仪表盘</a><a href="/zh/ticket-handling/"
+               class="nav-link">工单处理</a><a href="/zh/alerts/"
+               class="nav-link">告警管理</a><a href="/zh/use-case-management/"
+               class="nav-link">用例管理</a><a href="/zh/data-onboarding/"
+               class="nav-link active">数据接入</a><a href="/zh/docker-deployment/"
+               class="nav-link">Docker 部署</a><a href="/zh/ai-agent/"
+               class="nav-link">AI 智能体</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="数据接入">数据接入</h1>
+
+<p>数据接入覆盖完整的数据管道配置：连接外部数据源、调度告警采集、配置关联策略，将原始告警自动转化为事件工单。</p>
+
+<h2 id="数据流架构">数据流架构</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Elasticsearch（外部）
+        │
+        ▼  [Data Pipeline → Integrations]
+   ELK Connector（凭证认证 + Index 映射）
+        │
+        ▼  [Data Pipeline → Orchestrator]
+   定时采集任务（Cron Job）
+   es_to_db：将 ES 数据写入内部数据库
+        │
+        ▼  [Data Pipeline → Correlation]
+   关联分析引擎（时间窗口 + 排序字段）
+        │
+        ▼  [Monitor]
+   Overview 统计仪表板 + Alerts 告警列表
+</code></pre></div></div>
+
+<p><strong>工作原理：</strong></p>
+<ul>
+  <li><strong>Orchestrator</strong> 定期（默认每 60 分钟）从配置的 ES 索引拉取告警数据，写入内部 <code class="language-plaintext highlighter-rouge">alerts_alert</code> 表。</li>
+  <li><strong>Correlation</strong> 引擎在时间窗口内对告警进行排序和关联，生成关联活动记录和工单。</li>
+  <li><strong>Monitor</strong> 模块从内部数据库读取数据，展示实时仪表盘统计和告警列表。</li>
+</ul>
+
+<hr />
+
+<h2 id="第一步登录系统">第一步：登录系统</h2>
+
+<p>使用浏览器访问 <code class="language-plaintext highlighter-rouge">https://siem.seclink.info</code>，输入管理员账号密码登录。</p>
+
+<p>登录后，系统默认显示 <strong>Dashboard Overview</strong> 页面。若未配置数据源，所有统计指标均为零。</p>
+
+<p><img src="/assets/images/data-onboarding/dashboard-overview.png" alt="Dashboard Overview — 登录后初始状态" /></p>
+
+<p><strong>Dashboard 统计说明：</strong></p>
+<ul>
+  <li><strong>Alerts in…</strong> — 各时间窗口内的告警数</li>
+  <li><strong>Total Alerts</strong> — 累计接入告警数</li>
+  <li><strong>Data Sources</strong> — 已配置的集成数量</li>
+</ul>
+
+<hr />
+
+<h2 id="第二步配置-elasticsearch-集成">第二步：配置 Elasticsearch 集成</h2>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Data Pipeline → Integrations</code></p>
+
+<p>集成管理页面列出所有可用的数据连接器。找到 <strong>Elastic Stack（ELK Connector）</strong>，点击 <strong>Setup Integration</strong>。</p>
+
+<p><img src="/assets/images/data-onboarding/integrations-page.png" alt="Integrations 页面 — Elastic Stack 可用" /></p>
+
+<h3 id="填写连接参数">填写连接参数</h3>
+
+<p>在 <strong>Configure Elasticsearch</strong> 对话框中填写以下字段：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>字段</th>
+      <th>填写内容</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Integration Name</td>
+      <td><code class="language-plaintext highlighter-rouge">Elastic Stack (ELK)</code></td>
+      <td>可自定义</td>
+    </tr>
+    <tr>
+      <td>Connection Protocol</td>
+      <td><code class="language-plaintext highlighter-rouge">HTTP</code> 或 <code class="language-plaintext highlighter-rouge">HTTPS</code></td>
+      <td>根据 ES 集群协议选择</td>
+    </tr>
+    <tr>
+      <td>Host</td>
+      <td><code class="language-plaintext highlighter-rouge">&lt;ES 主机 IP&gt;</code></td>
+      <td>不含协议前缀</td>
+    </tr>
+    <tr>
+      <td>Port</td>
+      <td><code class="language-plaintext highlighter-rouge">9200</code></td>
+      <td>ES 默认端口</td>
+    </tr>
+    <tr>
+      <td>Authentication Type</td>
+      <td><code class="language-plaintext highlighter-rouge">Basic Authentication</code></td>
+      <td>如需 API Key 认证，选对应选项</td>
+    </tr>
+    <tr>
+      <td>Username</td>
+      <td><code class="language-plaintext highlighter-rouge">&lt;ES 用户名&gt;</code></td>
+      <td>Basic Auth 凭证</td>
+    </tr>
+    <tr>
+      <td>Password</td>
+      <td><code class="language-plaintext highlighter-rouge">&lt;ES 密码&gt;</code></td>
+      <td>Basic Auth 凭证</td>
+    </tr>
+    <tr>
+      <td>Target Index / Index Pattern</td>
+      <td><code class="language-plaintext highlighter-rouge">alerts</code></td>
+      <td>需要接入的 ES 索引名称</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p><strong>提示：</strong> 填写主机和认证信息后，点击 <strong>Fetch Indices</strong> 可自动从 ES 集群拉取可用索引列表，然后从下拉菜单选择目标索引。</p>
+</blockquote>
+
+<blockquote>
+  <p><strong>安全提示：</strong> ES 用户名和密码为敏感凭证，请勿在截图、文档或聊天中明文记录。</p>
+</blockquote>
+
+<hr />
+
+<h2 id="第三步测试连接并保存">第三步：测试连接并保存</h2>
+
+<h3 id="测试连接">测试连接</h3>
+
+<p>点击 <strong>Test Connection</strong>。连接成功时，弹窗显示 <strong>“Connection OK”</strong> 和 <strong>“Connection succeeded”</strong>，并展示 ES 集群健康信息（状态 200、集群名称、节点数）。</p>
+
+<p><img src="/assets/images/data-onboarding/test-connection-ok.png" alt="测试连接成功" /></p>
+
+<p>若连接失败，请检查：</p>
+<ul>
+  <li>主机和端口是否正确</li>
+  <li>平台服务器到 ES 集群的网络连通性</li>
+  <li>认证凭证是否有效</li>
+  <li>ES 集群是否正常运行</li>
+</ul>
+
+<h3 id="保存配置">保存配置</h3>
+
+<p>点击 <strong>Save Configuration</strong>。Integrations 页面的 Elastic Stack 卡片状态将变为 <strong>Installed</strong>，并出现 <strong>Configure</strong> 和 <strong>Delete</strong> 按钮。</p>
+
+<p><img src="/assets/images/data-onboarding/integration-installed.png" alt="集成 — Installed 状态" /></p>
+
+<hr />
+
+<h2 id="第四步配置-orchestrator数据采集调度">第四步：配置 Orchestrator（数据采集调度）</h2>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Data Pipeline → Orchestrator</code></p>
+
+<p>Orchestrator 管理定时数据采集任务。点击 <strong>New Task</strong>。</p>
+
+<h3 id="任务参数">任务参数</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>字段</th>
+      <th>推荐填写内容</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Name</td>
+      <td><code class="language-plaintext highlighter-rouge">job</code></td>
+      <td>描述性任务名称</td>
+    </tr>
+    <tr>
+      <td>Cron</td>
+      <td><code class="language-plaintext highlighter-rouge">*/60 * * * *</code></td>
+      <td>每 60 分钟执行一次（可调整）</td>
+    </tr>
+    <tr>
+      <td>Source Integration (Elasticsearch)</td>
+      <td><code class="language-plaintext highlighter-rouge">Elastic Stack (ELK)</code></td>
+      <td>选择第二步配置好的集成</td>
+    </tr>
+    <tr>
+      <td>Index (Elasticsearch)</td>
+      <td><code class="language-plaintext highlighter-rouge">alerts</code></td>
+      <td>源 ES 索引</td>
+    </tr>
+    <tr>
+      <td>Timestamp field</td>
+      <td><code class="language-plaintext highlighter-rouge">date</code></td>
+      <td>ES 文档中用于增量采集的时间戳字段</td>
+    </tr>
+    <tr>
+      <td>Time range</td>
+      <td>（留空或按需选择）</td>
+      <td>限制采集时间范围</td>
+    </tr>
+    <tr>
+      <td>Destination Integration (Database)</td>
+      <td><code class="language-plaintext highlighter-rouge">Current DB (Django default)</code></td>
+      <td>写入内部数据库</td>
+    </tr>
+    <tr>
+      <td>Destination table</td>
+      <td><code class="language-plaintext highlighter-rouge">alerts_alert</code></td>
+      <td>自动填充</td>
+    </tr>
+    <tr>
+      <td>Limit</td>
+      <td><code class="language-plaintext highlighter-rouge">1000</code></td>
+      <td>每次运行最多采集条数</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><img src="/assets/images/data-onboarding/orchestrator-new-task.png" alt="新建 Orchestrator 任务" /></p>
+
+<p>点击 <strong>OK</strong> 保存任务。</p>
+
+<p><img src="/assets/images/data-onboarding/orchestrator-task-created.png" alt="Orchestrator — 任务创建成功" /></p>
+
+<h3 id="cron-表达式参考">Cron 表达式参考</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>表达式</th>
+      <th>调度说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">*/60 * * * *</code></td>
+      <td>每 60 分钟</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">*/5 * * * *</code></td>
+      <td>每 5 分钟</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">* * * * *</code></td>
+      <td>每分钟</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">0 * * * *</code></td>
+      <td>每小时整点</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>手动运行：</strong> 点击任务的 <strong>Run</strong> 按钮立即触发一次采集。点击 <strong>View Runs</strong> 查看历史执行记录和导入统计。</p>
+
+<hr />
+
+<h2 id="第五步配置关联策略correlation">第五步：配置关联策略（Correlation）</h2>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Data Pipeline → Correlation</code></p>
+
+<p>关联引擎根据时间窗口和排序字段，将相关告警归组为事件记录。</p>
+
+<h3 id="关联策略配置">关联策略配置</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>字段</th>
+      <th>推荐值</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Enabled</td>
+      <td><strong>开启</strong></td>
+      <td>必须启用才能从告警自动生成工单</td>
+    </tr>
+    <tr>
+      <td>Window (minutes)</td>
+      <td><code class="language-plaintext highlighter-rouge">30</code></td>
+      <td>30 分钟内的告警视为相关</td>
+    </tr>
+    <tr>
+      <td>Order By Fields</td>
+      <td><code class="language-plaintext highlighter-rouge">severity</code>（降序）、<code class="language-plaintext highlighter-rouge">timestamp</code>（升序）</td>
+      <td>确定关联窗口内的告警排序方式</td>
+    </tr>
+    <tr>
+      <td>Auto-create Tickets</td>
+      <td><strong>开启</strong></td>
+      <td>为每个关联告警组自动创建工单</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p><strong>重要：</strong> 启用自动创建工单后，每个匹配关联窗口的告警组都会生成一个新事件工单。建议先在测试环境验证策略配置后，再在生产环境启用。</p>
+</blockquote>
+
+<hr />
+
+<h2 id="第六步验证数据接入">第六步：验证数据接入</h2>
+
+<p>完成上述步骤后：</p>
+
+<ol>
+  <li><strong>手动触发 Orchestrator 任务</strong> — 进入 <code class="language-plaintext highlighter-rouge">Data Pipeline → Orchestrator</code>，点击任务的 <strong>Run</strong>。</li>
+  <li><strong>查看仪表盘</strong>（<code class="language-plaintext highlighter-rouge">Monitor → Overview</code>）— 告警计数应显示非零值。</li>
+  <li><strong>查看告警列表</strong>（<code class="language-plaintext highlighter-rouge">Monitor → Alerts</code>）— 已接入的告警应出现在列表中。</li>
+  <li><strong>查看工单</strong>（<code class="language-plaintext highlighter-rouge">Investigation → Tickets</code>）— 若已启用关联自动创建，应看到由关联告警组生成的工单。</li>
+</ol>
+
+<hr />
+
+<h2 id="常见问题排查">常见问题排查</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>问题</th>
+      <th>检查项</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>测试连接失败</td>
+      <td>主机/端口是否正确？网络是否可达？凭证是否有效？ES 集群是否运行？</td>
+    </tr>
+    <tr>
+      <td>Orchestrator 运行后无告警</td>
+      <td>目标索引名是否正确？时间戳字段是否存在于文档中？</td>
+    </tr>
+    <tr>
+      <td>告警重复出现</td>
+      <td>源文档的唯一 ID 字段在所有文档中是否一致</td>
+    </tr>
+    <tr>
+      <td>未自动生成工单</td>
+      <td>关联策略是否已启用？是否开启了自动创建工单？</td>
+    </tr>
+    <tr>
+      <td>Orchestrator 未按计划运行</td>
+      <td>Cron 表达式是否有效？是否有任务排队中未释放？</td>
+    </tr>
+  </tbody>
+</table>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">本页导航</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'data-onboarding';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

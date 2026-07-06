@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>仪表盘 | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="仪表盘" />
+<meta property="og:locale" content="zh" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/zh/dashboard/" />
+<meta property="og:url" content="http://localhost:4000/zh/dashboard/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="仪表盘" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"仪表盘","url":"http://localhost:4000/zh/dashboard/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/zh/overview/"
+               class="nav-link">项目总览</a><a href="/zh/installation/"
+               class="nav-link">安装部署</a><a href="/zh/dashboard/"
+               class="nav-link active">仪表盘</a><a href="/zh/ticket-handling/"
+               class="nav-link">工单处理</a><a href="/zh/alerts/"
+               class="nav-link">告警管理</a><a href="/zh/use-case-management/"
+               class="nav-link">用例管理</a><a href="/zh/data-onboarding/"
+               class="nav-link">数据接入</a><a href="/zh/docker-deployment/"
+               class="nav-link">Docker 部署</a><a href="/zh/ai-agent/"
+               class="nav-link">AI 智能体</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="仪表盘">仪表盘</h1>
+
+<p>仪表盘是登录后的默认落地页，以单一视图实时呈现安全运营环境的全貌：告警量、数据源健康状态、严重级别趋势及关联分析状态。</p>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Monitor → Overview</code></p>
+
+<p><img src="/assets/images/dashboard/dashboard-overview.png" alt="Dashboard Overview" /></p>
+
+<h2 id="统计卡片">统计卡片</h2>
+
+<p>仪表盘顶部展示以下汇总指标：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>卡片</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Alerts in 15 min</strong></td>
+      <td>最近 15 分钟内接入的告警数</td>
+    </tr>
+    <tr>
+      <td><strong>Alerts in 1 h</strong></td>
+      <td>最近 1 小时内接入的告警数</td>
+    </tr>
+    <tr>
+      <td><strong>Alerts in 24 h</strong></td>
+      <td>最近 24 小时内接入的告警数</td>
+    </tr>
+    <tr>
+      <td><strong>Alerts in 7 days</strong></td>
+      <td>最近 7 天内接入的告警数</td>
+    </tr>
+    <tr>
+      <td><strong>Total Alerts</strong></td>
+      <td>自系统初始化以来的累计告警数</td>
+    </tr>
+    <tr>
+      <td><strong>Data Sources</strong></td>
+      <td>已配置并激活的数据源集成数量</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>若登录后所有数值均为零，说明尚未接入任何数据源。请前往<a href="/zh/data-onboarding/">数据接入</a>配置首个集成。</p>
+</blockquote>
+
+<h2 id="告警趋势图">告警趋势图</h2>
+
+<p>统计卡片下方的时间序列图展示可配置时间窗口内的告警接入量变化，可用于：</p>
+
+<ul>
+  <li>识别与安全事件关联的接入峰值</li>
+  <li>确认 Orchestrator 定时任务是否按计划执行</li>
+  <li>检测数据源故障（正常情况下持续接入告警时出现平线）</li>
+</ul>
+
+<h2 id="严重级别分布">严重级别分布</h2>
+
+<p>分布图展示按严重级别分类的告警比例：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>严重级别</th>
+      <th>典型颜色</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Critical（严重）</td>
+      <td>红色</td>
+    </tr>
+    <tr>
+      <td>High（高危）</td>
+      <td>橙色</td>
+    </tr>
+    <tr>
+      <td>Medium（中危）</td>
+      <td>黄色</td>
+    </tr>
+    <tr>
+      <td>Low（低危）</td>
+      <td>蓝色 / 灰色</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>持续监控严重级别分布变化，有助于发现检测漂移——例如，Critical 告警突然增多可能意味着新的活跃威胁，或检测规则误报增加。</p>
+
+<h2 id="导航结构">导航结构</h2>
+
+<p>左侧边栏按功能域组织平台模块：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>功能域</th>
+      <th>包含模块</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Monitor</strong></td>
+      <td>Overview（仪表盘）、Alerts（告警）</td>
+    </tr>
+    <tr>
+      <td><strong>Investigation</strong></td>
+      <td>Tickets（工单）</td>
+    </tr>
+    <tr>
+      <td><strong>Data Pipeline</strong></td>
+      <td>Integrations、Orchestrator、Correlation、Detection</td>
+    </tr>
+    <tr>
+      <td><strong>Settings</strong></td>
+      <td>Workflows、Administration</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="初始状态">初始状态</h2>
+
+<p>全新安装且未配置数据源时：</p>
+<ul>
+  <li>所有告警计数均显示 <code class="language-plaintext highlighter-rouge">0</code></li>
+  <li>趋势图为空</li>
+  <li>Data Sources 显示 <code class="language-plaintext highlighter-rouge">0</code></li>
+</ul>
+
+<p><strong>建议首要操作步骤：</strong></p>
+
+<ol>
+  <li>前往<a href="/zh/data-onboarding/">数据接入</a> → 配置 Elasticsearch 集成</li>
+  <li>创建 Orchestrator 任务以开始采集告警数据</li>
+  <li>配置 Correlation 关联策略以自动从告警生成工单</li>
+  <li>返回仪表盘确认数据流转正常</li>
+</ol>
+
+<h2 id="数据刷新">数据刷新</h2>
+
+<p>仪表盘会定期自动刷新。如需手动强制刷新，重新加载页面即可。告警统计反映的是已写入内部数据库的数据——新接入的告警将在下一次 Orchestrator 任务完成后显示。</p>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">本页导航</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'dashboard';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

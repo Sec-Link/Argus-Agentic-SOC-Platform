@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>AI Agent | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="AI Agent" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/en/ai-agent/" />
+<meta property="og:url" content="http://localhost:4000/en/ai-agent/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="AI Agent" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"AI Agent","url":"http://localhost:4000/en/ai-agent/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/en/overview/"
+               class="nav-link">Overview</a><a href="/en/installation/"
+               class="nav-link">Installation</a><a href="/en/dashboard/"
+               class="nav-link">Dashboard</a><a href="/en/ticket-handling/"
+               class="nav-link">Ticket Handling</a><a href="/en/alerts/"
+               class="nav-link">Alerts</a><a href="/en/use-case-management/"
+               class="nav-link">Use Case Management</a><a href="/en/data-onboarding/"
+               class="nav-link">Data Onboarding</a><a href="/en/docker-deployment/"
+               class="nav-link">Docker Deployment</a><a href="/en/ai-agent/"
+               class="nav-link active">AI Agent</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="ai-agent">AI Agent</h1>
+
+<p>The AI Agent is an integrated intelligence layer that assists SOC analysts during incident investigation. It can explain alerts, assess risk, extract IOCs, suggest remediation steps, and invoke external security tools via the Model Context Protocol (MCP).</p>
+
+<blockquote>
+  <p><strong>Security note:</strong> Never share API keys, passwords, tokens, or other sensitive credentials in screenshots, documents, or chat messages.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="configuration">Configuration</h2>
+
+<h3 id="navigation">Navigation</h3>
+
+<p><code class="language-plaintext highlighter-rouge">Administration → AI Assistant</code></p>
+
+<p>General settings are stored in the browser’s local storage. MCP tools and Skills configurations are stored on the server.</p>
+
+<h3 id="general-settings">General Settings</h3>
+
+<p><img src="/assets/images/ai-agent/general-configured-n.png" alt="AI Assistant General Settings" /></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Setting</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Enable AI Assistant</strong></td>
+      <td>Master toggle — must be on for AI features to appear in ticket detail views</td>
+    </tr>
+    <tr>
+      <td><strong>OpenAI API Key</strong></td>
+      <td>An OpenAI-compatible API key provided by your administrator</td>
+    </tr>
+    <tr>
+      <td><strong>Model</strong></td>
+      <td>Model identifier (e.g., <code class="language-plaintext highlighter-rouge">gpt-5.4</code>)</td>
+    </tr>
+    <tr>
+      <td><strong>Base URL</strong></td>
+      <td>API endpoint URL (e.g., <code class="language-plaintext highlighter-rouge">https://api.openai.com/v1</code>)</td>
+    </tr>
+    <tr>
+      <td><strong>Timeout</strong></td>
+      <td>Request timeout in seconds (default: 45) — increase for slower models</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>After filling in all fields:</p>
+<ol>
+  <li>Click <strong>Test Connectivity</strong> to verify the model endpoint is reachable and the key is valid.</li>
+  <li>Click <strong>Save General</strong> to persist the settings in the browser.</li>
+</ol>
+
+<p>If the connectivity test fails, check: Base URL, API key, model name, and network access from your browser to the endpoint.</p>
+
+<hr />
+
+<h2 id="mcp-management">MCP Management</h2>
+
+<p>MCP (Model Context Protocol) tools extend the AI Agent’s capabilities by allowing it to call external services and retrieve structured context during analysis.</p>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Administration → AI Assistant → MCP Management</code></p>
+
+<p><img src="/assets/images/ai-agent/mcp-management-n.png" alt="MCP Management" /></p>
+
+<h3 id="built-in-mcp-tools">Built-in MCP Tools</h3>
+
+<p>The platform ships with the following built-in tools:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Tool</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ticket_context</code></td>
+      <td>Retrieves full context of the current ticket (alerts, labels, work logs)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ticket_search_similar_cases</code></td>
+      <td>Searches for historically similar tickets by title and observables</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">cmdb_asset_lookup</code></td>
+      <td>Looks up asset metadata from the CMDB by IP, hostname, or user</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">observables_extract</code></td>
+      <td>Extracts and normalizes indicators (IPs, domains, hashes) from raw text</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="adding-an-mcp-server">Adding an MCP Server</h3>
+
+<p><img src="/assets/images/ai-agent/add-mcp-modal-n.png" alt="Add MCP Modal" /></p>
+
+<ol>
+  <li>Click <strong>Add MCP</strong> in the MCP Management section.</li>
+  <li>Fill in the server details:
+    <ul>
+      <li><strong>Name</strong> — display name for the MCP server</li>
+      <li><strong>URL</strong> — MCP server endpoint</li>
+      <li><strong>Description</strong> — what tools this server provides</li>
+    </ul>
+  </li>
+  <li>Click <strong>Save</strong>.</li>
+</ol>
+
+<hr />
+
+<h2 id="mcp-status-monitor">MCP Status Monitor</h2>
+
+<p>The MCP Status Monitor tracks the operational health of all MCP tool invocations.</p>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Administration → AI Assistant → MCP Status Monitor</code></p>
+
+<p><img src="/assets/images/ai-agent/mcp-status-monitor-n.png" alt="MCP Status Monitor" /></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Metric</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Total Calls</strong></td>
+      <td>Cumulative MCP tool invocation count</td>
+    </tr>
+    <tr>
+      <td><strong>Success Rate</strong></td>
+      <td>Percentage of successful calls</td>
+    </tr>
+    <tr>
+      <td><strong>Last Called</strong></td>
+      <td>Timestamp of the most recent invocation</td>
+    </tr>
+    <tr>
+      <td><strong>Recent Executions</strong></td>
+      <td>Detailed log of the most recent calls with status and error messages</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Use this view to diagnose whether the AI Agent is successfully invoking context tools during analysis.</p>
+
+<hr />
+
+<h2 id="skills-management">Skills Management</h2>
+
+<p>Skills are executable procedures that the AI Agent can invoke to perform structured tasks (e.g., enrichment lookups, automated reports, response actions).</p>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Administration → AI Assistant → Skills Management</code></p>
+
+<p><img src="/assets/images/ai-agent/skills-management-n.png" alt="Skills Management" /></p>
+
+<h3 id="adding-a-skill">Adding a Skill</h3>
+
+<p><img src="/assets/images/ai-agent/add-skill-modal-n.png" alt="Add Skill Modal" /></p>
+
+<ol>
+  <li>Click <strong>Add Skill</strong>.</li>
+  <li>Fill in the required fields:
+    <ul>
+      <li><strong>Name</strong> — skill identifier</li>
+      <li><strong>Version</strong> — semantic version string</li>
+      <li><strong>Route</strong> — API route the skill exposes</li>
+      <li><strong>Description</strong> — what the skill does (used by the AI to decide when to invoke it)</li>
+      <li><strong>Content (SKILL.md)</strong> — full skill definition in Markdown format</li>
+    </ul>
+  </li>
+  <li>Toggle <strong>Enabled</strong> to activate the skill.</li>
+  <li>Click <strong>Save</strong>.</li>
+</ol>
+
+<hr />
+
+<h2 id="skill-monitor">Skill Monitor</h2>
+
+<p>The Skill Monitor displays execution statistics for all registered skills.</p>
+
+<p><img src="/assets/images/ai-agent/skill-monitor-n.png" alt="Skill Monitor" /></p>
+
+<p>If a skill shows 0 invocations, it means no AI Agent session has yet triggered that skill. This is expected immediately after adding a new skill — invocations will appear once the AI determines the skill is applicable to an active investigation.</p>
+
+<hr />
+
+<h2 id="using-the-ai-agent-in-tickets">Using the AI Agent in Tickets</h2>
+
+<p>The AI Agent is accessed from within the ticket detail view.</p>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Investigation → Tickets → [any ticket] → Incident tab</code></p>
+
+<p><img src="/assets/images/ai-agent/ticket-detail-n.png" alt="Ticket Detail — AI Assistant Panel" /></p>
+
+<h3 id="one-click-analysis">One-Click Analysis</h3>
+
+<p>Click <strong>Run AI Assistant</strong> (or the lightning bolt icon) to trigger automated analysis. The AI reads the ticket’s alert data, linked observables, and history, then generates:</p>
+
+<ul>
+  <li><strong>Alert Explanation</strong> — plain-language summary of what the alert means</li>
+  <li><strong>Risk Level Recommendation</strong> — suggested severity with rationale</li>
+  <li><strong>Completed Tasks</strong> — actions the AI has already performed</li>
+  <li><strong>Next Tasks</strong> — recommended follow-up for the analyst</li>
+</ul>
+
+<h3 id="ai-chat">AI Chat</h3>
+
+<p><img src="/assets/images/ai-agent/ai-chat-panel-n.png" alt="AI Chat Panel" /></p>
+
+<p>Click <strong>Chat</strong> to open an interactive conversation scoped to the current ticket:</p>
+
+<ol>
+  <li>The chat context automatically includes ticket metadata and linked alerts.</li>
+  <li>Type questions or instructions in the input field.</li>
+  <li>The AI responds with analysis, recommendations, or structured output.</li>
+  <li>Chat history persists per ticket.</li>
+</ol>
+
+<p><strong>Example chat prompts:</strong></p>
+<ul>
+  <li>“Extract all IOCs from this alert and format them as a list.”</li>
+  <li>“Explain the attack chain implied by these alerts.”</li>
+  <li>“What containment steps should I take first?”</li>
+  <li>“Is this likely a true positive or false positive? Why?”</li>
+</ul>
+
+<h3 id="ai-mention">@ai Mention</h3>
+
+<p>In the Work Log comment box, type <code class="language-plaintext highlighter-rouge">@ai &lt;your question&gt;</code> to post an inline AI response directly to the work log thread.</p>
+
+<h3 id="playbook-mention">@playbook Mention</h3>
+
+<p>Type <code class="language-plaintext highlighter-rouge">@playbook &lt;name&gt;</code> to invoke a callable workflow with the current ticket as context. The system executes the selected playbook and posts the result to the work log.</p>
+
+<hr />
+
+<h2 id="recommended-workflow">Recommended Workflow</h2>
+
+<ol>
+  <li>Open a ticket from the Tickets list.</li>
+  <li>Manually review <strong>Case Details</strong>, <strong>Timeline</strong>, <strong>Alerts</strong>, <strong>Raw Message</strong>, and <strong>Evidence</strong> first.</li>
+  <li>Click <strong>Run AI Assistant</strong> for an initial automated assessment.</li>
+  <li>Use <strong>Chat</strong> to ask follow-up questions: extract IOCs, clarify alert logic, request response steps.</li>
+  <li>Critically review all AI output before acting on it.</li>
+  <li>Record only confirmed findings in comments, tasks, or resolution notes.</li>
+</ol>
+
+<hr />
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Issue</th>
+      <th>Check</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AI not responding</td>
+      <td>Enable AI Assistant toggle; verify API Key, Model, Base URL, Timeout; run Test Connectivity</td>
+    </tr>
+    <tr>
+      <td>MCP tools not invoking</td>
+      <td>Check MCP Status Monitor for failures; confirm the ticket scenario triggers tool usage</td>
+    </tr>
+    <tr>
+      <td>Skill invocation count stays at 0</td>
+      <td>Skills invoke only when the AI determines they’re relevant — try prompting the AI to use specific skills</td>
+    </tr>
+    <tr>
+      <td>Chat gives inaccurate responses</td>
+      <td>The AI uses only the current ticket context; add more evidence to the War Room for richer analysis</td>
+    </tr>
+  </tbody>
+</table>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">On this page</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'ai-agent';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

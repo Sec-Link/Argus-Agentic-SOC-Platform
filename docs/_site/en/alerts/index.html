@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Alerts | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Alerts" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/en/alerts/" />
+<meta property="og:url" content="http://localhost:4000/en/alerts/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Alerts" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"Alerts","url":"http://localhost:4000/en/alerts/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/en/overview/"
+               class="nav-link">Overview</a><a href="/en/installation/"
+               class="nav-link">Installation</a><a href="/en/dashboard/"
+               class="nav-link">Dashboard</a><a href="/en/ticket-handling/"
+               class="nav-link">Ticket Handling</a><a href="/en/alerts/"
+               class="nav-link active">Alerts</a><a href="/en/use-case-management/"
+               class="nav-link">Use Case Management</a><a href="/en/data-onboarding/"
+               class="nav-link">Data Onboarding</a><a href="/en/docker-deployment/"
+               class="nav-link">Docker Deployment</a><a href="/en/ai-agent/"
+               class="nav-link">AI Agent</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="alerts">Alerts</h1>
+
+<p>The Alerts module is the central repository for all security events ingested into the platform. It provides a filterable, searchable view of every alert that has been collected from connected data sources, with detail views, correlation linkage, and triage capabilities.</p>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Monitor → Alerts</code></p>
+
+<h2 id="alert-list-view">Alert List View</h2>
+
+<p>The alert list displays all ingested security events in reverse-chronological order. It updates dynamically as the Orchestrator pulls new data from connected sources.</p>
+
+<h3 id="filtering-and-search">Filtering and Search</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Filter</th>
+      <th>Options</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Time Range</strong></td>
+      <td>Quick presets (15m, 1h, 24h, 7d, 30d) or custom date range</td>
+    </tr>
+    <tr>
+      <td><strong>Severity</strong></td>
+      <td>Critical / High / Medium / Low</td>
+    </tr>
+    <tr>
+      <td><strong>Status</strong></td>
+      <td>New / Acknowledged / In Progress / Closed</td>
+    </tr>
+    <tr>
+      <td><strong>Source</strong></td>
+      <td>Filter by data source integration name</td>
+    </tr>
+    <tr>
+      <td><strong>Free-text Search</strong></td>
+      <td>Search across alert title, description, and raw message content</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="table-columns">Table Columns</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Column</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Alert ID</strong></td>
+      <td>System-generated unique identifier</td>
+    </tr>
+    <tr>
+      <td><strong>Title</strong></td>
+      <td>Alert name / event type from the source system</td>
+    </tr>
+    <tr>
+      <td><strong>Severity</strong></td>
+      <td>Critical / High / Medium / Low (color-coded)</td>
+    </tr>
+    <tr>
+      <td><strong>Source</strong></td>
+      <td>Data source that generated the alert (e.g., Elastic Stack ELK)</td>
+    </tr>
+    <tr>
+      <td><strong>Timestamp</strong></td>
+      <td>Event occurrence time from the source</td>
+    </tr>
+    <tr>
+      <td><strong>Ingested At</strong></td>
+      <td>Time the alert was written to the internal database</td>
+    </tr>
+    <tr>
+      <td><strong>Status</strong></td>
+      <td>Current triage status</td>
+    </tr>
+    <tr>
+      <td><strong>Ticket</strong></td>
+      <td>Linked ticket number (if this alert generated or was added to a ticket)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="alert-detail-view">Alert Detail View</h2>
+
+<p>Click any alert row to open the detail view.</p>
+
+<h3 id="detail-sections">Detail Sections</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Section</th>
+      <th>Contents</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Summary</strong></td>
+      <td>Alert title, severity, source, timestamps</td>
+    </tr>
+    <tr>
+      <td><strong>Raw Message</strong></td>
+      <td>Full original alert payload with JSON syntax highlighting</td>
+    </tr>
+    <tr>
+      <td><strong>Linked Ticket</strong></td>
+      <td>Link to the associated incident ticket (if any)</td>
+    </tr>
+    <tr>
+      <td><strong>MITRE ATT&amp;CK</strong></td>
+      <td>Mapped tactic and technique (if the detection rule carries ATT&amp;CK annotations)</td>
+    </tr>
+    <tr>
+      <td><strong>Observables</strong></td>
+      <td>Extracted indicators: IPs, domains, file hashes, usernames</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="alert-lifecycle">Alert Lifecycle</h2>
+
+<p>Alerts follow a simple status progression:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>New → Acknowledged → In Progress → Closed
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>New</strong></td>
+      <td>Alert received, not yet reviewed</td>
+    </tr>
+    <tr>
+      <td><strong>Acknowledged</strong></td>
+      <td>Analyst has seen the alert</td>
+    </tr>
+    <tr>
+      <td><strong>In Progress</strong></td>
+      <td>Under active investigation</td>
+    </tr>
+    <tr>
+      <td><strong>Closed</strong></td>
+      <td>Investigation complete; ticket resolved or alert dismissed</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="from-alert-to-ticket">From Alert to Ticket</h2>
+
+<p>Alerts can generate tickets in two ways:</p>
+
+<p><strong>Automatic (Correlation engine):</strong>
+The Correlation policy evaluates each incoming alert against configured rules. When conditions match (time window, field values), the engine automatically creates a ticket and links the triggering alert. See <a href="/en/data-onboarding/">Data Onboarding</a> → Correlation for configuration details.</p>
+
+<p><strong>Manual (from alert detail):</strong>
+In the alert detail view, click <strong>Create Ticket</strong> to manually open a new incident ticket pre-populated with alert metadata.</p>
+
+<h2 id="mitre-attck-mapping">MITRE ATT&amp;CK Mapping</h2>
+
+<p>When an alert is generated by a Sigma rule that carries ATT&amp;CK annotations, the platform displays the corresponding tactic and technique on the alert detail page. This allows analysts to quickly understand the kill-chain stage of an event and prioritize investigation accordingly.</p>
+
+<h2 id="alert-deduplication">Alert Deduplication</h2>
+
+<p>When the Orchestrator runs, it uses the alert’s unique identifier from the source system (combined with the timestamp field) to prevent duplicate ingestion. Alerts that have already been imported are skipped on subsequent runs.</p>
+
+<h2 id="bulk-actions">Bulk Actions</h2>
+
+<p>Select multiple alerts using checkboxes to:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Action</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Acknowledge</strong></td>
+      <td>Mark selected alerts as acknowledged</td>
+    </tr>
+    <tr>
+      <td><strong>Assign</strong></td>
+      <td>Assign to an analyst</td>
+    </tr>
+    <tr>
+      <td><strong>Create Ticket</strong></td>
+      <td>Open a new ticket linked to all selected alerts</td>
+    </tr>
+    <tr>
+      <td><strong>Close</strong></td>
+      <td>Mark selected alerts as closed</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Issue</th>
+      <th>Check</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>No alerts appear after setup</td>
+      <td>Verify Orchestrator task ran successfully; check Run History for errors</td>
+    </tr>
+    <tr>
+      <td>Alerts missing from expected time range</td>
+      <td>Confirm the <code class="language-plaintext highlighter-rouge">Timestamp field</code> in the Orchestrator task matches your ES document schema</td>
+    </tr>
+    <tr>
+      <td>Duplicate alerts appearing</td>
+      <td>Ensure the source document’s unique ID field is consistently populated</td>
+    </tr>
+    <tr>
+      <td>Alerts not generating tickets</td>
+      <td>Check Correlation policy is enabled and conditions match incoming alert fields</td>
+    </tr>
+  </tbody>
+</table>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">On this page</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'alerts';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

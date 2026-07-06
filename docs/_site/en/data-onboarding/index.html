@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Data Onboarding | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Data Onboarding" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/en/data-onboarding/" />
+<meta property="og:url" content="http://localhost:4000/en/data-onboarding/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Data Onboarding" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"Data Onboarding","url":"http://localhost:4000/en/data-onboarding/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/en/overview/"
+               class="nav-link">Overview</a><a href="/en/installation/"
+               class="nav-link">Installation</a><a href="/en/dashboard/"
+               class="nav-link">Dashboard</a><a href="/en/ticket-handling/"
+               class="nav-link">Ticket Handling</a><a href="/en/alerts/"
+               class="nav-link">Alerts</a><a href="/en/use-case-management/"
+               class="nav-link">Use Case Management</a><a href="/en/data-onboarding/"
+               class="nav-link active">Data Onboarding</a><a href="/en/docker-deployment/"
+               class="nav-link">Docker Deployment</a><a href="/en/ai-agent/"
+               class="nav-link">AI Agent</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="data-onboarding">Data Onboarding</h1>
+
+<p>Data Onboarding covers the end-to-end pipeline for connecting an external data source, scheduling alert collection, and configuring correlation to convert raw alerts into incident tickets automatically.</p>
+
+<h2 id="data-flow-architecture">Data Flow Architecture</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Elasticsearch (external)
+        │
+        ▼  [Data Pipeline → Integrations]
+   ELK Connector (credentials + index mapping)
+        │
+        ▼  [Data Pipeline → Orchestrator]
+   Scheduled collection task (Cron Job)
+   es_to_db: writes ES data into the internal database
+        │
+        ▼  [Data Pipeline → Correlation]
+   Correlation engine (time window + ordering)
+        │
+        ▼  [Monitor]
+   Overview dashboard + Alerts list
+</code></pre></div></div>
+
+<p><strong>How it works:</strong></p>
+<ul>
+  <li>The <strong>Orchestrator</strong> periodically pulls alerts from the configured ES index (default every 60 minutes) and writes them to the internal <code class="language-plaintext highlighter-rouge">alerts_alert</code> table.</li>
+  <li>The <strong>Correlation</strong> engine groups alerts within a time window and applies ordering rules to generate correlated activity records and tickets.</li>
+  <li>The <strong>Monitor</strong> module reads from the internal database to display real-time dashboard statistics and the Alerts list.</li>
+</ul>
+
+<hr />
+
+<h2 id="step-1-login">Step 1: Login</h2>
+
+<p>Open your browser and navigate to <code class="language-plaintext highlighter-rouge">https://siem.seclink.info</code>. Enter your administrator credentials and log in.</p>
+
+<p>After login, the system defaults to the <strong>Dashboard Overview</strong> page. If no data source is configured, all statistics show zero.</p>
+
+<p><img src="/assets/images/data-onboarding/dashboard-overview.png" alt="Dashboard Overview — initial state" /></p>
+
+<p><strong>Dashboard statistics explained:</strong></p>
+<ul>
+  <li><strong>Alerts in…</strong> — recent alert counts by time window</li>
+  <li><strong>Total Alerts</strong> — cumulative ingested alert count</li>
+  <li><strong>Data Sources</strong> — number of configured integrations</li>
+</ul>
+
+<hr />
+
+<h2 id="step-2-configure-the-elasticsearch-integration">Step 2: Configure the Elasticsearch Integration</h2>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Data Pipeline → Integrations</code></p>
+
+<p>The Integrations page lists all available data connectors. Locate <strong>Elastic Stack (ELK Connector)</strong> and click <strong>Setup Integration</strong>.</p>
+
+<p><img src="/assets/images/data-onboarding/integrations-page.png" alt="Integrations page — Elastic Stack available" /></p>
+
+<h3 id="fill-in-connection-parameters">Fill in Connection Parameters</h3>
+
+<p>In the <strong>Configure Elasticsearch</strong> dialog, complete the following fields:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Value</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Integration Name</td>
+      <td><code class="language-plaintext highlighter-rouge">Elastic Stack (ELK)</code></td>
+      <td>Customizable</td>
+    </tr>
+    <tr>
+      <td>Connection Protocol</td>
+      <td><code class="language-plaintext highlighter-rouge">HTTP</code> or <code class="language-plaintext highlighter-rouge">HTTPS</code></td>
+      <td>Match your ES cluster protocol</td>
+    </tr>
+    <tr>
+      <td>Host</td>
+      <td><code class="language-plaintext highlighter-rouge">&lt;ES host IP&gt;</code></td>
+      <td>Without protocol prefix</td>
+    </tr>
+    <tr>
+      <td>Port</td>
+      <td><code class="language-plaintext highlighter-rouge">9200</code></td>
+      <td>Default ES port</td>
+    </tr>
+    <tr>
+      <td>Authentication Type</td>
+      <td><code class="language-plaintext highlighter-rouge">Basic Authentication</code></td>
+      <td>Or select API Key if applicable</td>
+    </tr>
+    <tr>
+      <td>Username</td>
+      <td><code class="language-plaintext highlighter-rouge">&lt;ES username&gt;</code></td>
+      <td>Basic Auth credentials</td>
+    </tr>
+    <tr>
+      <td>Password</td>
+      <td><code class="language-plaintext highlighter-rouge">&lt;ES password&gt;</code></td>
+      <td>Basic Auth credentials</td>
+    </tr>
+    <tr>
+      <td>Target Index / Index Pattern</td>
+      <td><code class="language-plaintext highlighter-rouge">alerts</code></td>
+      <td>The ES index to ingest from</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p><strong>Tip:</strong> After entering Host and authentication details, click <strong>Fetch Indices</strong> to auto-populate the index dropdown from your live ES cluster.</p>
+</blockquote>
+
+<blockquote>
+  <p><strong>Security:</strong> The ES username and password are sensitive credentials. Do not record them in screenshots, documents, or chat messages.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="step-3-test-connection-and-save">Step 3: Test Connection and Save</h2>
+
+<h3 id="test-the-connection">Test the Connection</h3>
+
+<p>Click <strong>Test Connection</strong>. On success, the dialog shows <strong>“Connection OK”</strong> and <strong>“Connection succeeded”</strong> with ES cluster health information (status 200, cluster name, node count).</p>
+
+<p><img src="/assets/images/data-onboarding/test-connection-ok.png" alt="Test Connection — success" /></p>
+
+<p>If the test fails, check:</p>
+<ul>
+  <li>Host and Port are correct</li>
+  <li>Network connectivity from the platform server to the ES cluster</li>
+  <li>Credentials are valid</li>
+  <li>The ES cluster is running and healthy</li>
+</ul>
+
+<h3 id="save-the-configuration">Save the Configuration</h3>
+
+<p>Click <strong>Save Configuration</strong>. The Integrations page will show the Elastic Stack card as <strong>Installed</strong>, with <strong>Configure</strong> and <strong>Delete</strong> buttons.</p>
+
+<p><img src="/assets/images/data-onboarding/integration-installed.png" alt="Integration — Installed status" /></p>
+
+<hr />
+
+<h2 id="step-4-configure-the-orchestrator-data-collection-schedule">Step 4: Configure the Orchestrator (Data Collection Schedule)</h2>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Data Pipeline → Orchestrator</code></p>
+
+<p>The Orchestrator manages scheduled data collection tasks. Click <strong>New Task</strong>.</p>
+
+<h3 id="new-task-parameters">New Task Parameters</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Value</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Name</td>
+      <td><code class="language-plaintext highlighter-rouge">job</code></td>
+      <td>Descriptive task name</td>
+    </tr>
+    <tr>
+      <td>Cron</td>
+      <td><code class="language-plaintext highlighter-rouge">*/60 * * * *</code></td>
+      <td>Every 60 minutes (adjust as needed)</td>
+    </tr>
+    <tr>
+      <td>Source Integration (Elasticsearch)</td>
+      <td><code class="language-plaintext highlighter-rouge">Elastic Stack (ELK)</code></td>
+      <td>Select the integration from Step 2</td>
+    </tr>
+    <tr>
+      <td>Index (Elasticsearch)</td>
+      <td><code class="language-plaintext highlighter-rouge">alerts</code></td>
+      <td>Source ES index</td>
+    </tr>
+    <tr>
+      <td>Timestamp field</td>
+      <td><code class="language-plaintext highlighter-rouge">date</code></td>
+      <td>ES document field used for incremental collection</td>
+    </tr>
+    <tr>
+      <td>Time range</td>
+      <td><em>(leave blank or set as needed)</em></td>
+      <td>Restricts collection to a time window</td>
+    </tr>
+    <tr>
+      <td>Destination Integration (Database)</td>
+      <td><code class="language-plaintext highlighter-rouge">Current DB (Django default)</code></td>
+      <td>Write to internal database</td>
+    </tr>
+    <tr>
+      <td>Destination table</td>
+      <td><code class="language-plaintext highlighter-rouge">alerts_alert</code></td>
+      <td>Auto-populated</td>
+    </tr>
+    <tr>
+      <td>Limit</td>
+      <td><code class="language-plaintext highlighter-rouge">1000</code></td>
+      <td>Max alerts per run</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><img src="/assets/images/data-onboarding/orchestrator-new-task.png" alt="New Orchestrator Task" /></p>
+
+<p>Click <strong>OK</strong> to save the task.</p>
+
+<p><img src="/assets/images/data-onboarding/orchestrator-task-created.png" alt="Orchestrator — Task Created" /></p>
+
+<h3 id="cron-expression-reference">Cron Expression Reference</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Expression</th>
+      <th>Schedule</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">*/60 * * * *</code></td>
+      <td>Every 60 minutes</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">*/5 * * * *</code></td>
+      <td>Every 5 minutes</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">* * * * *</code></td>
+      <td>Every minute</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">0 * * * *</code></td>
+      <td>Every hour on the hour</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Manual run:</strong> Click <strong>Run</strong> on the task to trigger an immediate collection run. Click <strong>View Runs</strong> to check run history and import statistics.</p>
+
+<hr />
+
+<h2 id="step-5-configure-correlation-policy">Step 5: Configure Correlation Policy</h2>
+
+<p><strong>Navigation:</strong> <code class="language-plaintext highlighter-rouge">Data Pipeline → Correlation</code></p>
+
+<p>The Correlation engine groups related alerts into incident records based on a time window and ordering fields.</p>
+
+<h3 id="correlation-policy-settings">Correlation Policy Settings</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Recommended Value</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Enabled</td>
+      <td><strong>On</strong></td>
+      <td>Must be enabled to generate tickets from alerts</td>
+    </tr>
+    <tr>
+      <td>Window (minutes)</td>
+      <td><code class="language-plaintext highlighter-rouge">30</code></td>
+      <td>Alerts within a 30-minute window are considered related</td>
+    </tr>
+    <tr>
+      <td>Order By Fields</td>
+      <td><code class="language-plaintext highlighter-rouge">severity</code> (desc), <code class="language-plaintext highlighter-rouge">timestamp</code> (asc)</td>
+      <td>Determines alert ordering within the correlation window</td>
+    </tr>
+    <tr>
+      <td>Auto-create Tickets</td>
+      <td><strong>On</strong></td>
+      <td>Automatically opens a ticket for each correlated group</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p><strong>Important:</strong> Enabling auto-create tickets will generate a new incident ticket for each alert group that matches the correlation window. Confirm the policy settings in a test environment before activating in production.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="step-6-verify-data-ingestion">Step 6: Verify Data Ingestion</h2>
+
+<p>After completing the above steps:</p>
+
+<ol>
+  <li><strong>Trigger a manual Orchestrator run</strong> — go to <code class="language-plaintext highlighter-rouge">Data Pipeline → Orchestrator</code>, click <strong>Run</strong> on your task.</li>
+  <li><strong>Check the Dashboard</strong> (<code class="language-plaintext highlighter-rouge">Monitor → Overview</code>) — the alert counters should now show non-zero values.</li>
+  <li><strong>Check the Alerts list</strong> (<code class="language-plaintext highlighter-rouge">Monitor → Alerts</code>) — ingested alerts should appear.</li>
+  <li><strong>Check Tickets</strong> (<code class="language-plaintext highlighter-rouge">Investigation → Tickets</code>) — if Correlation auto-create is enabled, tickets should be generated from correlated alert groups.</li>
+</ol>
+
+<hr />
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Issue</th>
+      <th>Check</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Test Connection fails</td>
+      <td>Host/Port correct? Network accessible? Credentials valid? ES cluster running?</td>
+    </tr>
+    <tr>
+      <td>No alerts after Orchestrator run</td>
+      <td>Is the target index name correct? Does the timestamp field exist in documents?</td>
+    </tr>
+    <tr>
+      <td>Duplicate alerts appearing</td>
+      <td>Source document unique ID field is consistent across documents</td>
+    </tr>
+    <tr>
+      <td>Tickets not created</td>
+      <td>Is Correlation policy enabled? Is Auto-create Tickets turned on?</td>
+    </tr>
+    <tr>
+      <td>Orchestrator task not running on schedule</td>
+      <td>Check that the cron expression is valid; verify no overlapping runs are queued</td>
+    </tr>
+  </tbody>
+</table>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">On this page</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'data-onboarding';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>
