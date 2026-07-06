@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Docker Deployment | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Docker Deployment" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/en/docker-deployment/" />
+<meta property="og:url" content="http://localhost:4000/en/docker-deployment/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Docker Deployment" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"Docker Deployment","url":"http://localhost:4000/en/docker-deployment/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/en/overview/"
+               class="nav-link">Overview</a><a href="/en/installation/"
+               class="nav-link">Installation</a><a href="/en/dashboard/"
+               class="nav-link">Dashboard</a><a href="/en/ticket-handling/"
+               class="nav-link">Ticket Handling</a><a href="/en/alerts/"
+               class="nav-link">Alerts</a><a href="/en/use-case-management/"
+               class="nav-link">Use Case Management</a><a href="/en/data-onboarding/"
+               class="nav-link">Data Onboarding</a><a href="/en/docker-deployment/"
+               class="nav-link active">Docker Deployment</a><a href="/en/ai-agent/"
+               class="nav-link">AI Agent</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="docker-deployment">Docker Deployment</h1>
+
+<p>This guide covers production-grade deployment of the Argus Agentic SOC Platform using Docker Compose, including service architecture, production hardening, operational management, and troubleshooting.</p>
+
+<blockquote>
+  <p>For a minimal quick-start, see <a href="/en/installation/">Installation</a>.</p>
+</blockquote>
+
+<h2 id="service-architecture">Service Architecture</h2>
+
+<p>The platform runs as three containerized services:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Frontend   │────▶│   Backend    │────▶│  PostgreSQL  │
+│  (Next.js)   │     │  (Django)    │     │   Database   │
+│  Port 3000   │     │  Port 8000   │     │  Port 5432   │
+└──────────────┘     └──────────────┘     └──────────────┘
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Service</th>
+      <th>Stack</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Frontend</strong></td>
+      <td>Next.js 16 (standalone Node.js server)</td>
+      <td>UI and client-side rendering</td>
+    </tr>
+    <tr>
+      <td><strong>Backend</strong></td>
+      <td>Django 6 + Gunicorn (4 workers in production)</td>
+      <td>REST API, business logic, background tasks</td>
+    </tr>
+    <tr>
+      <td><strong>Database</strong></td>
+      <td>PostgreSQL 16</td>
+      <td>Persistent data storage</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="development-vs-production">Development vs. Production</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Concern</th>
+      <th>Development</th>
+      <th>Production</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Backend server</td>
+      <td>Django dev server</td>
+      <td>Gunicorn (4 workers)</td>
+    </tr>
+    <tr>
+      <td>Frontend port</td>
+      <td>3000</td>
+      <td>80</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">DEBUG</code></td>
+      <td><code class="language-plaintext highlighter-rouge">True</code></td>
+      <td><code class="language-plaintext highlighter-rouge">False</code> (required)</td>
+    </tr>
+    <tr>
+      <td>Volume mounts</td>
+      <td>Backend source code mounted for hot-reload</td>
+      <td>None (immutable image)</td>
+    </tr>
+    <tr>
+      <td>Compose file</td>
+      <td><code class="language-plaintext highlighter-rouge">docker-compose.dev.yml</code></td>
+      <td><code class="language-plaintext highlighter-rouge">docker-compose.prod.yml</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="production-deployment">Production Deployment</h2>
+
+<h3 id="start-services">Start Services</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose <span class="nt">-f</span> docker-compose.prod.yml up <span class="nt">--build</span> <span class="nt">-d</span>
+</code></pre></div></div>
+
+<h3 id="service-ports-production">Service Ports (Production)</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Service</th>
+      <th>Host Port</th>
+      <th>Container Port</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Frontend</td>
+      <td>80</td>
+      <td>3000</td>
+      <td>Direct HTTP access</td>
+    </tr>
+    <tr>
+      <td>Backend</td>
+      <td>8000</td>
+      <td>8000</td>
+      <td>Gunicorn, 4 workers</td>
+    </tr>
+    <tr>
+      <td>PostgreSQL</td>
+      <td>5432</td>
+      <td>5432</td>
+      <td>Consider removing external exposure</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="view-logs">View Logs</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose <span class="nt">-f</span> docker-compose.prod.yml logs <span class="nt">-f</span>
+</code></pre></div></div>
+
+<h3 id="stop-services">Stop Services</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose <span class="nt">-f</span> docker-compose.prod.yml down
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="production-hardening-checklist">Production Hardening Checklist</h2>
+
+<p>Before exposing the platform to production traffic:</p>
+
+<ul class="task-list">
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Set <code class="language-plaintext highlighter-rouge">DEBUG=False</code> in <code class="language-plaintext highlighter-rouge">.env</code></li>
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Generate a strong <code class="language-plaintext highlighter-rouge">SECRET_KEY</code>:
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>python <span class="nt">-c</span> <span class="s2">"from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"</span>
+</code></pre></div>    </div>
+  </li>
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Restrict <code class="language-plaintext highlighter-rouge">ALLOWED_HOSTS</code> to your actual domain names (e.g., <code class="language-plaintext highlighter-rouge">siem.example.com</code>)</li>
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Set <code class="language-plaintext highlighter-rouge">CSRF_TRUSTED_ORIGINS</code> with your production domain</li>
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Remove port <code class="language-plaintext highlighter-rouge">5432</code> exposure from <code class="language-plaintext highlighter-rouge">docker-compose.prod.yml</code> if external DB access is not required</li>
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Place a TLS-terminating reverse proxy (Nginx, Traefik) in front of the frontend container</li>
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Rotate all default passwords in <code class="language-plaintext highlighter-rouge">.env</code> before first deployment</li>
+  <li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled="disabled" />Confirm that <code class="language-plaintext highlighter-rouge">.env</code> is not committed to version control (check <code class="language-plaintext highlighter-rouge">.gitignore</code>)</li>
+</ul>
+
+<hr />
+
+<h2 id="environment-configuration">Environment Configuration</h2>
+
+<p>All runtime settings are controlled via <code class="language-plaintext highlighter-rouge">.env</code>. Copy the example and fill in your values:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">cp </span>env.example .env
+</code></pre></div></div>
+
+<h3 id="required-variables">Required Variables</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Production Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">SECRET_KEY</code></td>
+      <td>A 50+ character random string</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">DEBUG</code></td>
+      <td><code class="language-plaintext highlighter-rouge">False</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ALLOWED_HOSTS</code></td>
+      <td><code class="language-plaintext highlighter-rouge">yourdomain.com,www.yourdomain.com</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_DB</code></td>
+      <td><code class="language-plaintext highlighter-rouge">siem_db</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_USER</code></td>
+      <td><code class="language-plaintext highlighter-rouge">siem_user</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_PASSWORD</code></td>
+      <td>Strong password</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_HOST</code></td>
+      <td><code class="language-plaintext highlighter-rouge">db</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">BACKEND_ORIGIN</code></td>
+      <td><code class="language-plaintext highlighter-rouge">http://backend:8000</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="operational-management">Operational Management</h2>
+
+<h3 id="makefile-quick-reference">Makefile Quick Reference</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Command</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make build-prod</code></td>
+      <td>Build and start production containers</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make redeploy-prod</code></td>
+      <td>Stop, rebuild, and restart</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make logs-prod</code></td>
+      <td>Tail production logs</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make restart-prod</code></td>
+      <td>Restart all production containers</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make clean-prod</code></td>
+      <td>Remove all containers, volumes, images</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make clean-rebuild-prod</code></td>
+      <td>Full clean + rebuild</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="restart-a-single-service">Restart a Single Service</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose <span class="nt">-f</span> docker-compose.prod.yml restart backend
+</code></pre></div></div>
+
+<h3 id="rebuild-a-single-service">Rebuild a Single Service</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose <span class="nt">-f</span> docker-compose.prod.yml up <span class="nt">--build</span> <span class="nt">-d</span> backend
+</code></pre></div></div>
+
+<h3 id="run-django-management-commands">Run Django Management Commands</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Create an admin superuser</span>
+docker <span class="nb">exec</span> <span class="nt">-it</span> backend python manage.py createsuperuser
+
+<span class="c"># Apply database migrations manually</span>
+docker <span class="nb">exec</span> <span class="nt">-it</span> backend python manage.py migrate
+
+<span class="c"># Collect static files</span>
+docker <span class="nb">exec</span> <span class="nt">-it</span> backend python manage.py collectstatic <span class="nt">--noinput</span>
+</code></pre></div></div>
+
+<h3 id="access-container-shells">Access Container Shells</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker <span class="nb">exec</span> <span class="nt">-it</span> backend sh
+docker <span class="nb">exec</span> <span class="nt">-it</span> frontend sh
+docker <span class="nb">exec</span> <span class="nt">-it</span> postgres bash
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="database-management">Database Management</h2>
+
+<h3 id="backup">Backup</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker <span class="nb">exec </span>postgres pg_dump <span class="nt">-U</span> siem_user siem_db <span class="o">&gt;</span> backup_<span class="si">$(</span><span class="nb">date</span> +%Y%m%d<span class="si">)</span>.sql
+</code></pre></div></div>
+
+<h3 id="restore">Restore</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker <span class="nb">exec</span> <span class="nt">-i</span> postgres psql <span class="nt">-U</span> siem_user siem_db &lt; backup_20260704.sql
+</code></pre></div></div>
+
+<h3 id="data-persistence">Data Persistence</h3>
+
+<p>PostgreSQL data is stored in a named Docker volume (<code class="language-plaintext highlighter-rouge">postgres_data</code>). It persists across <code class="language-plaintext highlighter-rouge">docker-compose down</code> restarts but is <strong>removed</strong> with <code class="language-plaintext highlighter-rouge">docker-compose down --volumes</code>.</p>
+
+<blockquote>
+  <p>Maintain regular off-host backups before running any <code class="language-plaintext highlighter-rouge">down --volumes</code> or <code class="language-plaintext highlighter-rouge">clean</code> commands.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="automatic-startup-behavior">Automatic Startup Behavior</h2>
+
+<p>On every container start, the backend entrypoint script automatically:</p>
+<ol>
+  <li>Runs <code class="language-plaintext highlighter-rouge">makemigrations</code> and <code class="language-plaintext highlighter-rouge">migrate</code> to apply any pending schema changes</li>
+  <li>Runs <code class="language-plaintext highlighter-rouge">collectstatic --noinput</code> to collect frontend static assets</li>
+</ol>
+
+<p>Disable static collection with <code class="language-plaintext highlighter-rouge">DJANGO_COLLECTSTATIC=0</code> in <code class="language-plaintext highlighter-rouge">.env</code> if needed.</p>
+
+<hr />
+
+<h2 id="reverse-proxy-https">Reverse Proxy (HTTPS)</h2>
+
+<p>For production HTTPS, place a reverse proxy in front of the frontend container. Example Nginx server block:</p>
+
+<div class="language-nginx highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">server</span> <span class="p">{</span>
+    <span class="kn">listen</span> <span class="mi">443</span> <span class="s">ssl</span><span class="p">;</span>
+    <span class="kn">server_name</span> <span class="s">siem.yourdomain.com</span><span class="p">;</span>
+
+    <span class="kn">ssl_certificate</span>     <span class="n">/etc/ssl/certs/yourdomain.crt</span><span class="p">;</span>
+    <span class="kn">ssl_certificate_key</span> <span class="n">/etc/ssl/private/yourdomain.key</span><span class="p">;</span>
+
+    <span class="kn">location</span> <span class="n">/</span> <span class="p">{</span>
+        <span class="kn">proxy_pass</span> <span class="s">http://localhost:3000</span><span class="p">;</span>
+        <span class="kn">proxy_set_header</span> <span class="s">Host</span>              <span class="nv">$host</span><span class="p">;</span>
+        <span class="kn">proxy_set_header</span> <span class="s">X-Real-IP</span>         <span class="nv">$remote_addr</span><span class="p">;</span>
+        <span class="kn">proxy_set_header</span> <span class="s">X-Forwarded-For</span>   <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+        <span class="kn">proxy_set_header</span> <span class="s">X-Forwarded-Proto</span> <span class="nv">$scheme</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+
+<h3 id="container-fails-to-start">Container fails to start</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker logs &lt;container-name&gt;
+</code></pre></div></div>
+
+<p>Check: <code class="language-plaintext highlighter-rouge">.env</code> exists and contains all required variables; no port conflicts on the host.</p>
+
+<h3 id="database-connection-refused">Database connection refused</h3>
+
+<ul>
+  <li>Confirm <code class="language-plaintext highlighter-rouge">POSTGRES_HOST=db</code> in <code class="language-plaintext highlighter-rouge">.env</code> (not <code class="language-plaintext highlighter-rouge">localhost</code>)</li>
+  <li>PostgreSQL container may still be initializing — wait a few seconds and retry, or add a health check to <code class="language-plaintext highlighter-rouge">docker-compose.yml</code></li>
+</ul>
+
+<h3 id="frontend-cannot-reach-backend">Frontend cannot reach backend</h3>
+
+<ul>
+  <li>Confirm <code class="language-plaintext highlighter-rouge">BACKEND_ORIGIN=http://backend:8000</code></li>
+  <li>Confirm both containers are on the same Docker network (handled by Compose automatically)</li>
+</ul>
+
+<h3 id="port-already-in-use">Port already in use</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># macOS / Linux</span>
+lsof <span class="nt">-i</span> :8000
+
+<span class="c"># Windows</span>
+netstat <span class="nt">-ano</span> | findstr :8000
+</code></pre></div></div>
+
+<h3 id="full-clean-rebuild">Full clean rebuild</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make clean-rebuild-prod
+<span class="c"># or manually:</span>
+docker-compose <span class="nt">-f</span> docker-compose.prod.yml down <span class="nt">--volumes</span> <span class="nt">--rmi</span> all
+docker-compose <span class="nt">-f</span> docker-compose.prod.yml up <span class="nt">--build</span> <span class="nt">-d</span>
+</code></pre></div></div>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">On this page</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'docker-deployment';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

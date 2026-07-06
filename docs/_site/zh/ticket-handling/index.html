@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>工单处理 | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="工单处理" />
+<meta property="og:locale" content="zh" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/zh/ticket-handling/" />
+<meta property="og:url" content="http://localhost:4000/zh/ticket-handling/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="工单处理" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"工单处理","url":"http://localhost:4000/zh/ticket-handling/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/zh/overview/"
+               class="nav-link">项目总览</a><a href="/zh/installation/"
+               class="nav-link">安装部署</a><a href="/zh/dashboard/"
+               class="nav-link">仪表盘</a><a href="/zh/ticket-handling/"
+               class="nav-link active">工单处理</a><a href="/zh/alerts/"
+               class="nav-link">告警管理</a><a href="/zh/use-case-management/"
+               class="nav-link">用例管理</a><a href="/zh/data-onboarding/"
+               class="nav-link">数据接入</a><a href="/zh/docker-deployment/"
+               class="nav-link">Docker 部署</a><a href="/zh/ai-agent/"
+               class="nav-link">AI 智能体</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="工单处理">工单处理</h1>
+
+<p>工单模块是 Argus 的核心事件管理组件，提供从创建到关闭的完整事件生命周期管理，内置 SLA 监控、AI 辅助分析、协作调查和 SOAR 工作流引擎。</p>
+
+<hr />
+
+<h2 id="工单管理">工单管理</h2>
+
+<h3 id="导航">导航</h3>
+
+<p>点击左侧边栏的 <strong>Tickets</strong> 进入工单模块。</p>
+
+<p><img src="/assets/images/ticket-handling/tickets-nav.png" alt="Tickets 导航" /></p>
+
+<h3 id="工单列表视图">工单列表视图</h3>
+
+<p>列表提供所有活跃事件的统一视图，支持过滤、排序和图表可视化。</p>
+
+<p><img src="/assets/images/ticket-handling/tickets-list.png" alt="工单列表" /></p>
+
+<h4 id="核心功能">核心功能</h4>
+
+<table>
+  <thead>
+    <tr>
+      <th>功能</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>搜索栏</strong></td>
+      <td>跨工单编号、标题、状态、优先级和负责人的全文搜索，支持结构化查询：<code class="language-plaintext highlighter-rouge">status:new priority:high owner:admin</code></td>
+    </tr>
+    <tr>
+      <td><strong>时间范围过滤</strong></td>
+      <td>快速预设（15m、1h、24h、7d、30d）或自定义时间范围</td>
+    </tr>
+    <tr>
+      <td><strong>图表面板</strong></td>
+      <td>按严重级别、状态、SLA 合规情况可视化分布</td>
+    </tr>
+    <tr>
+      <td><strong>自动刷新</strong></td>
+      <td>可配置刷新间隔（1m、5m、10m）</td>
+    </tr>
+    <tr>
+      <td><strong>多选过滤器</strong></td>
+      <td>按严重级别、状态、负责人、SLA 段过滤</td>
+    </tr>
+    <tr>
+      <td><strong>视图模式</strong></td>
+      <td>切换表格视图和摘要视图</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4 id="表格列说明">表格列说明</h4>
+
+<table>
+  <thead>
+    <tr>
+      <th>列</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Ticket Number</strong></td>
+      <td>唯一标识符（<code class="language-plaintext highlighter-rouge">SEC20260702NNNNN</code>）</td>
+    </tr>
+    <tr>
+      <td><strong>Title</strong></td>
+      <td>事件简短摘要</td>
+    </tr>
+    <tr>
+      <td><strong>Priority</strong></td>
+      <td>Critical / High / Medium / Low</td>
+    </tr>
+    <tr>
+      <td><strong>Status</strong></td>
+      <td>当前生命周期状态（颜色编码）</td>
+    </tr>
+    <tr>
+      <td><strong>Owner</strong></td>
+      <td>负责分析员</td>
+    </tr>
+    <tr>
+      <td><strong>Created</strong></td>
+      <td>创建时间戳</td>
+    </tr>
+    <tr>
+      <td><strong>SLA</strong></td>
+      <td>MTTR 分段：<code class="language-plaintext highlighter-rouge">&lt;=1h</code> / <code class="language-plaintext highlighter-rouge">1–4h</code> / <code class="language-plaintext highlighter-rouge">&gt;4h</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="创建工单">创建工单</h3>
+
+<p><img src="/assets/images/ticket-handling/tickets-create.png" alt="创建工单" /></p>
+
+<ol>
+  <li>点击列表右上角的 <strong>Create Ticket</strong>。</li>
+  <li>填写必填字段：
+    <ul>
+      <li><strong>Title</strong> — 事件简短摘要</li>
+      <li><strong>Priority</strong> — Critical、High、Medium 或 Low</li>
+      <li><strong>Description</strong> — 详细描述</li>
+      <li><strong>Assigned User</strong> — 负责分析员</li>
+    </ul>
+  </li>
+  <li>按需填写可选字段：
+    <ul>
+      <li><strong>Event Category</strong> — 如 Malware、Denial of Service、Account Anomalies</li>
+      <li><strong>Event Sources</strong> — SIEM、EDR、Firewall</li>
+      <li><strong>Event Platform</strong> — Windows、Linux、AWS</li>
+      <li><strong>Labels</strong> — 用于分类和自动化的键值对</li>
+    </ul>
+  </li>
+  <li>点击 <strong>Submit</strong>。</li>
+</ol>
+
+<p>系统自动生成唯一工单编号并开始 SLA 计时。</p>
+
+<h3 id="工单详情视图">工单详情视图</h3>
+
+<p>点击任意工单行进入详情视图。</p>
+
+<p><img src="/assets/images/ticket-handling/tickets-detail.png" alt="工单详情" /></p>
+
+<h4 id="标签页结构">标签页结构</h4>
+
+<table>
+  <thead>
+    <tr>
+      <th>标签页</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Incident</strong></td>
+      <td>时间线、AI 助手面板、决策按钮栏、工单详情、标签</td>
+    </tr>
+    <tr>
+      <td><strong>War Room</strong></td>
+      <td>工作日志、处理日志、文件附件、证据</td>
+    </tr>
+    <tr>
+      <td><strong>Evidence</strong></td>
+      <td>提取的可观测指标（IP、域名、哈希）</td>
+    </tr>
+    <tr>
+      <td><strong>Raw Message</strong></td>
+      <td>带语法高亮的原始告警 JSON</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="工单生命周期">工单生命周期</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>New → Acknowledged → Triaged → Contained → Resolved → Closed
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>状态</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>New</strong></td>
+      <td>新建，等待首次响应</td>
+    </tr>
+    <tr>
+      <td><strong>Acknowledged</strong></td>
+      <td>分析员已开始审阅</td>
+    </tr>
+    <tr>
+      <td><strong>Triaged</strong></td>
+      <td>已分类和定级</td>
+    </tr>
+    <tr>
+      <td><strong>Contained</strong></td>
+      <td>即时威胁已缓解</td>
+    </tr>
+    <tr>
+      <td><strong>Resolved</strong></td>
+      <td>根因已处理，事件完全处置</td>
+    </tr>
+    <tr>
+      <td><strong>Closed</strong></td>
+      <td>行政关闭</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>更新状态 — 方式一（推荐）：决策按钮</strong></p>
+
+<p>Incident 标签页顶部显示上下文相关的操作按钮：</p>
+<ul>
+  <li><strong>Acknowledge</strong> — 状态为 <code class="language-plaintext highlighter-rouge">New</code> 时可用</li>
+  <li><strong>Triage</strong> — 状态为 <code class="language-plaintext highlighter-rouge">Acknowledged</code> 时可用</li>
+  <li><strong>Contain</strong> — 状态为 <code class="language-plaintext highlighter-rouge">Triaged</code> 时可用</li>
+  <li><strong>Resolve</strong> — 状态为 <code class="language-plaintext highlighter-rouge">Triaged</code> 或 <code class="language-plaintext highlighter-rouge">Contained</code> 时可用（打开解决弹窗）</li>
+</ul>
+
+<p><strong>更新状态 — 方式二：状态下拉菜单</strong></p>
+
+<p>使用状态下拉菜单并点击 <strong>Update Status</strong> 手动设置任意有效状态。</p>
+
+<p><strong>解决弹窗字段：</strong></p>
+<ul>
+  <li><strong>Event Category</strong> — 根因分类</li>
+  <li><strong>Event Result</strong> — True Positive / False Positive / True Positive - Benign</li>
+  <li><strong>Notes</strong> — 处置摘要</li>
+</ul>
+
+<p><strong>待定状态（Pending）：</strong> 切换 <strong>Pending</strong> 可临时暂停 SLA 计时。待定时长将从 SLA 计算中扣除。</p>
+
+<h3 id="sla-跟踪">SLA 跟踪</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>指标</th>
+      <th>计算公式</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>MTTA</strong></td>
+      <td>T3 − T2</td>
+      <td>平均确认时间</td>
+    </tr>
+    <tr>
+      <td><strong>MTTI</strong></td>
+      <td>T4 − T3</td>
+      <td>平均调查时间</td>
+    </tr>
+    <tr>
+      <td><strong>MTTC</strong></td>
+      <td>T5 − T2</td>
+      <td>平均遏制时间</td>
+    </tr>
+    <tr>
+      <td><strong>MTTR</strong></td>
+      <td>T6 − T2</td>
+      <td>平均恢复时间</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>列表视图中的 SLA 颜色分段：</p>
+<ul>
+  <li><strong>绿色</strong> <code class="language-plaintext highlighter-rouge">&lt;=1h</code> — 在目标范围内</li>
+  <li><strong>黄色</strong> <code class="language-plaintext highlighter-rouge">1–4h</code> — 接近违约</li>
+  <li><strong>红色</strong> <code class="language-plaintext highlighter-rouge">&gt;4h</code> — SLA 已违约</li>
+</ul>
+
+<h3 id="战情室war-room">战情室（War Room）</h3>
+
+<p>战情室整合了工单的所有调查工件。</p>
+
+<p><img src="/assets/images/ticket-handling/tickets-warroom.png" alt="战情室" /></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>区域</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>All</strong></td>
+      <td>工作日志和处理日志的合并视图</td>
+    </tr>
+    <tr>
+      <td><strong>Work Logs</strong></td>
+      <td>分析员注记、AI 响应、评论</td>
+    </tr>
+    <tr>
+      <td><strong>Handle Logs</strong></td>
+      <td>系统条目（状态变更、标签更新）</td>
+    </tr>
+    <tr>
+      <td><strong>Files</strong></td>
+      <td>上传的文件附件</td>
+    </tr>
+    <tr>
+      <td><strong>Evidence</strong></td>
+      <td>收集的可观测指标和证据</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>添加工作日志：</strong></p>
+<ol>
+  <li>在底部文本区域输入内容。</li>
+  <li>直接粘贴图片（Ctrl+V / Cmd+V）——自动上传并嵌入。</li>
+  <li>点击 <strong>Send</strong>。</li>
+</ol>
+
+<h3 id="ai-助手">AI 助手</h3>
+
+<p>点击 <strong>AI Assistant</strong>（或闪电图标）生成：</p>
+<ul>
+  <li><strong>告警解释</strong> — 通俗语言描述告警含义</li>
+  <li><strong>风险级别建议</strong> — 带理由的严重级别建议</li>
+  <li><strong>已完成任务</strong> — AI 已执行的操作</li>
+  <li><strong>下一步任务</strong> — 分析员建议跟进事项</li>
+</ul>
+
+<p><strong>AI Chat：</strong> 点击 <strong>Chat</strong> 打开针对当前工单的对话窗口，聊天历史按工单持久化保存。</p>
+
+<p><strong>@ai 提及：</strong> 在评论框输入 <code class="language-plaintext highlighter-rouge">@ai &lt;问题&gt;</code>，AI 响应将直接发布至工作日志。</p>
+
+<p><strong>@playbook 提及：</strong> 输入 <code class="language-plaintext highlighter-rouge">@playbook &lt;名称&gt;</code> 以当前工单为上下文调用工作流剧本。</p>
+
+<h3 id="标签与可观测指标">标签与可观测指标</h3>
+
+<p><strong>标签</strong>是用于分类和工作流自动化的键值对：</p>
+<ol>
+  <li>进入工单详情的 <strong>Labels</strong> 区域。</li>
+  <li>点击 <strong>Add Label</strong>，填写名称和值，点击 <strong>Save</strong>。</li>
+</ol>
+
+<p>标签可触发工作流自动绑定，并在列表视图中用于过滤工单。</p>
+
+<p><strong>可观测指标</strong>是调查过程中提取的指标（IP、域名、哈希），出现在 <strong>Evidence</strong> 标签页，由 AI 分析或手工录入填充。</p>
+
+<h3 id="批量操作">批量操作</h3>
+
+<p>勾选多个工单后，可执行批量操作：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>操作</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Batch Update Status</strong></td>
+      <td>同时更改所有选中工单的状态</td>
+    </tr>
+    <tr>
+      <td><strong>Batch Assign</strong></td>
+      <td>重新分配给其他分析员</td>
+    </tr>
+    <tr>
+      <td><strong>Batch Delete</strong></td>
+      <td>软删除选中工单（记录保留用于审计）</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="工作流soar">工作流（SOAR）</h2>
+
+<p>工作流模块是 SOAR 编排引擎，用于自动化重复性任务、编排多步骤响应流程并与外部工具集成。</p>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Settings → Workflows</code></p>
+
+<p><img src="/assets/images/ticket-handling/workflows-nav.png" alt="工作流导航" /></p>
+
+<h3 id="工作流列表视图">工作流列表视图</h3>
+
+<p><img src="/assets/images/ticket-handling/workflows-list.png" alt="工作流列表" /></p>
+
+<p>顶部四个汇总卡片：<strong>Total Workflows</strong>、<strong>Active</strong>、<strong>Total Executions</strong>、<strong>Success Rate</strong>。</p>
+
+<h4 id="快捷操作">快捷操作</h4>
+
+<table>
+  <thead>
+    <tr>
+      <th>按钮</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>▶ Execute</td>
+      <td>手动触发（仅限活跃工作流）</td>
+    </tr>
+    <tr>
+      <td>⏸ Stop</td>
+      <td>取消正在运行的执行</td>
+    </tr>
+    <tr>
+      <td>🔀 Visual Editor</td>
+      <td>打开拖拽式编辑器</td>
+    </tr>
+    <tr>
+      <td>📋 Clone</td>
+      <td>复制工作流</td>
+    </tr>
+    <tr>
+      <td>☁ Publish</td>
+      <td>将清单发布到 Prefect</td>
+    </tr>
+    <tr>
+      <td>🗑 Delete</td>
+      <td>确认后删除</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="可视化工作流编辑器">可视化工作流编辑器</h3>
+
+<p><img src="/assets/images/ticket-handling/workflow-visual-editor.png" alt="可视化编辑器" /></p>
+
+<p>点击 <strong>Create Visual Workflow</strong> 或已有工作流上的分支图标进入编辑器。</p>
+
+<h4 id="构建工作流">构建工作流</h4>
+
+<ol>
+  <li>设置工作流名称。</li>
+  <li>选择触发器类型。</li>
+  <li>从左侧面板拖拽动作节点到画布。</li>
+  <li>拖动节点连接点连接各节点。</li>
+  <li>点击节点并在右侧面板填写配置。</li>
+  <li>点击 <strong>Save</strong> 保存为草稿。</li>
+</ol>
+
+<h4 id="节点类型">节点类型</h4>
+
+<table>
+  <thead>
+    <tr>
+      <th>类型</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Start</strong></td>
+      <td>入口节点</td>
+    </tr>
+    <tr>
+      <td><strong>End</strong></td>
+      <td>出口节点</td>
+    </tr>
+    <tr>
+      <td><strong>Action</strong></td>
+      <td>执行特定动作（封锁 IP、发送邮件等）</td>
+    </tr>
+    <tr>
+      <td><strong>Condition</strong></td>
+      <td>评估条件，分叉为 True/False 路径</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="触发器类型">触发器类型</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>触发器</th>
+      <th>说明</th>
+      <th>配置项</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Manual</strong></td>
+      <td>按需手动执行</td>
+      <td>无需配置</td>
+    </tr>
+    <tr>
+      <td><strong>On Alert Created</strong></td>
+      <td>新告警接入时触发</td>
+      <td>JSON 过滤条件</td>
+    </tr>
+    <tr>
+      <td><strong>On Ticket Created</strong></td>
+      <td>新工单创建时触发</td>
+      <td>JSON 过滤条件</td>
+    </tr>
+    <tr>
+      <td><strong>On Ticket Status Change</strong></td>
+      <td>工单状态变更时触发</td>
+      <td>JSON 过滤条件</td>
+    </tr>
+    <tr>
+      <td><strong>Scheduled</strong></td>
+      <td>按定时计划执行</td>
+      <td>Cron 表达式</td>
+    </tr>
+    <tr>
+      <td><strong>Webhook</strong></td>
+      <td>外部 HTTP 调用触发</td>
+      <td>自动提供 Webhook URL</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>过滤条件示例</strong> — 仅针对高优先级恶意软件事件触发：</p>
+
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"priority"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"critical"</span><span class="p">,</span><span class="w"> </span><span class="s2">"high"</span><span class="p">],</span><span class="w">
+  </span><span class="nl">"event_category"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"malware"</span><span class="p">]</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+
+<h3 id="执行历史">执行历史</h3>
+
+<p><img src="/assets/images/ticket-handling/workflows-executions.png" alt="工作流执行记录" /></p>
+
+<p>导航至 <code class="language-plaintext highlighter-rouge">Settings → Workflows → View Executions</code>。</p>
+
+<p>点击执行记录可查看分步时间线、错误详情、累积上下文变量和完整执行日志。</p>
+
+<h3 id="cron-定时示例">Cron 定时示例</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>表达式</th>
+      <th>含义</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">*/15 * * * *</code></td>
+      <td>每 15 分钟</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">0 */4 * * *</code></td>
+      <td>每 4 小时</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">0 8 * * 1-5</code></td>
+      <td>工作日 08:00</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">0 0 * * *</code></td>
+      <td>每天午夜</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="工单-工作流绑定">工单-工作流绑定</h3>
+
+<p>绑定允许工作流根据工单标签自动触发：</p>
+
+<ol>
+  <li>在工作流的 <strong>Ticket Labels</strong> 列配置标签过滤器。</li>
+  <li>选择逻辑：<strong>AND</strong>（所有标签必须匹配）或 <strong>OR</strong>（任意标签匹配即可）。</li>
+</ol>
+
+<p>当工单事件发生时，系统评估所有活跃绑定，以工单为触发上下文分发匹配的工作流。</p>
+
+<h3 id="从工单调用剧本">从工单调用剧本</h3>
+
+<p>启用了 <strong>Is Callable from Ticket</strong> 的工作流可直接从工单详情触发。</p>
+
+<p><strong>方式一 — @playbook 命令：</strong> 在评论框输入 <code class="language-plaintext highlighter-rouge">@</code> 并从下拉列表选择剧本，点击 <strong>Send</strong> 调用。</p>
+
+<p><strong>方式二 — 剧本面板：</strong> 在工单详情中打开剧本区域，点击 <strong>Invoke</strong>。</p>
+
+<p>每个工单在 <strong>Workplan</strong> 中显示所有关联的工作流执行记录，包含状态、进度和时间戳。</p>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">本页导航</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'ticket-handling';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>AI 智能体 | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="AI 智能体" />
+<meta property="og:locale" content="zh" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/zh/ai-agent/" />
+<meta property="og:url" content="http://localhost:4000/zh/ai-agent/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="AI 智能体" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"AI 智能体","url":"http://localhost:4000/zh/ai-agent/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/zh/overview/"
+               class="nav-link">项目总览</a><a href="/zh/installation/"
+               class="nav-link">安装部署</a><a href="/zh/dashboard/"
+               class="nav-link">仪表盘</a><a href="/zh/ticket-handling/"
+               class="nav-link">工单处理</a><a href="/zh/alerts/"
+               class="nav-link">告警管理</a><a href="/zh/use-case-management/"
+               class="nav-link">用例管理</a><a href="/zh/data-onboarding/"
+               class="nav-link">数据接入</a><a href="/zh/docker-deployment/"
+               class="nav-link">Docker 部署</a><a href="/zh/ai-agent/"
+               class="nav-link active">AI 智能体</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="ai-智能体">AI 智能体</h1>
+
+<p>AI 智能体是协助 SOC 分析员进行事件调查的集成智能层。它能解释告警、评估风险、提取 IOC、建议修复步骤，并通过模型上下文协议（MCP）调用外部安全工具。</p>
+
+<blockquote>
+  <p><strong>安全提示：</strong> 请勿在截图、文档或聊天中分享 API Key、密码、令牌或其他敏感凭证。</p>
+</blockquote>
+
+<hr />
+
+<h2 id="配置">配置</h2>
+
+<h3 id="导航路径">导航路径</h3>
+
+<p><code class="language-plaintext highlighter-rouge">Administration → AI Assistant</code></p>
+
+<p>通用设置存储在浏览器本地存储中，MCP 工具和技能（Skills）配置存储在服务端。</p>
+
+<h3 id="通用设置">通用设置</h3>
+
+<p><img src="/assets/images/ai-agent/general-configured.png" alt="AI Assistant 通用设置" /></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>设置项</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Enable AI Assistant</strong></td>
+      <td>总开关 — 必须开启，工单详情页才会显示 AI 功能</td>
+    </tr>
+    <tr>
+      <td><strong>OpenAI API Key</strong></td>
+      <td>管理员提供的 OpenAI 兼容 API Key</td>
+    </tr>
+    <tr>
+      <td><strong>Model</strong></td>
+      <td>模型标识符（如 <code class="language-plaintext highlighter-rouge">gpt-5.4</code>）</td>
+    </tr>
+    <tr>
+      <td><strong>Base URL</strong></td>
+      <td>API 端点地址（如 <code class="language-plaintext highlighter-rouge">https://api.openai.com/v1</code>）</td>
+    </tr>
+    <tr>
+      <td><strong>Timeout</strong></td>
+      <td>请求超时时间，单位秒（默认 45）——对响应较慢的模型可适当调大</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>填写完所有字段后：</p>
+<ol>
+  <li>点击 <strong>Test Connectivity</strong> 验证模型端点可达且 Key 有效。</li>
+  <li>点击 <strong>Save General</strong> 将设置持久化到浏览器。</li>
+</ol>
+
+<p>若连通性测试失败，请检查：Base URL、API Key、模型名称，以及浏览器到端点的网络访问。</p>
+
+<hr />
+
+<h2 id="mcp-管理">MCP 管理</h2>
+
+<p>MCP（模型上下文协议）工具通过允许 AI 在分析过程中调用外部服务、获取结构化上下文，扩展 AI 智能体的能力。</p>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Administration → AI Assistant → MCP Management</code></p>
+
+<p><img src="/assets/images/ai-agent/mcp-management.png" alt="MCP 管理页面" /></p>
+
+<h3 id="内置-mcp-工具">内置 MCP 工具</h3>
+
+<p>平台内置以下工具：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>工具</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ticket_context</code></td>
+      <td>获取当前工单的完整上下文（告警、标签、工作日志）</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ticket_search_similar_cases</code></td>
+      <td>按标题和可观测指标搜索历史相似工单</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">cmdb_asset_lookup</code></td>
+      <td>通过 IP、主机名或用户从 CMDB 查询资产元数据</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">observables_extract</code></td>
+      <td>从原始文本中提取并规范化指标（IP、域名、哈希）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="添加-mcp-server">添加 MCP Server</h3>
+
+<p><img src="/assets/images/ai-agent/add-mcp-modal.png" alt="添加 MCP 弹窗" /></p>
+
+<ol>
+  <li>点击 MCP 管理区域的 <strong>Add MCP</strong>。</li>
+  <li>填写服务器信息：
+    <ul>
+      <li><strong>Name</strong> — MCP 服务器的显示名称</li>
+      <li><strong>URL</strong> — MCP 服务器端点</li>
+      <li><strong>Description</strong> — 该服务器提供哪些工具</li>
+    </ul>
+  </li>
+  <li>点击 <strong>Save</strong>。</li>
+</ol>
+
+<hr />
+
+<h2 id="mcp-状态监控">MCP 状态监控</h2>
+
+<p>MCP Status Monitor 跟踪所有 MCP 工具调用的运行健康状态。</p>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Administration → AI Assistant → MCP Status Monitor</code></p>
+
+<p><img src="/assets/images/ai-agent/mcp-status-monitor.png" alt="MCP 状态监控" /></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>指标</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Total Calls</strong></td>
+      <td>累计 MCP 工具调用次数</td>
+    </tr>
+    <tr>
+      <td><strong>Success Rate</strong></td>
+      <td>成功调用百分比</td>
+    </tr>
+    <tr>
+      <td><strong>Last Called</strong></td>
+      <td>最近一次调用的时间戳</td>
+    </tr>
+    <tr>
+      <td><strong>Recent Executions</strong></td>
+      <td>最近调用的详细日志，含状态和错误信息</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>通过此视图可诊断 AI 智能体在分析过程中是否成功调用了上下文工具。</p>
+
+<hr />
+
+<h2 id="skills-管理">Skills 管理</h2>
+
+<p>技能（Skills）是 AI 智能体可调用的可执行程序，用于执行结构化任务（如情报富化查询、自动报告生成、响应动作）。</p>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Administration → AI Assistant → Skills Management</code></p>
+
+<p><img src="/assets/images/ai-agent/skills-management.png" alt="Skills 管理页面" /></p>
+
+<h3 id="添加技能">添加技能</h3>
+
+<p><img src="/assets/images/ai-agent/add-skill-modal.png" alt="添加 Skill 弹窗" /></p>
+
+<ol>
+  <li>点击 <strong>Add Skill</strong>。</li>
+  <li>填写必填字段：
+    <ul>
+      <li><strong>Name</strong> — 技能标识符</li>
+      <li><strong>Version</strong> — 语义化版本号</li>
+      <li><strong>Route</strong> — 技能暴露的 API 路由</li>
+      <li><strong>Description</strong> — 技能用途说明（AI 据此判断何时调用）</li>
+      <li><strong>Content (SKILL.md)</strong> — Markdown 格式的完整技能定义</li>
+    </ul>
+  </li>
+  <li>切换 <strong>Enabled</strong> 开关激活技能。</li>
+  <li>点击 <strong>Save</strong>。</li>
+</ol>
+
+<hr />
+
+<h2 id="skill-监控">Skill 监控</h2>
+
+<p>Skill Monitor 展示所有已注册技能的执行统计。</p>
+
+<p><img src="/assets/images/ai-agent/skill-monitor.png" alt="Skill 监控" /></p>
+
+<p>若某技能的调用次数为 0，说明尚无 AI 智能体会话触发过该技能。这在新增技能后属于正常现象——当 AI 在活跃调查中判断该技能适用时，调用记录才会出现。</p>
+
+<hr />
+
+<h2 id="在工单中使用-ai-智能体">在工单中使用 AI 智能体</h2>
+
+<p>AI 智能体在工单详情视图中使用。</p>
+
+<p><strong>导航路径：</strong> <code class="language-plaintext highlighter-rouge">Investigation → Tickets → [任意工单] → Incident 标签页</code></p>
+
+<p><img src="/assets/images/ai-agent/ticket-detail.png" alt="工单详情 — AI Assistant 面板" /></p>
+
+<h3 id="一键分析">一键分析</h3>
+
+<p>点击 <strong>Run AI Assistant</strong>（或闪电图标）触发自动分析。AI 读取工单的告警数据、关联可观测指标和历史记录后生成：</p>
+
+<ul>
+  <li><strong>告警解释</strong> — 通俗语言的告警含义摘要</li>
+  <li><strong>风险级别建议</strong> — 带理由的严重级别建议</li>
+  <li><strong>已完成任务</strong> — AI 已执行的操作</li>
+  <li><strong>下一步任务</strong> — 建议分析员跟进的事项</li>
+</ul>
+
+<h3 id="ai-chat">AI Chat</h3>
+
+<p><img src="/assets/images/ai-agent/ai-chat-panel.png" alt="AI Chat 面板" /></p>
+
+<p>点击 <strong>Chat</strong> 打开针对当前工单的交互式对话：</p>
+
+<ol>
+  <li>聊天上下文自动包含工单元数据和关联告警。</li>
+  <li>在输入框输入问题或指令。</li>
+  <li>AI 返回分析结果、建议或结构化输出。</li>
+  <li>聊天历史按工单持久化保存。</li>
+</ol>
+
+<p><strong>Chat 提示示例：</strong></p>
+<ul>
+  <li>“从这条告警中提取所有 IOC，格式化为列表。”</li>
+  <li>“分析这批告警隐含的攻击链。”</li>
+  <li>“我应该优先执行哪些遏制步骤？”</li>
+  <li>“这是真阳性还是误报？请给出理由。”</li>
+</ul>
+
+<h3 id="ai-提及">@ai 提及</h3>
+
+<p>在工作日志评论框输入 <code class="language-plaintext highlighter-rouge">@ai &lt;问题&gt;</code>，AI 响应将直接发布至工作日志线程。</p>
+
+<h3 id="playbook-提及">@playbook 提及</h3>
+
+<p>输入 <code class="language-plaintext highlighter-rouge">@playbook &lt;名称&gt;</code> 以当前工单为上下文调用可执行工作流剧本，系统执行后将结果发布至工作日志。</p>
+
+<hr />
+
+<h2 id="建议工作流">建议工作流</h2>
+
+<ol>
+  <li>从工单列表打开目标工单。</li>
+  <li><strong>先</strong>人工查看 <strong>Case Details</strong>、<strong>Timeline</strong>、<strong>Alerts</strong>、<strong>Raw Message</strong> 和 <strong>Evidence</strong>。</li>
+  <li>点击 <strong>Run AI Assistant</strong> 获取初步自动评估。</li>
+  <li>通过 <strong>Chat</strong> 追问：提取 IOC、解释告警逻辑、请求响应步骤。</li>
+  <li>对所有 AI 输出进行批判性审查后再采取行动。</li>
+  <li>只将经过确认的信息写入评论、任务或处置结论。</li>
+</ol>
+
+<hr />
+
+<h2 id="故障排查">故障排查</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>问题</th>
+      <th>检查项</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AI 不响应</td>
+      <td>检查 Enable AI Assistant 开关；验证 API Key、Model、Base URL、Timeout；运行 Test Connectivity</td>
+    </tr>
+    <tr>
+      <td>MCP 工具无调用</td>
+      <td>查看 MCP Status Monitor 排查失败原因；确认工单场景是否触发工具使用</td>
+    </tr>
+    <tr>
+      <td>Skill 调用次数始终为 0</td>
+      <td>技能仅在 AI 认为适用时才调用——可尝试在 Chat 中明确提示 AI 使用特定技能</td>
+    </tr>
+    <tr>
+      <td>Chat 分析不准确</td>
+      <td>AI 仅使用当前工单上下文——在战情室中补充更多证据可提升分析质量</td>
+    </tr>
+  </tbody>
+</table>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">本页导航</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'ai-agent';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

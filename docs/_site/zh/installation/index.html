@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>安装部署 | Argus — Agentic SOC Platform</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="安装部署" />
+<meta property="og:locale" content="zh" />
+<meta name="description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<meta property="og:description" content="AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response." />
+<link rel="canonical" href="http://localhost:4000/zh/installation/" />
+<meta property="og:url" content="http://localhost:4000/zh/installation/" />
+<meta property="og:site_name" content="Argus — Agentic SOC Platform" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="安装部署" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"AI-native Security Operations Center for unified alert ingestion, incident investigation, MITRE ATT&amp;CK correlation, and automated response.","headline":"安装部署","url":"http://localhost:4000/zh/installation/"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Argus — Agentic SOC Platform" /><link rel="icon" type="image/png" href="/assets/images/seclink-logo.png">
+</head>
+<body>
+    <div class="site-wrapper">
+
+      <!-- ── Left sidebar: logo / brand / search / nav / footer links ── -->
+      <aside class="sidebar" aria-label="Site navigation">
+
+        <!-- Brand: logo + name -->
+        <div class="sidebar-top">
+          <a class="sidebar-brand" href="/">
+            <img src="/assets/images/seclink-logo.png"
+                 alt="Argus" class="sidebar-logo">
+            Argus
+          </a>
+        </div>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <input type="search" id="doc-search" placeholder="Search docs…"
+                 aria-label="Search documentation" autocomplete="off">
+          <ul id="search-results" class="search-results" hidden></ul>
+        </div>
+
+        <!-- Module navigation -->
+        <nav class="sidebar-nav" aria-label="Module navigation"><a href="/zh/overview/"
+               class="nav-link">项目总览</a><a href="/zh/installation/"
+               class="nav-link active">安装部署</a><a href="/zh/dashboard/"
+               class="nav-link">仪表盘</a><a href="/zh/ticket-handling/"
+               class="nav-link">工单处理</a><a href="/zh/alerts/"
+               class="nav-link">告警管理</a><a href="/zh/use-case-management/"
+               class="nav-link">用例管理</a><a href="/zh/data-onboarding/"
+               class="nav-link">数据接入</a><a href="/zh/docker-deployment/"
+               class="nav-link">Docker 部署</a><a href="/zh/ai-agent/"
+               class="nav-link">AI 智能体</a></nav>
+
+        <!-- Sidebar footer: GitHub + Platform links -->
+        <div class="sidebar-footer">
+          <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="GitHub — Sec-Link/Argus-Agentic-SOC-Platform" aria-label="GitHub">
+            <!-- GitHub mark -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://siem.seclink.info/dashboard"
+             class="sidebar-ext-link" target="_blank" rel="noopener noreferrer"
+             title="Argus Platform" aria-label="Open platform">
+            <!-- Globe / website -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ── Right body ── -->
+      <div class="site-body">
+
+        <!-- Top bar: lang switcher + theme toggle -->
+        <div class="top-bar">
+          <div class="top-bar-actions">
+            <div class="lang-switcher" role="navigation" aria-label="Language">
+              <a href="#" class="lang-btn"
+                 onclick="switchLang('en'); return false;">EN</a>
+              <span class="lang-sep">/</span>
+              <a href="#" class="lang-btn lang-active"
+                 onclick="switchLang('zh'); return false;">中文</a>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()"
+                    aria-label="Toggle colour theme" title="Toggle light / dark">
+              <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+              <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content row: article + right TOC -->
+        <div class="content-row">
+          <main class="page-content" aria-label="Content">
+            <div class="wrapper">
+              <h1 id="安装部署">安装部署</h1>
+
+<p>本指南介绍如何通过 Docker Compose 部署 Argus Agentic SOC Platform——这是从零到运行系统的最快路径。</p>
+
+<h2 id="前置条件">前置条件</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>软件</th>
+      <th>最低版本</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Docker</td>
+      <td>24.0+</td>
+      <td>容器运行时</td>
+    </tr>
+    <tr>
+      <td>Docker Compose</td>
+      <td>2.20+</td>
+      <td>Docker Desktop 已内置</td>
+    </tr>
+    <tr>
+      <td>Git</td>
+      <td>2.30+</td>
+      <td>克隆仓库</td>
+    </tr>
+    <tr>
+      <td>Make（可选）</td>
+      <td>4.0+</td>
+      <td>快捷命令；Windows 可通过 <code class="language-plaintext highlighter-rouge">choco install make</code> 安装</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="快速启动">快速启动</h2>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 1. 克隆仓库</span>
+git clone &lt;repository-url&gt;
+<span class="nb">cd </span>ECHO-SOC-Platform
+
+<span class="c"># 2. 创建环境变量文件</span>
+<span class="nb">cp </span>env.example .env
+
+<span class="c"># 3. 编辑 .env，填写必填变量（见下文）</span>
+
+<span class="c"># 4. 以开发模式构建并启动所有服务</span>
+docker-compose <span class="nt">-f</span> docker-compose.dev.yml up <span class="nt">--build</span> <span class="nt">-d</span>
+
+<span class="c"># 5. 打开应用</span>
+<span class="c">#    前端：    http://localhost:3000</span>
+<span class="c">#    后端 API：http://localhost:8000</span>
+</code></pre></div></div>
+
+<h2 id="环境变量配置">环境变量配置</h2>
+
+<p>启动容器前，请复制示例文件并填写所有必填变量。</p>
+
+<h3 id="必填变量">必填变量</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>变量</th>
+      <th>说明</th>
+      <th>示例值</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">SECRET_KEY</code></td>
+      <td>Django 密钥（强随机字符串）</td>
+      <td><code class="language-plaintext highlighter-rouge">change-me-in-production</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">DEBUG</code></td>
+      <td>是否启用调试模式</td>
+      <td><code class="language-plaintext highlighter-rouge">False</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ALLOWED_HOSTS</code></td>
+      <td>逗号分隔的允许主机名</td>
+      <td><code class="language-plaintext highlighter-rouge">localhost,127.0.0.1</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_DB</code></td>
+      <td>PostgreSQL 数据库名</td>
+      <td><code class="language-plaintext highlighter-rouge">siem_db</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_USER</code></td>
+      <td>PostgreSQL 用户名</td>
+      <td><code class="language-plaintext highlighter-rouge">siem_user</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_PASSWORD</code></td>
+      <td>PostgreSQL 密码</td>
+      <td><code class="language-plaintext highlighter-rouge">siem_password</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_HOST</code></td>
+      <td>数据库主机名</td>
+      <td><code class="language-plaintext highlighter-rouge">db</code>（Docker 服务名）</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">POSTGRES_PORT</code></td>
+      <td>数据库端口</td>
+      <td><code class="language-plaintext highlighter-rouge">5432</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">BACKEND_ORIGIN</code></td>
+      <td>前端调用后端 API 的 URL</td>
+      <td><code class="language-plaintext highlighter-rouge">http://backend:8000</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p><strong>Docker 网络说明：</strong> 必须设置 <code class="language-plaintext highlighter-rouge">POSTGRES_HOST=db</code>，而非 <code class="language-plaintext highlighter-rouge">localhost</code>。两个服务共享同一 Docker Compose 网络，通过服务名互相解析。</p>
+</blockquote>
+
+<h3 id="可选变量">可选变量</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>变量</th>
+      <th>说明</th>
+      <th>默认值</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ES_HOST</code></td>
+      <td>Elasticsearch 地址</td>
+      <td><code class="language-plaintext highlighter-rouge">http://localhost:9200</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ES_USERNAME</code></td>
+      <td>Elasticsearch 用户名</td>
+      <td><code class="language-plaintext highlighter-rouge">elastic</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ES_PASSWORD</code></td>
+      <td>Elasticsearch 密码</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">PREFECT_API_URL</code></td>
+      <td>Prefect Server API 端点</td>
+      <td><code class="language-plaintext highlighter-rouge">http://127.0.0.1:4200/api</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">REDIS_ENABLED</code></td>
+      <td>是否启用 Redis 缓存</td>
+      <td><code class="language-plaintext highlighter-rouge">false</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">REDIS_URL</code></td>
+      <td>Redis 连接 URL</td>
+      <td><code class="language-plaintext highlighter-rouge">redis://localhost:6379/0</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="邮件--smtp-配置">邮件 / SMTP 配置</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>变量</th>
+      <th>说明</th>
+      <th>示例值</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">EMAIL_HOST</code></td>
+      <td>SMTP 服务器</td>
+      <td><code class="language-plaintext highlighter-rouge">smtp.gmail.com</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">EMAIL_PORT</code></td>
+      <td>SMTP 端口</td>
+      <td><code class="language-plaintext highlighter-rouge">587</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">EMAIL_HOST_USER</code></td>
+      <td>SMTP 用户名</td>
+      <td><code class="language-plaintext highlighter-rouge">noreply@example.com</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">EMAIL_HOST_PASSWORD</code></td>
+      <td>SMTP 密码</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">EMAIL_USE_TLS</code></td>
+      <td>是否启用 TLS</td>
+      <td><code class="language-plaintext highlighter-rouge">true</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">DEFAULT_FROM_EMAIL</code></td>
+      <td>默认发件人地址</td>
+      <td><code class="language-plaintext highlighter-rouge">noreply@example.com</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="服务端口开发模式">服务端口（开发模式）</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>服务</th>
+      <th>主机端口</th>
+      <th>容器端口</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>前端（Next.js）</td>
+      <td>3000</td>
+      <td>3000</td>
+    </tr>
+    <tr>
+      <td>后端（Django）</td>
+      <td>8000</td>
+      <td>8000</td>
+    </tr>
+    <tr>
+      <td>PostgreSQL</td>
+      <td>5432</td>
+      <td>5432</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="验证部署">验证部署</h2>
+
+<h3 id="1-检查容器状态">1. 检查容器状态</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker ps
+</code></pre></div></div>
+
+<p>应看到三个运行中的容器：<code class="language-plaintext highlighter-rouge">frontend</code>、<code class="language-plaintext highlighter-rouge">backend</code>、<code class="language-plaintext highlighter-rouge">postgres</code>。</p>
+
+<h3 id="2-检查后端健康状态">2. 检查后端健康状态</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl http://localhost:8000/api/
+</code></pre></div></div>
+
+<h3 id="3-检查数据库连接">3. 检查数据库连接</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker <span class="nb">exec</span> <span class="nt">-it</span> postgres psql <span class="nt">-U</span> siem_user <span class="nt">-d</span> siem_db <span class="nt">-c</span> <span class="s2">"SELECT 1;"</span>
+</code></pre></div></div>
+
+<h3 id="4-查看日志">4. 查看日志</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 所有服务</span>
+docker-compose <span class="nt">-f</span> docker-compose.dev.yml logs <span class="nt">-f</span>
+
+<span class="c"># 单个服务</span>
+docker logs backend
+</code></pre></div></div>
+
+<h2 id="常用-makefile-命令">常用 Makefile 命令</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>命令</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make build-dev</code></td>
+      <td>构建并启动开发容器</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make redeploy-dev</code></td>
+      <td>停止、重建并重启</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make logs-dev</code></td>
+      <td>跟踪开发日志</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">make clean-dev</code></td>
+      <td>删除所有开发容器、卷和镜像</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>如需生产环境部署（Gunicorn、端口 80、加固配置），请参阅 <a href="/zh/docker-deployment/">Docker 部署</a>。</p>
+</blockquote>
+
+            </div>
+          </main>
+
+          <!-- Right TOC panel (populated by JS) -->
+          <aside class="toc-panel" id="toc-panel" aria-label="On this page" hidden>
+            <p class="toc-header">本页导航</p>
+            <ul id="toc-list" class="toc-list"></ul>
+          </aside>
+        </div>
+
+        <footer class="site-footer">
+          <div class="wrapper footer-inner">
+            <span>Argus — Agentic SOC Platform</span>
+            <div class="footer-links">
+              <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform"
+                 target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://siem.seclink.info/dashboard"
+                 target="_blank" rel="noopener noreferrer">Platform</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+
+    <script>
+      var SITE_BASEURL = '';
+      var PAGE_LANG_REF = 'installation';
+    </script>
+    <script src="/assets/search.js"></script>
+  </body>
+</html>

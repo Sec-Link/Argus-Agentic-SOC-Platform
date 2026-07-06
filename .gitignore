@@ -61,3 +61,10 @@ db.sqlite3
 .DS_Store
 Thumbs.db
 /backend/workflows/sample_workflows/
+
+# MCP
+.mcp.json
+
+# Ruby / Jekyll
+**/Gemfile
+**/Gemfile.lock
