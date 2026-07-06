@@ -23,7 +23,7 @@ General settings are stored in the browser's local storage. MCP tools and Skills
 
 ### General Settings
 
-![AI Assistant General Settings]({{ '/assets/images/ai-agent/general-configured.png' | relative_url }})
+![AI Assistant General Settings]({{ '/assets/images/ai-agent/general-configured-n.png' | relative_url }})
 
 | Setting | Description |
 |---|---|
@@ -47,7 +47,7 @@ MCP (Model Context Protocol) tools extend the AI Agent's capabilities by allowin
 
 **Navigation:** `Administration → AI Assistant → MCP Management`
 
-![MCP Management]({{ '/assets/images/ai-agent/mcp-management.png' | relative_url }})
+![MCP Management]({{ '/assets/images/ai-agent/mcp-management-n.png' | relative_url }})
 
 ### Built-in MCP Tools
 
@@ -62,7 +62,7 @@ The platform ships with the following built-in tools:
 
 ### Adding an MCP Server
 
-![Add MCP Modal]({{ '/assets/images/ai-agent/add-mcp-modal.png' | relative_url }})
+![Add MCP Modal]({{ '/assets/images/ai-agent/add-mcp-modal-n.png' | relative_url }})
 
 1. Click **Add MCP** in the MCP Management section.
 2. Fill in the server details:
@@ -79,7 +79,7 @@ The MCP Status Monitor tracks the operational health of all MCP tool invocations
 
 **Navigation:** `Administration → AI Assistant → MCP Status Monitor`
 
-![MCP Status Monitor]({{ '/assets/images/ai-agent/mcp-status-monitor.png' | relative_url }})
+![MCP Status Monitor]({{ '/assets/images/ai-agent/mcp-status-monitor-n.png' | relative_url }})
 
 | Metric | Description |
 |---|---|
@@ -98,11 +98,11 @@ Skills are executable procedures that the AI Agent can invoke to perform structu
 
 **Navigation:** `Administration → AI Assistant → Skills Management`
 
-![Skills Management]({{ '/assets/images/ai-agent/skills-management.png' | relative_url }})
+![Skills Management]({{ '/assets/images/ai-agent/skills-management-n.png' | relative_url }})
 
 ### Adding a Skill
 
-![Add Skill Modal]({{ '/assets/images/ai-agent/add-skill-modal.png' | relative_url }})
+![Add Skill Modal]({{ '/assets/images/ai-agent/add-skill-modal-n.png' | relative_url }})
 
 1. Click **Add Skill**.
 2. Fill in the required fields:
@@ -120,7 +120,7 @@ Skills are executable procedures that the AI Agent can invoke to perform structu
 
 The Skill Monitor displays execution statistics for all registered skills.
 
-![Skill Monitor]({{ '/assets/images/ai-agent/skill-monitor.png' | relative_url }})
+![Skill Monitor]({{ '/assets/images/ai-agent/skill-monitor-n.png' | relative_url }})
 
 If a skill shows 0 invocations, it means no AI Agent session has yet triggered that skill. This is expected immediately after adding a new skill — invocations will appear once the AI determines the skill is applicable to an active investigation.
 
@@ -132,7 +132,7 @@ The AI Agent is accessed from within the ticket detail view.
 
 **Navigation:** `Investigation → Tickets → [any ticket] → Incident tab`
 
-![Ticket Detail — AI Assistant Panel]({{ '/assets/images/ai-agent/ticket-detail.png' | relative_url }})
+![Ticket Detail — AI Assistant Panel]({{ '/assets/images/ai-agent/ticket-detail-n.png' | relative_url }})
 
 ### One-Click Analysis
 
@@ -145,7 +145,7 @@ Click **Run AI Assistant** (or the lightning bolt icon) to trigger automated ana
 
 ### AI Chat
 
-![AI Chat Panel]({{ '/assets/images/ai-agent/ai-chat-panel.png' | relative_url }})
+![AI Chat Panel]({{ '/assets/images/ai-agent/ai-chat-panel-n.png' | relative_url }})
 
 Click **Chat** to open an interactive conversation scoped to the current ticket:
 
