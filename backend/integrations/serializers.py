@@ -34,6 +34,6 @@ class IntegrationSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         t = data.get('type') or (self.instance.type if self.instance else None)
-        if t and t != 'elasticsearch':
-            raise serializers.ValidationError('only elasticsearch integrations are supported')
+        if t and t not in {'elasticsearch', 'kibana'}:
+            raise serializers.ValidationError('only elasticsearch and kibana integrations are supported')
         return data
