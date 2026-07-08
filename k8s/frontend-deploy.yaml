@@ -23,7 +23,7 @@ spec:
 
       containers:
       - name: nextjs
-        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-frontend:v0.71
+        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-frontend:v0.72
         ports:
         - containerPort: 3000
         securityContext:
