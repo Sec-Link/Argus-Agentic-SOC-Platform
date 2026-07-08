@@ -229,16 +229,3 @@ In production we recommend:
 
 
 ---
-
-## 11. License
-
-Please review `LICENSE.md` before using this project for production, distribution, or hosted services.
-
-## 12. Star History
-<a href="https://www.star-history.com/?repos=Sec-Link%2FArgus-Agentic-SOC-Platform&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Sec-Link/Argus-Agentic-SOC-Platform&type=date&legend=top-left" />
- </picture>
-</a>
