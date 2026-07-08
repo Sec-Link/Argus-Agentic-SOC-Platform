@@ -14,11 +14,15 @@ from .services import append_rule_version, summarize_payload_changes, user_name_
 
 
 def kibana_integration() -> Integration | None:
-    qs = Integration.objects.filter(type="elasticsearch").order_by("-updated_at", "-created_at")
-    for item in qs:
-        cfg = item.config or {}
-        if cfg.get("host"):
-            return item
+    qs = Integration.objects.filter(type__in=["kibana", "elasticsearch"]).order_by("-updated_at", "-created_at")
+    items = list(qs)
+    for preferred_type in ("kibana", "elasticsearch"):
+        for item in items:
+            if item.type != preferred_type:
+                continue
+            cfg = item.config or {}
+            if cfg.get("host"):
+                return item
     return None
 
 

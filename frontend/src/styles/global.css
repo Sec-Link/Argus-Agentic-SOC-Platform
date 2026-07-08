@@ -1,4 +1,4 @@
-﻿/* Global CSS entry for Next.js App Router */
+/* Global CSS entry for Next.js App Router */
 
 html, body {
   padding: 0;
@@ -1759,10 +1759,40 @@ html, body {
   color: #c4b5fd;
 }
 
+.soc-ai-assistant-subtitle {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.theme-dark .soc-ai-assistant-subtitle {
+  color: #aebdda;
+}
+
+.sla-muted-text {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+.theme-dark .sla-muted-text {
+  color: #8fa2c4;
+}
+
+.sla-ai-chat-history-panel {
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.theme-dark .sla-ai-chat-history-panel,
+.sla-ai-chat-modal-dark .sla-ai-chat-history-panel {
+  border-color: rgba(101, 150, 255, 0.28);
+  background: #0b1329;
+}
+
 .theme-dark .json-token-punctuation {
   color: #b6c7e6;
 }
-
 @keyframes slaStatusBreatheBlue {
   0% {
     box-shadow: 0 0 8px rgba(47, 124, 255, 0.35);
@@ -1788,4 +1818,263 @@ html, body {
   .login-cyber-glow {
     animation: none;
   }
+}
+
+
+.theme-dark .sla-chat-load-earlier-btn.ant-btn,
+.sla-ai-chat-modal-dark .sla-chat-load-earlier-btn.ant-btn {
+  border-color: rgba(125, 211, 252, 0.36);
+  background: rgba(14, 37, 73, 0.9);
+  color: #dbeafe;
+}
+
+.theme-dark .sla-chat-load-earlier-btn.ant-btn:hover:not(:disabled),
+.sla-ai-chat-modal-dark .sla-chat-load-earlier-btn.ant-btn:hover:not(:disabled) {
+  border-color: rgba(125, 211, 252, 0.72);
+  background: rgba(20, 54, 102, 0.96);
+  color: #ffffff;
+}
+
+.theme-dark .sla-chat-load-earlier-btn.ant-btn:disabled,
+.sla-ai-chat-modal-dark .sla-chat-load-earlier-btn.ant-btn:disabled {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.72);
+  color: #7f8faa;
+  opacity: 1;
+}
+.sla-ai-chat-modal-dark .ant-modal-content,
+.sla-ai-chat-modal-dark .ant-modal-header {
+  background: #0b1426;
+}
+
+.sla-ai-chat-modal-dark .ant-modal-title,
+.sla-ai-chat-modal-dark .ant-modal-close {
+  color: #dbeafe;
+}
+
+.sla-ai-chat-modal-dark .ant-modal-body {
+  color: #dbeafe;
+}
+
+.sla-ai-chat-modal-dark .ant-empty-description {
+  color: #9fb1d1;
+}
+
+.sla-ai-chat-modal-dark .ant-input,
+.sla-ai-chat-modal-dark .ant-input-affix-wrapper {
+  background: #0f1b31;
+  border-color: rgba(101, 150, 255, 0.38);
+  color: #dbeafe;
+}
+
+.sla-ai-chat-modal-dark .ant-input::placeholder {
+  color: #7f8faa;
+}
+
+.sla-ai-chat-modal.ant-modal-wrap {
+  overflow: hidden;
+}
+
+.sla-ai-chat-modal .ant-modal {
+  margin: 0 0 0 auto;
+  padding-bottom: 0;
+  position: absolute;
+}
+
+.sla-ai-chat-drawer-modal.ant-modal {
+  width: 320px;
+  min-width: 320px;
+  max-width: calc(100vw - 24px);
+  min-height: 360px;
+  max-height: calc(100vh - 24px);
+}
+
+.sla-ai-chat-drawer-modal .ant-modal-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sla-ai-chat-drawer-modal .ant-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sla-ai-chat-resizable-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.sla-ai-chat-resizable-panel .sla-ai-chat-history-panel {
+  flex: 1 1 auto;
+  min-height: 180px;
+  max-height: none;
+}
+
+.sla-ai-chat-resize-handle {
+  position: absolute;
+  z-index: 3;
+}
+
+.sla-ai-chat-resize-left {
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.sla-ai-chat-resize-bottom {
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.sla-ai-chat-resize-corner {
+  left: -7px;
+  bottom: -7px;
+  width: 18px;
+  height: 18px;
+  cursor: nesw-resize;
+}
+
+.sla-ai-chat-drawer-modal .ant-modal-content::before,
+.sla-ai-chat-drawer-modal .ant-modal-content::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.sla-ai-chat-drawer-modal .ant-modal-content::before {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid rgba(125, 211, 252, 0.28);
+}
+
+.sla-ai-chat-drawer-modal .ant-modal-content::after {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-bottom: 2px solid rgba(125, 211, 252, 0.28);
+}
+
+.sla-ai-trace-card {
+  padding: 10px;
+  border-radius: 6px;
+  border-left-width: 4px;
+  border-left-style: solid;
+}
+
+.sla-ai-trace-card-iteration {
+  border-left-color: #1677ff;
+  background: #f0f5ff;
+}
+
+.sla-ai-trace-card-model {
+  border-left-color: #8c8c8c;
+  background: #fafafa;
+}
+
+.sla-ai-trace-card-detected,
+.sla-ai-trace-card-thinking {
+  border-left-color: #722ed1;
+  background: #f9f0ff;
+}
+
+.sla-ai-trace-card-call {
+  border-left-color: #fa8c16;
+  background: #fff7e6;
+}
+
+.sla-ai-trace-card-success {
+  border-left-color: #52c41a;
+  background: #f6ffed;
+}
+
+.sla-ai-trace-card-error {
+  border-left-color: #ff4d4f;
+  background: #fff1f0;
+}
+
+.sla-ai-trace-card-summary {
+  border-left-color: #13c2c2;
+  background: #e6fffb;
+}
+
+.sla-ai-trace-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #595959;
+}
+
+.sla-ai-trace-pre {
+  margin-top: 8px;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre;
+  overflow: auto;
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card {
+  color: #dbeafe;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card-iteration {
+  background: rgba(22, 119, 255, 0.16);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card-model {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card-detected,
+.sla-ai-chat-modal-dark .sla-ai-trace-card-thinking {
+  background: rgba(114, 46, 209, 0.16);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card-call {
+  background: rgba(250, 140, 22, 0.16);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card-success {
+  background: rgba(82, 196, 26, 0.16);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card-error {
+  background: rgba(255, 77, 79, 0.16);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-card-summary {
+  background: rgba(19, 194, 194, 0.16);
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-meta {
+  color: #9fb1d1;
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-pre {
+  background: #0f1b31;
+  border-color: rgba(101, 150, 255, 0.28);
+  color: #dbeafe;
+}
+
+.sla-ai-trace-collapsed {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.sla-ai-chat-modal-dark .sla-ai-trace-collapsed {
+  color: #c7d2fe;
 }

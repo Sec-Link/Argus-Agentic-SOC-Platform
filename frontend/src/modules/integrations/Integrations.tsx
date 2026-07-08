@@ -27,6 +27,7 @@ const { Title, Text } = Typography;
 
 type AuthType = 'none' | 'basic' | 'api_key';
 type ProtocolType = 'https' | 'http';
+type ConnectorKind = 'elasticsearch' | 'kibana';
 
 type ElasticFormData = {
   name: string;
@@ -41,17 +42,31 @@ type ElasticFormData = {
   path: string;
 };
 
-const DEFAULT_FORM: ElasticFormData = {
-  name: 'Elastic Stack (ELK)',
-  protocol: 'https',
-  host: '',
-  port: 9200,
-  authType: 'none',
-  username: '',
-  password: '',
-  apiKey: '',
-  index: 'alerts',
-  path: '/_cluster/health',
+const CONNECTOR_DEFAULTS: Record<ConnectorKind, ElasticFormData> = {
+  elasticsearch: {
+    name: 'Elastic Stack (ELK)',
+    protocol: 'https',
+    host: '',
+    port: 9200,
+    authType: 'none',
+    username: '',
+    password: '',
+    apiKey: '',
+    index: 'alerts',
+    path: '/_cluster/health',
+  },
+  kibana: {
+    name: 'Kibana',
+    protocol: 'https',
+    host: '',
+    port: 5601,
+    authType: 'none',
+    username: '',
+    password: '',
+    apiKey: '',
+    index: '',
+    path: '/api/status',
+  },
 };
 
 const HOST_PATTERN = /^(localhost|(([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+)|(\d{1,3}(\.\d{1,3}){3}))$/;
@@ -60,8 +75,9 @@ const Integrations: React.FC = () => {
   const [items, setItems] = useState<any[]>([]);
   const [isReadonly, setIsReadonly] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [connectorKind, setConnectorKind] = useState<ConnectorKind>('elasticsearch');
   const [editingItem, setEditingItem] = useState<any | null>(null);
-  const [formData, setFormData] = useState<ElasticFormData>(DEFAULT_FORM);
+  const [formData, setFormData] = useState<ElasticFormData>(CONNECTOR_DEFAULTS.elasticsearch);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [hostTouched, setHostTouched] = useState(false);
@@ -84,6 +100,10 @@ const Integrations: React.FC = () => {
 
   const elkItems = useMemo(
     () => (Array.isArray(items) ? items.filter((item: any) => item?.type === 'elasticsearch') : []),
+    [items]
+  );
+  const kibanaItems = useMemo(
+    () => (Array.isArray(items) ? items.filter((item: any) => item?.type === 'kibana') : []),
     [items]
   );
 
@@ -110,59 +130,63 @@ const Integrations: React.FC = () => {
   };
 
   // Parse persisted integration config into UI-friendly fields.
-  const normalizeFromItem = (item: any): ElasticFormData => {
+  const normalizeFromItem = (item: any, kind: ConnectorKind): ElasticFormData => {
+    const defaults = CONNECTOR_DEFAULTS[kind];
     const cfg = item?.config || {};
     const hostRaw = String(cfg.host || item?.host || '').trim();
-    let protocol: ProtocolType = 'https';
+    let protocol: ProtocolType = defaults.protocol;
     let host = '';
-    let port = 9200;
+    let port = defaults.port;
     try {
       const parsed = new URL(hostRaw);
       protocol = parsed.protocol === 'http:' ? 'http' : 'https';
       host = parsed.hostname;
-      port = parsed.port ? Number(parsed.port) : 9200;
+      port = parsed.port ? Number(parsed.port) : defaults.port;
     } catch {
       host = hostRaw.replace(/^https?:\/\//, '').split(':')[0] || '';
       const maybePort = Number(hostRaw.split(':').pop());
-      port = Number.isFinite(maybePort) && maybePort > 0 ? maybePort : 9200;
+      port = Number.isFinite(maybePort) && maybePort > 0 ? maybePort : defaults.port;
     }
 
     const authType: AuthType = cfg.auth_type === 'basic' || cfg.auth_type === 'api_key' ? cfg.auth_type : 'none';
 
     return {
-      name: item?.name || 'Elastic Stack (ELK)',
+      name: item?.name || defaults.name,
       protocol,
       host,
-      port: port >= 1 && port <= 65535 ? port : 9200,
+      port: port >= 1 && port <= 65535 ? port : defaults.port,
       authType,
       username: String(cfg.username || ''),
       password: String(cfg.password || ''),
       apiKey: String(cfg.api_key || ''),
-      index: String(cfg.index || 'alerts'),
-      path: String(cfg.path || '/_cluster/health'),
+      index: String(cfg.index || defaults.index),
+      path: String(cfg.path || defaults.path),
     };
   };
 
   const resetModalState = () => {
     setEditingItem(null);
-    setFormData(DEFAULT_FORM);
+    setConnectorKind('elasticsearch');
+    setFormData(CONNECTOR_DEFAULTS.elasticsearch);
     setHostTouched(false);
     setTesting(false);
     setSaving(false);
   };
 
-  // Clicking ELK card (or edit) opens modal with existing values if available.
-  const openFromCard = (item?: any) => {
+  // Clicking a connector card opens modal with existing values if available.
+  const openFromCard = (kind: ConnectorKind, item?: any) => {
+    const defaults = CONNECTOR_DEFAULTS[kind];
+    setConnectorKind(kind);
     setHostTouched(false);
     if (item) {
       setEditingItem(item);
-      const normalized = normalizeFromItem(item);
+      const normalized = normalizeFromItem(item, kind);
       setFormData(normalized);
       setIndicesList(normalized.index ? [normalized.index] : []);
     } else {
       setEditingItem(null);
-      setFormData(DEFAULT_FORM);
-      setIndicesList([DEFAULT_FORM.index]);
+      setFormData(defaults);
+      setIndicesList(defaults.index ? [defaults.index] : []);
     }
     setModalOpen(true);
   };
@@ -195,7 +219,7 @@ const Integrations: React.FC = () => {
       return false;
     }
     if (!forTesting) {
-      if (!formData.index.trim()) {
+      if (connectorKind === 'elasticsearch' && !formData.index.trim()) {
         message.warning('Target index is required.');
         return false;
       }
@@ -220,16 +244,19 @@ const Integrations: React.FC = () => {
 
   // Serialize form into backend payload contract.
   const toIntegrationPayload = () => {
+    const defaults = CONNECTOR_DEFAULTS[connectorKind];
     const host = buildHostUrl();
     const cfg: any = {
       host,
-      index: formData.index.trim() || 'alerts',
-      path: formData.path.trim() || '/_cluster/health',
+      path: formData.path.trim() || defaults.path,
       protocol: formData.protocol,
       port: formData.port,
       auth_type: formData.authType,
       verify_certs: formData.protocol === 'https',
     };
+    if (connectorKind === 'elasticsearch') {
+      cfg.index = formData.index.trim() || defaults.index;
+    }
 
     if (formData.authType === 'basic') {
       cfg.username = formData.username.trim();
@@ -246,8 +273,8 @@ const Integrations: React.FC = () => {
     }
 
     return {
-      name: formData.name.trim() || 'Elastic Stack (ELK)',
-      type: 'elasticsearch',
+      name: formData.name.trim() || defaults.name,
+      type: connectorKind,
       config: cfg,
     };
   };
@@ -375,7 +402,7 @@ const Integrations: React.FC = () => {
   };
 
   type IntegrationCardConfig = {
-    key: 'elastic' | 'splunk';
+    key: 'elastic' | 'kibana' | 'splunk';
     title: string;
     subtitle: string;
     description: string;
@@ -387,6 +414,7 @@ const Integrations: React.FC = () => {
   };
 
   const elasticInstalled = Boolean(elkItems[0]?.id && elkItems[0]?.config?.host);
+  const kibanaInstalled = Boolean(kibanaItems[0]?.id && kibanaItems[0]?.config?.host);
   const integrationCards: IntegrationCardConfig[] = [
     {
       key: 'elastic',
@@ -395,8 +423,18 @@ const Integrations: React.FC = () => {
       description: 'Ingest and analyze security event logs and system metrics via automated cluster pipelines.',
       logo: '/elastic-logo.png',
       isInstalled: elasticInstalled,
-      onConfigure: () => openFromCard(elkItems[0]),
+      onConfigure: () => openFromCard('elasticsearch', elkItems[0]),
       onUninstall: elkItems[0]?.id ? () => handleDelete(elkItems[0]) : undefined,
+    },
+    {
+      key: 'kibana',
+      title: 'Kibana',
+      subtitle: 'Kibana Connector',
+      description: 'Publish detection rules and actions through Kibana APIs without configuring an ingestion target mapping.',
+      logo: '/elastic-logo.png',
+      isInstalled: kibanaInstalled,
+      onConfigure: () => openFromCard('kibana', kibanaItems[0]),
+      onUninstall: kibanaItems[0]?.id ? () => handleDelete(kibanaItems[0]) : undefined,
     },
     {
       key: 'splunk',
@@ -563,7 +601,7 @@ const Integrations: React.FC = () => {
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <img src="/elastic-logo.png" alt="Elastic logo" style={{ width: 22, height: 22, objectFit: 'contain' }} />
-            <span>Configure Elasticsearch</span>
+            <span>{connectorKind === 'kibana' ? 'Configure Kibana' : 'Configure Elasticsearch'}</span>
           </div>
         }
         open={modalOpen && !isReadonly}
@@ -699,33 +737,37 @@ const Integrations: React.FC = () => {
             </div>
           )}
 
-          <Divider style={{ margin: '2px 0' }}>Target Mapping</Divider>
+          {connectorKind === 'elasticsearch' && (
+            <>
+              <Divider style={{ margin: '2px 0' }}>Target Mapping</Divider>
 
-          <div style={{ maxWidth: 560 }}>
-            <Text strong>Target Index / Index Pattern</Text>
-            <Space.Compact style={{ width: '100%', marginTop: 6 }}>
-              <Select
-                showSearch
-                allowClear
-                value={formData.index || undefined}
-                placeholder="e.g., alerts-linux-*"
-                disabled={testing || saving}
-                loading={indicesLoading}
-                style={{ width: '100%' }}
-                options={indicesList.map((idx) => ({ label: idx, value: idx }))}
-                onChange={(v) => setField('index', String(v || ''))}
-                onSearch={(v) => setField('index', v)}
-                filterOption={(input, option) =>
-                  String(option?.label || '')
-                    .toLowerCase()
-                    .includes(input.toLowerCase())
-                }
-              />
-              <Button onClick={handleFetchIndices} loading={indicesLoading} disabled={testing || saving}>
-                Fetch Indices
-              </Button>
-            </Space.Compact>
-          </div>
+              <div style={{ maxWidth: 560 }}>
+                <Text strong>Target Index / Index Pattern</Text>
+                <Space.Compact style={{ width: '100%', marginTop: 6 }}>
+                  <Select
+                    showSearch
+                    allowClear
+                    value={formData.index || undefined}
+                    placeholder="e.g., alerts-linux-*"
+                    disabled={testing || saving}
+                    loading={indicesLoading}
+                    style={{ width: '100%' }}
+                    options={indicesList.map((idx) => ({ label: idx, value: idx }))}
+                    onChange={(v) => setField('index', String(v || ''))}
+                    onSearch={(v) => setField('index', v)}
+                    filterOption={(input, option) =>
+                      String(option?.label || '')
+                        .toLowerCase()
+                        .includes(input.toLowerCase())
+                    }
+                  />
+                  <Button onClick={handleFetchIndices} loading={indicesLoading} disabled={testing || saving}>
+                    Fetch Indices
+                  </Button>
+                </Space.Compact>
+              </div>
+            </>
+          )}
 
           <div>
             <Text type="secondary" style={{ fontSize: 12, opacity: 0.8 }}>

@@ -68,3 +68,10 @@ Thumbs.db
 # Ruby / Jekyll
 **/Gemfile
 **/Gemfile.lock
+# tmp cache
+tmp_cache/
+# MITRE ATT&CK data is fetched during deployment by sync_mitre_attack_dicts.
+backend/detections/mitre_attack_stub.json
+
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo

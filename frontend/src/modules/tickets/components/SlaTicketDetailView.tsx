@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -411,6 +411,8 @@ export default function SlaTicketDetailView(props: Props) {
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
+  const [chatWidthTouched, setChatWidthTouched] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; hidden?: boolean; trace?: any[] }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
@@ -437,6 +439,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelValue, setNewLabelValue] = useState('');
   const [labelsSaving, setLabelsSaving] = useState(false);
+  const aiAssistantCardRef = useRef<HTMLDivElement | null>(null);
 
   const notesCount = workLogs?.length ?? 0;
 
@@ -652,6 +655,18 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   const openChat = () => {
+    const anchor = aiAssistantCardRef.current?.getBoundingClientRect();
+    if (anchor) {
+      const right = Math.max(12, window.innerWidth - anchor.right);
+      const top = Math.max(12, anchor.top);
+      const maxHeight = Math.max(360, window.innerHeight - top - 12);
+      setChatSize((prev) => ({
+        width: chatWidthTouched ? prev.width : Math.max(320, Math.round(anchor.width)),
+        height: Math.min(prev.height, maxHeight),
+        right,
+        top,
+      }));
+    }
     setChatOpen(true);
     if (!chatMessages.length) {
       loadChatHistory();
@@ -1082,6 +1097,35 @@ export default function SlaTicketDetailView(props: Props) {
   }, [showEmpty, ticket]);
 
   const labelItems = useMemo(() => formatTicketLabels(editableLabels), [editableLabels]);
+  const isDarkTheme = typeof window !== 'undefined' && localStorage.getItem('siem_ui_theme') === 'dark';
+  const startChatResize = (axis: 'width' | 'height' | 'both') => (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = chatSize.width;
+    const startHeight = chatSize.height;
+    const maxWidth = Math.max(320, window.innerWidth - chatSize.right - 12);
+    const maxHeight = Math.max(360, window.innerHeight - 210);
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const nextWidth = axis === 'height' ? startWidth : Math.min(maxWidth, Math.max(320, startWidth + startX - moveEvent.clientX));
+      if (axis !== 'height') setChatWidthTouched(true);
+      const nextHeight = axis === 'width' ? startHeight : Math.min(maxHeight, Math.max(360, startHeight + moveEvent.clientY - startY));
+      setChatSize((prev) => ({ ...prev, width: nextWidth, height: nextHeight }));
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = axis === 'width' ? 'ew-resize' : axis === 'height' ? 'ns-resize' : 'nesw-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
 
   const saveLabels = async (
     nextLabels: Array<{ label_name: string; label_value: string }>,
@@ -1299,7 +1343,7 @@ export default function SlaTicketDetailView(props: Props) {
                       ))}
                     </div>
                   ) : (
-                    <span style={{ color: 'rgba(0,0,0,0.35)' }}>No labels</span>
+                    <span className="sla-muted-text">No labels</span>
                   )}
                 </div>
               </Card>
@@ -1537,13 +1581,13 @@ export default function SlaTicketDetailView(props: Props) {
               </Card>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div ref={aiAssistantCardRef} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <Card size="small" title="SOC AI Assistant">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#e6f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>AI</div>
                 <div>
                   <div style={{ fontWeight: 600 }}>AI Assistant</div>
-                  <div style={{ color: 'rgba(0,0,0,0.45)' }}>Alert interpretation and summary</div>
+                  <div className="soc-ai-assistant-subtitle">Alert interpretation and summary</div>
                 </div>
               </div>
               <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
@@ -1673,15 +1717,22 @@ export default function SlaTicketDetailView(props: Props) {
       <Modal
         title={`Chat - ${ticket.ticket_number}`}
         open={chatOpen}
+        wrapClassName={isDarkTheme ? 'sla-ai-chat-modal sla-ai-chat-modal-dark' : 'sla-ai-chat-modal'}
+        className="sla-ai-chat-drawer-modal"
         onCancel={() => setChatOpen(false)}
         footer={null}
-        width={1040}
-        styles={{ body: { maxHeight: '72vh', overflow: 'auto' } }}
+        width={chatSize.width}
+        centered={false}
+        style={{ top: chatSize.top, right: chatSize.right }}
+        styles={{ body: { padding: 0, overflow: 'hidden', height: '100%' }, content: { height: chatSize.height } }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, background: '#fafafa', maxHeight: 460, overflow: 'auto' }}>
+        <div className="sla-ai-chat-resize-handle sla-ai-chat-resize-left" onMouseDown={startChatResize('width')} />
+        <div className="sla-ai-chat-resize-handle sla-ai-chat-resize-bottom" onMouseDown={startChatResize('height')} />
+        <div className="sla-ai-chat-resize-handle sla-ai-chat-resize-corner" onMouseDown={startChatResize('both')} />
+        <div className="sla-ai-chat-resizable-panel">
+          <div className="sla-ai-chat-history-panel">
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <Button size="small" onClick={loadMoreChatHistory} loading={chatMoreLoading} disabled={!chatNextBefore}>
+              <Button className="sla-chat-load-earlier-btn" size="small" onClick={loadMoreChatHistory} loading={chatMoreLoading} disabled={!chatNextBefore}>
                 Load earlier
               </Button>
               <Button
@@ -1731,37 +1782,37 @@ export default function SlaTicketDetailView(props: Props) {
                             )}
                           >
                             {collapsedTraces[idx] ? (
-                              <div style={{ color: '#8c8c8c' }}>Collapsed</div>
+                              <div className="sla-ai-trace-collapsed">Collapsed</div>
                             ) : (
                             <div style={{ maxHeight: 360, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
                               {msg.trace.map((evt: any, stepIdx: number) => {
                                 if (evt.type === 'iteration_start') {
                                   return (
-                                    <div key={`it_${stepIdx}`} style={{ padding: 10, borderLeft: '4px solid #1677ff', background: '#f0f5ff', borderRadius: 6 }}>
+                                    <div key={`it_${stepIdx}`} className="sla-ai-trace-card sla-ai-trace-card-iteration">
                                       <div style={{ fontWeight: 600 }}>Iteration {evt.iteration}</div>
                                     </div>
                                   );
                                 }
                                 if (evt.type === 'model_call') {
                                   return (
-                                    <div key={`mc_${stepIdx}`} style={{ padding: 10, borderLeft: '4px solid #8c8c8c', background: '#fafafa', borderRadius: 6 }}>
+                                    <div key={`mc_${stepIdx}`} className="sla-ai-trace-card sla-ai-trace-card-model">
                                       <div style={{ fontWeight: 600 }}>Calling AI model...</div>
                                     </div>
                                   );
                                 }
                                 if (evt.type === 'tool_calls_detected') {
                                   return (
-                                    <div key={`tc_${stepIdx}`} style={{ padding: 10, borderLeft: '4px solid #722ed1', background: '#f9f0ff', borderRadius: 6 }}>
+                                    <div key={`tc_${stepIdx}`} className="sla-ai-trace-card sla-ai-trace-card-detected">
                                       Detected {evt.count || 0} tool call(s)
                                     </div>
                                   );
                                 }
                                 if (evt.type === 'tool_call') {
                                   return (
-                                    <div key={`call_${stepIdx}`} style={{ padding: 10, borderLeft: '4px solid #fa8c16', background: '#fff7e6', borderRadius: 6 }}>
+                                    <div key={`call_${stepIdx}`} className="sla-ai-trace-card sla-ai-trace-card-call">
                                       <div style={{ fontWeight: 600 }}>Call tool: {evt.tool}</div>
-                                      <div style={{ fontSize: 12, color: '#595959', marginTop: 4 }}>{evt.endpoint || evt.source}</div>
-                                      <pre style={{ marginTop: 8, background: '#fff', border: '1px solid #f0f0f0', padding: 8, borderRadius: 6, whiteSpace: 'pre', overflow: 'auto' }}>
+                                      <div className="sla-ai-trace-meta">{evt.endpoint || evt.source}</div>
+                                      <pre className="sla-ai-trace-pre">
 {JSON.stringify(evt.arguments || {}, null, 2)}
                                       </pre>
                                     </div>
@@ -1769,13 +1820,13 @@ export default function SlaTicketDetailView(props: Props) {
                                 }
                                 if (evt.type === 'tool_result') {
                                   return (
-                                    <div key={`res_${stepIdx}`} style={{ padding: 10, borderLeft: `4px solid ${evt.success ? '#52c41a' : '#ff4d4f'}`, background: evt.success ? '#f6ffed' : '#fff1f0', borderRadius: 6 }}>
+                                    <div key={`res_${stepIdx}`} className={evt.success ? "sla-ai-trace-card sla-ai-trace-card-success" : "sla-ai-trace-card sla-ai-trace-card-error"}>
                                       <div style={{ fontWeight: 600 }}>Tool {evt.tool} {evt.success ? 'completed' : 'failed'}</div>
-                                      <pre style={{ marginTop: 8, background: '#fff', border: '1px solid #f0f0f0', padding: 8, borderRadius: 6, whiteSpace: 'pre', overflow: 'auto' }}>
+                                      <pre className="sla-ai-trace-pre">
 {String(evt.content || '')}
                                       </pre>
                                       {evt.execution_id ? (
-                                        <div style={{ marginTop: 6, fontSize: 12, color: '#8c8c8c' }}>
+                                        <div className="sla-ai-trace-meta">
                                           Execution ID: {evt.execution_id}
                                         </div>
                                       ) : null}
@@ -1784,7 +1835,7 @@ export default function SlaTicketDetailView(props: Props) {
                                 }
                                 if (evt.type === 'assistant_response') {
                                   return (
-                                    <div key={`ar_${stepIdx}`} style={{ padding: 10, borderLeft: '4px solid #13c2c2', background: '#e6fffb', borderRadius: 6 }}>
+                                    <div key={`ar_${stepIdx}`} className="sla-ai-trace-card sla-ai-trace-card-summary">
                                       <div style={{ fontWeight: 600 }}>Analysis summary</div>
                                       <div style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{evt.content}</div>
                                     </div>
@@ -1792,7 +1843,7 @@ export default function SlaTicketDetailView(props: Props) {
                                 }
                                 if (evt.type === 'analysis_summary') {
                                   return (
-                                    <div key={`as_${stepIdx}`} style={{ padding: 10, borderLeft: '4px solid #722ed1', background: '#f9f0ff', borderRadius: 6 }}>
+                                    <div key={`as_${stepIdx}`} className="sla-ai-trace-card sla-ai-trace-card-thinking">
                                       <div style={{ fontWeight: 600 }}>AI thinking</div>
                                       <div style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{evt.content}</div>
                                     </div>
@@ -1800,7 +1851,7 @@ export default function SlaTicketDetailView(props: Props) {
                                 }
                                 if (evt.type === 'model_error') {
                                   return (
-                                    <div key={`err_${stepIdx}`} style={{ padding: 10, borderLeft: '4px solid #ff4d4f', background: '#fff1f0', borderRadius: 6 }}>
+                                    <div key={`err_${stepIdx}`} className="sla-ai-trace-card sla-ai-trace-card-error">
                                       Model error: {evt.error}
                                     </div>
                                   );
