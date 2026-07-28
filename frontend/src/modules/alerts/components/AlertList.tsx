@@ -314,17 +314,19 @@ const AlertList: React.FC = () => {
             width: 180,
             ellipsis: true,
             render: (_: any, row: any) => {
-              const name = row.rule_name || row.rule_id;
-              const id = row.rule_id;
-              if (!name) return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
-              if (id) {
-                return (
-                  <Link href={`/detections/rules/${id}`} onClick={(e) => e.stopPropagation()}>
-                    {String(name)}
-                  </Link>
-                );
-              }
-              return <span>{String(name)}</span>;
+              // Only link when the alert's rule_id resolved to a live row in the
+              // detection_rule table (backend sets detection_rule_id on match).
+              // Otherwise leave the field empty.
+              const detectionId = row.detection_rule_id;
+              if (!detectionId) return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
+              return (
+                <Link
+                  href={`/settings/detection/rules/${encodeURIComponent(String(detectionId))}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {String(row.rule_name || detectionId)}
+                </Link>
+              );
             },
           },
           ]}
@@ -375,20 +377,18 @@ const AlertList: React.FC = () => {
               </div>
             </div>
 
-            {(selectedAlert.rule_id || selectedAlert.rule_name) && (
-              <div>
-                <Text strong>Detection Rule</Text>
-                <div style={{ marginTop: 6 }}>
-                  {selectedAlert.rule_id ? (
-                    <Link href={`/detections/rules/${selectedAlert.rule_id}`}>
-                      {selectedAlert.rule_name || selectedAlert.rule_id}
-                    </Link>
-                  ) : (
-                    <span>{selectedAlert.rule_name}</span>
-                  )}
-                </div>
+            <div>
+              <Text strong>Detection Rule</Text>
+              <div style={{ marginTop: 6 }}>
+                {selectedAlert.detection_rule_id ? (
+                  <Link href={`/settings/detection/rules/${encodeURIComponent(String(selectedAlert.detection_rule_id))}`}>
+                    {selectedAlert.rule_name || selectedAlert.detection_rule_id}
+                  </Link>
+                ) : (
+                  <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>
+                )}
               </div>
-            )}
+            </div>
 
             <div>
               <Text strong>Raw Context</Text>

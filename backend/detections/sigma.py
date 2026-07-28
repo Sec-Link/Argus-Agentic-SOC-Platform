@@ -534,7 +534,20 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
     candidates = _mapping_candidates(parsed)
     index_patterns = _elastic_index_patterns_for_profiles(candidates)
     multivalue_fields = _elastic_multivalue_fields_for_profiles(candidates)
-    components = _sigma_runtime()
+
+    try:
+        components = _sigma_runtime()
+    except Exception as exc:
+        # The Sigma compiler backend (e.g. pySigma-backend-elasticsearch) may be
+        # missing or fail to import. Compilation is optional for viewing a rule,
+        # so degrade gracefully instead of 500ing the whole detail response.
+        return {
+            "profiles": candidates,
+            "elastic_index_patterns": index_patterns,
+            "language": "esql",
+            "esql": "*",
+            "error": f"Sigma compiler unavailable: {str(exc).strip() or exc.__class__.__name__}",
+        }
 
     try:
         esql_queries = _render_queries(components["ESQLBackend"], yaml_text, candidates)
