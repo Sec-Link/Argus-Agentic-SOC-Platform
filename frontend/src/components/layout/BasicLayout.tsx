@@ -345,6 +345,49 @@ export default function BasicLayout({
           background: var(--menu-selected-bg) !important;
           box-shadow: inset 2px 0 0 var(--menu-selected-edge);
         }
+        /* Collapsed rail: roomier vertical rhythm (AntD handles icon centering) */
+        .siem-menu-pale.ant-menu-inline-collapsed { padding-top: 6px; }
+        .siem-menu-pale.ant-menu-inline-collapsed .ant-menu-submenu-title,
+        .siem-menu-pale.ant-menu-inline-collapsed .ant-menu-item {
+          height: 48px !important;
+          line-height: 48px !important;
+          margin-block: 8px !important;
+        }
+        /* Collapsed flyout popover: elegant, legible category header */
+        .ant-menu-submenu-popup .ant-menu-item-group-title {
+          font-size: 13px;
+          font-weight: 600;
+          letter-spacing: 0.4px;
+          color: inherit;
+          opacity: 0.85;
+          padding: 10px 16px 8px;
+          margin-bottom: 2px;
+          border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+        }
+        /* Brand row divider separates the logo from the nav / toggle below */
+        .sidebar-brand-row {
+          border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+        }
+        /* Collapsed rail expand button: centered, compact rhythm with icons */
+        .sidebar-rail-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 40px;
+          margin: 6px 0 2px;
+        }
+        .sidebar-toggle-btn.ant-btn {
+          color: var(--text-primary);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          opacity: 0.8;
+          transition: opacity 160ms ease, background-color 160ms ease;
+        }
+        .sidebar-toggle-btn.ant-btn:hover {
+          opacity: 1;
+          background: var(--menu-hover-bg) !important;
+        }
         `}</style>
         <Sidebar
           siderWidth={siderWidth}

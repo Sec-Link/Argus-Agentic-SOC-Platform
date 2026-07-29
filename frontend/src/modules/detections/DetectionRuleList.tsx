@@ -1,6 +1,11 @@
 import React from "react";
 import { Button, Card, Input, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import { useResizableColumns } from "components/table/resizableColumns";
+
+const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, informational: 0 };
+const publishRank = (row: { publish_status?: string; kibana_enabled?: boolean }) =>
+  row.publish_status === "published" ? (row.kibana_enabled ? 2 : 1) : 0;
 
 type RuleRow = {
   id: string;
@@ -50,25 +55,56 @@ export default function DetectionRuleList(props: Props) {
   const [pageSize, setPageSize] = React.useState(12);
 
   const ruleColumns: ColumnsType<RuleRow> = [
-    { title: "Rule Name", dataIndex: "name", key: "name", render: (_, row) => <span style={{ fontWeight: 700 }}>{row.name || row.id}</span> },
+    {
+      title: "Rule Name",
+      dataIndex: "name",
+      key: "name",
+      width: 260,
+      sorter: (a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)),
+      render: (_, row) => <span style={{ fontWeight: 700 }}>{row.name || row.id}</span>,
+    },
     {
       title: "Severity",
       key: "level",
-      width: 100,
+      width: 110,
+      sorter: (a, b) =>
+        (SEVERITY_RANK[String(a.level || "medium").toLowerCase()] ?? 2) -
+        (SEVERITY_RANK[String(b.level || "medium").toLowerCase()] ?? 2),
       render: (_, row) => {
         const level = String(row.level || "medium").toLowerCase();
         const color = level === "critical" ? "red" : level === "high" ? "volcano" : level === "medium" ? "gold" : "blue";
         return <Tag color={color}>{level}</Tag>;
       },
     },
-    { title: "Status", key: "status", width: 100, render: (_, row) => <Tag color="orange">{row.status || "draft"}</Tag> },
-    { title: "Log Source", dataIndex: "logsource", key: "logsource", width: 220, render: (value) => value || "-" },
-    { title: "Profile", dataIndex: "profile", key: "profile", width: 200, render: (value) => value || "-" },
-    { title: "Tags", key: "tags", render: (_, row) => (Array.isArray(row.tags) && row.tags.length ? row.tags.join(", ") : "-") },
+    {
+      title: "Status",
+      key: "status",
+      width: 110,
+      sorter: (a, b) => String(a.status || "draft").localeCompare(String(b.status || "draft")),
+      render: (_, row) => <Tag color="orange">{row.status || "draft"}</Tag>,
+    },
+    {
+      title: "Log Source",
+      dataIndex: "logsource",
+      key: "logsource",
+      width: 220,
+      sorter: (a, b) => String(a.logsource || "").localeCompare(String(b.logsource || "")),
+      render: (value) => value || "-",
+    },
+    {
+      title: "Profile",
+      dataIndex: "profile",
+      key: "profile",
+      width: 200,
+      sorter: (a, b) => String(a.profile || "").localeCompare(String(b.profile || "")),
+      render: (value) => value || "-",
+    },
+    { title: "Tags", key: "tags", width: 220, render: (_, row) => (Array.isArray(row.tags) && row.tags.length ? row.tags.join(", ") : "-") },
     {
       title: "Published",
       key: "publish",
-      width: 140,
+      width: 160,
+      sorter: (a, b) => publishRank(a) - publishRank(b),
       render: (_, row) =>
         row.publish_status === "published" ? (
           <Tag color={row.kibana_enabled ? "green" : "gold"}>{row.kibana_enabled ? "Kibana Enabled" : "Published to Kibana"}</Tag>
@@ -77,6 +113,8 @@ export default function DetectionRuleList(props: Props) {
         ),
     },
   ];
+
+  const { columns: resizableRuleColumns, components: resizableComponents } = useResizableColumns(ruleColumns as any[]);
 
   return (
     <Card>
@@ -144,7 +182,8 @@ export default function DetectionRuleList(props: Props) {
         rowKey="id"
         loading={props.loading}
         dataSource={props.filteredRules}
-        columns={ruleColumns}
+        columns={resizableRuleColumns as ColumnsType<RuleRow>}
+        components={resizableComponents}
         rowSelection={{
           selectedRowKeys: props.selectedRuleIds,
           onChange: props.setSelectedRuleIds,
