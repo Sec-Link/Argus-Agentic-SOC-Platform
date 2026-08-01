@@ -3,6 +3,11 @@ set -e
 
 echo "Starting docker-entrypoint..."
 
+if [ "${DJANGO_DEPLOY_CHECK:-0}" = "1" ]; then
+  echo "Running Django deployment checks..."
+  python manage.py check --deploy --fail-level WARNING
+fi
+
 # Run database migrations
 echo "Running migrations..."
 python manage.py makemigrations --noinput

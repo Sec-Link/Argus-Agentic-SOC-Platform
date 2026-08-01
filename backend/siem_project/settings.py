@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 import os
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 
@@ -23,13 +24,59 @@ load_dotenv(BASE_DIR.parent / ".env")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+_DEV_SECRET_KEY = 'dev-secret-key-change-in-production'
+_PLACEHOLDER_SECRETS = {
+    '',
+    'xxx',
+    'change-me',
+    'change-me-in-production',
+    'replace-me',
+    'replace-with-a-generated-50-plus-character-random-secret',
+    _DEV_SECRET_KEY,
+}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).lower() in ('true', '1', 'yes', 'on')
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_list(name: str, default: str = '') -> list[str]:
+    return [x.strip() for x in os.getenv(name, default).split(',') if x.strip()]
+
+
+# SECURITY WARNING: keep the secret key used in production secret.
+SECRET_KEY = os.getenv('SECRET_KEY', _DEV_SECRET_KEY).strip()
+if not DEBUG and SECRET_KEY in _PLACEHOLDER_SECRETS:
+    raise ImproperlyConfigured('SECRET_KEY must be set to a non-placeholder value when DEBUG=False.')
+
+ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+if not DEBUG and '*' in ALLOWED_HOSTS:
+    raise ImproperlyConfigured('ALLOWED_HOSTS must not contain "*" when DEBUG=False.')
+
+CSRF_TRUSTED_ORIGINS = _env_list('CSRF_TRUSTED_ORIGINS')
+
+# Production security hardening. Keep redirect/HSTS configurable because some
+# deployments terminate TLS before Django, but default secure cookies in prod.
+SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', False)
+SECURE_HSTS_SECONDS = _env_int('SECURE_HSTS_SECONDS', 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', False)
+SECURE_HSTS_PRELOAD = _env_bool('SECURE_HSTS_PRELOAD', False)
+SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', not DEBUG)
+CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', not DEBUG)
+_SECURE_PROXY_SSL_HEADER = _env_list('SECURE_PROXY_SSL_HEADER')
+if _SECURE_PROXY_SSL_HEADER and len(_SECURE_PROXY_SSL_HEADER) != 2:
+    raise ImproperlyConfigured('SECURE_PROXY_SSL_HEADER must contain exactly two comma-separated values.')
+SECURE_PROXY_SSL_HEADER = tuple(_SECURE_PROXY_SSL_HEADER) if _SECURE_PROXY_SSL_HEADER else None
 
 
 # Application definition
@@ -201,7 +248,9 @@ OTP_AUTH_ENABLED = os.getenv('OTP_AUTH_ENABLED', 'true').lower() in ('true', '1'
 OTP_EXPIRY_MINUTES = int(os.getenv('OTP_EXPIRY_MINUTES', '10'))
 OTP_MAX_ATTEMPTS = int(os.getenv('OTP_MAX_ATTEMPTS', '5'))
 OTP_RESEND_COOLDOWN_SECONDS = int(os.getenv('OTP_RESEND_COOLDOWN_SECONDS', '60'))
-OTP_HASH_SECRET = os.getenv('OTP_HASH_SECRET', SECRET_KEY)
+OTP_HASH_SECRET = os.getenv('OTP_HASH_SECRET', SECRET_KEY).strip()
+if not DEBUG and OTP_HASH_SECRET in _PLACEHOLDER_SECRETS:
+    raise ImproperlyConfigured('OTP_HASH_SECRET must be unset or set to a non-placeholder value when DEBUG=False.')
 ADMIN_REGISTRATION_EMAILS = [
     x.strip() for x in os.getenv('ADMIN_REGISTRATION_EMAILS', '').split(',') if x.strip()
 ]
