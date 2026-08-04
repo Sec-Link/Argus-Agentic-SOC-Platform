@@ -75,3 +75,6 @@ backend/detections/mitre_attack_stub.json
 
 # TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo
+
+# Local AI tool config — not shared to the repo
+CLAUDE.md
