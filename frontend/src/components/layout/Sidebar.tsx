@@ -1,44 +1,78 @@
 'use client';
 
 import React from 'react';
-import { Layout, Menu, Button, message } from 'antd';
+import { Layout, Menu, Button, Tooltip, message } from 'antd';
 import {
-  DashboardOutlined,
-  BellOutlined,
-  UnorderedListOutlined,
-  AppstoreOutlined,
-  TeamOutlined,
-  LineChartOutlined,
-  LockOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  BranchesOutlined,
-  HddOutlined,
-  DeploymentUnitOutlined,
-  RadarChartOutlined,
-  ApiOutlined,
-} from '@ant-design/icons';
+  Gauge,
+  Search,
+  Network,
+  Zap,
+  Shield,
+  LayoutDashboard,
+  Bell,
+  Ticket,
+  Server,
+  Radar,
+  Plug,
+  Boxes,
+  GitCompare,
+  Cable,
+  Workflow,
+  Terminal,
+  KeyRound,
+  Bot,
+  UserCheck,
+  ScrollText,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react';
 import { keyToPath, permissionByKey, type RouteKey } from 'route';
 
 const { Sider } = Layout;
 
-function iconByKey(key: RouteKey) {
-  if (key === 'dashboard') return <DashboardOutlined />;
-  if (key === 'alerts') return <BellOutlined />;
-  if (key === 'tickets') return <UnorderedListOutlined />;
-  if (key === 'assets') return <HddOutlined />;
-  if (key === 'integrations') return <AppstoreOutlined />;
-  if (key === 'orchestrator') return <DeploymentUnitOutlined />;
-  if (key === 'interfaces') return <ApiOutlined />;
-  if (key === 'correlation') return <LineChartOutlined />;
-  if (key === 'detection') return <BellOutlined />;
-  if (key === 'workflows') return <BranchesOutlined />;
-  if (key === 'workflow-executions') return <RadarChartOutlined />;
-  if (key === 'permissions') return <LockOutlined />;
-  if (key === 'registration-approvals') return <LockOutlined />;
-  if (key === 'audit-logs') return <LockOutlined />;
-  if (key === 'ai-assistant') return <TeamOutlined />;
-  return null;
+const RAIL_WIDTH = 64;
+
+// Uniform lucide icon: inherits currentColor, sized to match AntD menu metrics.
+const Ic = (Icon: React.ComponentType<any>) => (
+  <Icon size={17} strokeWidth={1.9} style={{ verticalAlign: 'middle' }} />
+);
+
+// Semantic, unique icon per leaf route (SOC-oriented, no duplicates).
+function iconByKey(key: RouteKey): React.ReactNode {
+  switch (key) {
+    case 'dashboard':
+      return Ic(LayoutDashboard); // Overview
+    case 'alerts':
+      return Ic(Bell);
+    case 'tickets':
+      return Ic(Ticket);
+    case 'assets':
+      return Ic(Server);
+    case 'detection':
+      return Ic(Radar);
+    case 'integrations':
+      return Ic(Plug);
+    case 'orchestrator':
+      return Ic(Boxes);
+    case 'correlation':
+      return Ic(GitCompare);
+    case 'interfaces':
+      return Ic(Cable);
+    case 'workflows':
+      return Ic(Workflow);
+    case 'workflow-executions':
+      return Ic(Terminal);
+    case 'permissions':
+      return Ic(KeyRound); // Access Management
+    case 'ai-assistant':
+      return Ic(Bot);
+    case 'registration-approvals':
+      return Ic(UserCheck); // Approvals
+    case 'audit-logs':
+      return Ic(ScrollText);
+    default:
+      return null;
+  }
 }
 
 export default function Sidebar({
@@ -70,162 +104,183 @@ export default function Sidebar({
     Record<RouteKey, string>
   >;
   const routeLabel: Record<RouteKey, string> = {
-    // Singular: this route is the single global landing view.
     dashboard: 'Overview',
-    // Plural: list pages that manage multiple entities.
     alerts: 'Alerts',
     tickets: 'Tickets',
     assets: 'Assets',
     integrations: labelOverrides.integrations || 'Integrations',
-    // Singular: platform-level engines/config domains.
     orchestrator: labelOverrides.orchestrator || 'Orchestrator',
     interfaces: labelOverrides.interfaces || 'Interfaces',
     correlation: labelOverrides.correlation || 'Correlation',
     detection: labelOverrides.detection || 'Detection',
     permissions: labelOverrides.permissions || 'Access Management',
-    // Shortened for compact enterprise sidebar wording.
     'registration-approvals': labelOverrides['registration-approvals'] || 'Approvals',
     'audit-logs': labelOverrides['audit-logs'] || 'Audit Logs',
     workflows: labelOverrides.workflows || 'Workflows',
-    // Shortened from "Workflow Executions" to save horizontal space.
     'workflow-executions': labelOverrides['workflow-executions'] || 'Executions',
     'ai-assistant': labelOverrides['ai-assistant'] || 'AI Assistant',
     profile: 'Profile',
   };
 
+  // Group icons are distinct from their children (Monitoring ≠ Overview, etc.).
   const navGroups: Array<{ key: string; title: string; icon: React.ReactNode; items: RouteKey[] }> = [
-    {
-      key: 'monitorGroup',
-      // Gerund parent for high-level monitoring domain.
-      title: 'Monitoring',
-      icon: <DashboardOutlined />,
-      items: ['dashboard', 'alerts'],
-    },
-    {
-      key: 'investigationGroup',
-      title: 'Investigation',
-      icon: <TeamOutlined />,
-      items: ['tickets', 'assets'],
-    },
+    { key: 'monitorGroup', title: 'Monitoring', icon: Ic(Gauge), items: ['dashboard', 'alerts'] },
+    { key: 'investigationGroup', title: 'Investigation', icon: Ic(Search), items: ['tickets', 'assets'] },
     {
       key: 'dataPipelineGroup',
-      // Renamed from "Setup Pipeline" to match SIEM/SOAR standard terminology.
       title: 'Data Pipeline',
-      icon: <DeploymentUnitOutlined />,
-      items: ['detection','integrations', 'orchestrator', 'correlation'],
+      icon: Ic(Network),
+      items: ['detection', 'integrations', 'orchestrator', 'correlation'],
     },
     {
       key: 'automationGroup',
-      // Shortened to reduce truncation and redundant wording.
       title: 'Automation',
-      icon: <BranchesOutlined />,
-        items: ['interfaces', 'workflows', 'workflow-executions'],
+      icon: Ic(Zap),
+      items: ['interfaces', 'workflows', 'workflow-executions'],
     },
     {
       key: 'administrationGroup',
       title: 'Administration',
-      icon: <LockOutlined />,
+      icon: Ic(Shield),
       items: ['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs'],
     },
   ];
 
+  // Build items[] so the collapsed rail renders native flyout popovers.
+  const menuItems = navGroups
+    .map((group) => {
+      const visibleItems = group.items.filter((key) => canAccess(permissionByKey[key]));
+      if (visibleItems.length === 0) return null;
+      const leaves = visibleItems.map((itemKey) => ({
+        key: itemKey,
+        icon: iconByKey(itemKey),
+        label: routeLabel[itemKey],
+      }));
+      // When collapsed, prepend the category name as a group header inside the
+      // hover flyout so the parent title is visible without expanding.
+      const children = siderCollapsed
+        ? [{ key: `${group.key}-title`, type: 'group', label: group.title }, ...leaves]
+        : leaves;
+      return {
+        key: group.key,
+        icon: group.icon,
+        label: group.title,
+        children,
+      };
+    })
+    .filter(Boolean) as any[];
+
   return (
-    <>
-      <Sider
-        width={siderWidth}
-        collapsedWidth={0}
-        collapsed={siderCollapsed}
-        trigger={null}
+    <Sider
+      width={siderWidth}
+      collapsedWidth={RAIL_WIDTH}
+      collapsed={siderCollapsed}
+      trigger={null}
+      style={{
+        background: 'var(--bg-sidebar)',
+        position: 'sticky',
+        top: 0,
+        alignSelf: 'flex-start',
+        height: '100vh',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        transition: 'width 240ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease',
+      }}
+    >
+      {/* Brand row — logo is home/refresh only. When expanded, the collapse
+          toggle sits on this same row, far right. */}
+      <div
+        className="sidebar-brand-row"
         style={{
-          background: 'var(--bg-sidebar)',
-          position: 'sticky',
-          top: 0,
-          alignSelf: 'flex-start',
-          height: '100vh',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          transition: 'width 240ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease',
+          height: 64,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: siderCollapsed ? 'center' : 'space-between',
+          padding: siderCollapsed ? '0' : '0 12px',
+          fontWeight: 700,
         }}
       >
         <div
-          style={{
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '0 12px',
-            fontWeight: 700,
-          }}
-        >
-          <div
-            onClick={() => onNavigate('/dashboard')}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onNavigate('/dashboard');
-              }
-            }}
-            style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
-            aria-label="Go to dashboard"
-          >
-            <img
-              src="/seclink-logo.png"
-              alt="Argus logo"
-              width={40}
-              height={40}
-              className="sidebar-brand-logo"
-              style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain' }}
-            />
-            <span className="argus-brand-wordmark argus-brand-wordmark-sidebar">
-              Argus
-            </span>
-          </div>
-          <Button
-            type="text"
-            size="small"
-            icon={<MenuFoldOutlined />}
-            onClick={() => setSiderCollapsed(true)}
-            style={{ color: 'var(--text-primary)' }}
-          />
-        </div>
-
-        <Menu
-          mode="inline"
-          className="siem-menu-pale"
-          selectedKeys={[selectedKey]}
-          openKeys={openKeys}
-          onOpenChange={(keys) => setOpenKeys(keys as string[])}
-          onClick={({ key }) => {
-            const nextKey = String(key) as RouteKey;
-            const nextPerm = permissionByKey[nextKey];
-            if (nextPerm && !canAccess(nextPerm)) {
-              message.warning('No permission to access this feature.');
-              return;
+          onClick={() => onNavigate('/dashboard')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onNavigate('/dashboard');
             }
-            onNavigate(keyToPath[nextKey] || '/dashboard');
           }}
-          style={{ borderRight: 'none', background: 'transparent' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+          aria-label="Go to dashboard"
         >
-          {navGroups.map((group) => {
-            const visibleItems = group.items.filter((key) => canAccess(permissionByKey[key]));
-            if (visibleItems.length === 0) return null;
-            return (
-              <Menu.SubMenu key={group.key} icon={group.icon} title={group.title}>
-                {visibleItems.map((itemKey) => (
-                  <Menu.Item key={itemKey} icon={iconByKey(itemKey)}>
-                    {routeLabel[itemKey]}
-                  </Menu.Item>
-                ))}
-              </Menu.SubMenu>
-            );
-          })}
-        </Menu>
+          <img
+            src="/seclink-logo.png"
+            alt="Argus logo"
+            width={siderCollapsed ? 36 : 40}
+            height={siderCollapsed ? 36 : 40}
+            className="sidebar-brand-logo"
+            style={{ width: siderCollapsed ? 36 : 40, height: siderCollapsed ? 36 : 40, borderRadius: 8, objectFit: 'contain' }}
+          />
+          {!siderCollapsed && <span className="argus-brand-wordmark argus-brand-wordmark-sidebar">Argus</span>}
+        </div>
+        {!siderCollapsed && (
+          <Tooltip title="Collapse menu" placement="right">
+            <Button
+              type="text"
+              size="small"
+              className="sidebar-toggle-btn"
+              icon={<PanelLeftClose size={18} strokeWidth={1.9} />}
+              onClick={() => setSiderCollapsed(true)}
+              aria-label="Collapse menu"
+            />
+          </Tooltip>
+        )}
+      </div>
 
+      {/* Collapsed: dedicated expand button below the logo, centered to align
+          with the icon rail, kept compact to match the icon rhythm. */}
+      {siderCollapsed && (
+        <div className="sidebar-rail-toggle">
+          <Tooltip title="Expand menu" placement="right">
+            <Button
+              type="text"
+              size="small"
+              className="sidebar-toggle-btn"
+              icon={<PanelLeftOpen size={18} strokeWidth={1.9} />}
+              onClick={() => setSiderCollapsed(false)}
+              aria-label="Expand menu"
+            />
+          </Tooltip>
+        </div>
+      )}
+
+      <Menu
+        mode="inline"
+        inlineCollapsed={siderCollapsed}
+        className="siem-menu-pale"
+        selectedKeys={[selectedKey]}
+        // openKeys only apply in expanded mode; collapsed uses hover popovers.
+        openKeys={siderCollapsed ? undefined : openKeys}
+        onOpenChange={(keys) => {
+          if (!siderCollapsed) setOpenKeys(keys as string[]);
+        }}
+        items={menuItems}
+        onClick={({ key }) => {
+          const nextKey = String(key) as RouteKey;
+          const nextPerm = permissionByKey[nextKey];
+          if (nextPerm && !canAccess(nextPerm)) {
+            message.warning('No permission to access this feature.');
+            return;
+          }
+          onNavigate(keyToPath[nextKey] || '/dashboard');
+        }}
+        style={{ borderRight: 'none', background: 'transparent' }}
+      />
+
+      {/* Drag-to-resize handle: expanded only. */}
+      {!siderCollapsed ? (
         <div
           onMouseDown={(e) => {
-            if (siderCollapsed) return;
             e.preventDefault();
             setIsResizing(true);
             setSiderWidthCustomized(true);
@@ -240,16 +295,7 @@ export default function Sidebar({
             background: 'var(--resizer-bg)',
           }}
         />
-      </Sider>
-
-      {siderCollapsed ? (
-        <Button
-          type="primary"
-          icon={<MenuUnfoldOutlined />}
-          onClick={() => setSiderCollapsed(false)}
-          style={{ position: 'fixed', left: 10, top: 12, zIndex: 1000 }}
-        />
       ) : null}
-    </>
+    </Sider>
   );
 }

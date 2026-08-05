@@ -1254,7 +1254,7 @@ html, body {
 
 .login-cyber-card {
   position: relative;
-  width: min(420px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
   border-radius: 14px !important;
   border: 1px solid rgba(120, 167, 255, 0.34);
   background: linear-gradient(180deg, rgba(8, 20, 42, 0.9), rgba(6, 13, 29, 0.92)) !important;
@@ -1263,8 +1263,7 @@ html, body {
 }
 
 .login-cyber-card .ant-card-body {
-  padding-top: 28px;
-  padding-bottom: 28px;
+  padding: 34px 36px;
 }
 
 .login-brand-wrap {
@@ -1319,38 +1318,71 @@ html, body {
   text-shadow: none !important;
 }
 
-.login-cyber-card .otp-resend-btn {
-  background: #0d2447 !important;
-  border: 1px solid #3f6ea9 !important;
+/* OTP label row: label on the left, resend control on the right */
+.login-cyber-card .otp-item .ant-form-item-label {
+  width: 100%;
+  padding-bottom: 6px;
+}
+.login-cyber-card .otp-item .ant-form-item-label > label {
+  width: 100%;
+}
+.login-cyber-card .otp-item .ant-form-item-label > label::after {
+  display: none;
+}
+.otp-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+/* Resend as a text link (active) / muted countdown (waiting) */
+.login-cyber-card .otp-resend-link.ant-btn {
+  height: auto;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4c9dff !important;
+}
+.login-cyber-card .otp-resend-link.ant-btn:hover {
+  color: #7bb8ff !important;
+}
+.otp-resend-countdown {
+  font-size: 13px;
+  color: #6f86ac;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inline "code sent" confirmation — replaces the old modal */
+.otp-inline-hint {
+  font-size: 12.5px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  margin: -2px 0 12px;
+}
+.otp-inline-hint-success {
+  color: #46d39a;
+}
+.otp-inline-hint-info {
+  color: #9ab8e6;
+}
+
+/* Back as a minimal ghost button, subordinate to the primary CTA */
+.otp-back-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+.login-cyber-card .otp-back-ghost.ant-btn {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #8fa9cf !important;
+  font-weight: 500;
+}
+.login-cyber-card .otp-back-ghost.ant-btn:hover {
+  background: rgba(120, 167, 255, 0.08) !important;
   color: #d8e8ff !important;
-  font-weight: 700;
-}
-
-.login-cyber-card .otp-resend-btn:hover:not(:disabled) {
-  background: #143362 !important;
-  border-color: #6ea2e2 !important;
-  color: #f1f7ff !important;
-}
-
-.login-cyber-card .otp-resend-btn:disabled,
-.login-cyber-card .otp-resend-btn.ant-btn[disabled] {
-  background: #0a1730 !important;
-  border-color: #2f456a !important;
-  color: #95b2d8 !important;
-  opacity: 1 !important;
-}
-
-.login-cyber-card .otp-back-btn {
-  background: #f2f7ff !important;
-  border: 1px solid #9cb8de !important;
-  color: #10294d !important;
-  font-weight: 700;
-}
-
-.login-cyber-card .otp-back-btn:hover {
-  background: #ffffff !important;
-  border-color: #c2d6f0 !important;
-  color: #0b2344 !important;
 }
 
 .login-mail-modal .ant-modal-content {
@@ -2077,4 +2109,92 @@ html, body {
 
 .sla-ai-chat-modal-dark .sla-ai-trace-collapsed {
   color: #c7d2fe;
+}
+
+/* ==========================================================================
+   Alerts table — slim toolbar, resizable columns, fused message/rule cell
+   Theme-agnostic: relies on AntD tokens so Light/Dark both work.
+   ========================================================================== */
+.alerts-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.alerts-search {
+  flex: 1 1 auto;
+  max-width: 460px;
+}
+.alerts-severity-select {
+  width: 150px;
+  flex: 0 0 auto;
+}
+
+/* Resizable header handle (react-resizable) — applies to any AntD table
+   using the shared ResizableTitle header cell. */
+.ant-table-thead th.react-resizable {
+  position: relative;
+  background-clip: padding-box;
+}
+.ant-table-thead th .react-resizable-handle {
+  position: absolute;
+  right: -5px;
+  bottom: 0;
+  z-index: 2;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+.alerts-resizable-table .ant-table-thead > tr > th {
+  position: relative;
+  user-select: none;
+}
+
+/* ID cell: truncated mono id + hover copy affordance */
+.alert-id-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.alert-id-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alert-id-copy {
+  flex: 0 0 auto;
+  opacity: 0;
+  color: var(--ant-color-primary, #1677ff);
+  transition: opacity 140ms ease;
+  cursor: pointer;
+}
+.ant-table-row:hover .alert-id-copy {
+  opacity: 0.75;
+}
+.alert-id-copy:hover {
+  opacity: 1 !important;
+}
+
+/* Message cell */
+.alert-msg-title {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-weight: 500;
+}
+/* Detection Rule link */
+.alert-rule-link {
+  color: var(--ant-color-primary, #1677ff) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alert-rule-link:hover {
+  text-decoration: underline;
 }

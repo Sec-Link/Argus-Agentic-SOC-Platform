@@ -76,7 +76,7 @@ export function resolveRouteKey(pathname: string): { key: RouteKey; ticketNumber
   if (p === '/settings/orchestrator') return { key: 'orchestrator' };
   if (p === '/settings/interfaces') return { key: 'interfaces' };
   if (p === '/settings/correlation') return { key: 'correlation' };
-  if (p === '/settings/detection') return { key: 'detection' };
+  if (p.startsWith('/settings/detection')) return { key: 'detection' };
   if (p === '/settings/permissions') return { key: 'permissions' };
   if (p === '/settings/registration-approvals') return { key: 'registration-approvals' };
   if (p === '/settings/audit-logs') return { key: 'audit-logs' };

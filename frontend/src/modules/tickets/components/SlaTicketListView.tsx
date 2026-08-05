@@ -5,6 +5,7 @@ import type { ColumnsType, TableProps } from 'antd/es/table';
 import { Pie } from '@ant-design/plots';
 import { batchDeleteSlaTickets, batchUpdateSlaTickets, createSlaTicket, dispatchTicketPlaybooks, updateSlaTicket, updateSlaTicketStatus } from 'services/tickets';
 import { listUsers } from 'services/accounts';
+import { useResizableColumns } from 'components/table/resizableColumns';
 import type { SlaTicketListItem } from 'types';
 
 type Props = {
@@ -134,7 +135,7 @@ const parseQuery = (raw: string): QueryFilters => {
 
 export default function SlaTicketListView(props: Props) {
   const { tickets, loading, onRefresh, onOpenDetail } = props;
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const storedUsername = useMemo(() => {
     if (typeof window === 'undefined') return '';
     try {
@@ -340,7 +341,7 @@ export default function SlaTicketListView(props: Props) {
       message.warning('Select tickets first');
       return;
     }
-    Modal.confirm({
+    modal.confirm({
       title: 'Close selected incidents?',
       content: `Close ${selectedIds.length} selected incidents?`,
       okText: 'Close',
@@ -367,7 +368,7 @@ export default function SlaTicketListView(props: Props) {
       message.warning('Select tickets first');
       return;
     }
-    Modal.confirm({
+    modal.confirm({
       title: 'Delete selected incidents?',
       content: `Are you sure you want to delete ${selectedIds.length} selected incidents? This action cannot be undone from the UI.`,
       okText: 'Delete',
@@ -471,7 +472,7 @@ export default function SlaTicketListView(props: Props) {
 
   const columns: ColumnsType<SlaTicketListItem> = [
     { title: 'ID', dataIndex: 'ticket_number', key: 'ticket_number', width: 180, render: (v: string) => <a onClick={() => onOpenDetail(v)}>{v}</a> },
-    { title: 'Name', dataIndex: 'title', key: 'title', ellipsis: true },
+    { title: 'Name', dataIndex: 'title', key: 'title', width: 260, ellipsis: true },
     { title: 'Severity', dataIndex: 'priority', key: 'priority', width: 140, render: (p: string) => renderSeverityTag(p) },
     { title: 'Status', dataIndex: 'status', key: 'status', width: 140, render: (s: string) => renderStatusTag(s) },
     { title: 'Owner', dataIndex: 'assigned_user_username', key: 'assigned_user_username', width: 160, render: (v: string | null | undefined) => v || 'Unassigned' },
@@ -512,6 +513,8 @@ export default function SlaTicketListView(props: Props) {
     },
     { title: 'Created', dataIndex: 'created_time', key: 'created_time', width: 200, render: (v: string | null | undefined) => formatTimestamp(v) },
   ];
+
+  const { columns: resizableColumns, components: resizableComponents } = useResizableColumns(columns as any[]);
 
   const toPieData = (rec: Record<string, number>, order?: string[]) => {
     const keys = order?.length ? order : Object.keys(rec);
@@ -1045,7 +1048,8 @@ export default function SlaTicketListView(props: Props) {
             size="middle"
             loading={loading}
             dataSource={filtered}
-            columns={columns}
+            columns={resizableColumns as ColumnsType<SlaTicketListItem>}
+            components={resizableComponents}
             rowSelection={rowSelection}
             pagination={{
               pageSize,

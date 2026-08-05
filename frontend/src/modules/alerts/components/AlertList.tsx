@@ -1,10 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Button, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { SearchOutlined, FilterOutlined, ReloadOutlined, CopyOutlined } from '@ant-design/icons';
+import { Resizable } from 'react-resizable';
+import type { ResizeCallbackData } from 'react-resizable';
 import { fetchAlerts } from 'services/alerts';
 import type { Alert } from 'types';
 
 const { Text } = Typography;
+
+const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
 
 const normalizeAlertSeverity = (sev?: string): 'critical' | 'high' | 'medium' | 'low' | 'unknown' => {
   const s = String(sev || '').trim().toLowerCase();
@@ -56,180 +61,284 @@ const formatTime = (value: any) => {
   return dt.toLocaleString();
 };
 
-const ellipsisNode = (value: string, title?: string) => (
-  <Tooltip title={title || value}>
-    <span
-      style={{
-        display: 'inline-block',
-        width: '100%',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        verticalAlign: 'bottom',
-      }}
+// Field accessors — keep alert shape resolution in one place.
+const getId = (row: any) => normalizeText(pick(row, ['alert_id', '_id']));
+const getTime = (row: any) => pick(row, ['timestamp', '@timestamp', 'event_time', 'time']);
+const getSeverity = (row: any) => String(pick(row, ['severity', 'level', 'log.level']) || 'unknown');
+const getMessage = (row: any) => normalizeText(pick(row, ['message', 'title', 'event.original', 'log.message', 'summary']));
+const getDetails = (row: any) => normalizeText(pick(row, ['description', 'details', 'event.reason', 'raw_message']));
+const getHost = (row: any) => normalizeText(pick(row, ['host_name', 'body.host_name', 'host.name', 'host', 'hostname', 'agent.name']));
+const getSourceIp = (row: any) => normalizeText(pick(row, ['source_ip', 'body.source_ip', 'source.ip', 'src_ip', 'client.ip']));
+
+// Resizable header cell (react-resizable + AntD components override).
+const ResizableTitle: React.FC<any> = (props) => {
+  const { onResize, width, ...restProps } = props;
+  if (!width) return <th {...restProps} />;
+  return (
+    <Resizable
+      width={width}
+      height={0}
+      handle={
+        <span
+          className="react-resizable-handle"
+          onClick={(e) => e.stopPropagation()}
+        />
+      }
+      onResize={onResize}
+      draggableOpts={{ enableUserSelectHack: false }}
     >
-      {value}
-    </span>
-  </Tooltip>
-);
+      <th {...restProps} />
+    </Resizable>
+  );
+};
+
+const DEFAULT_WIDTHS: Record<string, number> = {
+  severity: 120,
+  alert_id: 150,
+  timestamp: 190,
+  message: 260,
+  rule_name: 200,
+  host_name: 160,
+  source_ip: 150,
+};
 
 const AlertList: React.FC = () => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
-  const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(20);
-  const [total, setTotal] = useState<number>(0);
-  const [source, setSource] = useState<string | null>(null);
-  const [lastLoadMs, setLastLoadMs] = useState<number | null>(null);
-  const [activeIndex, setActiveIndex] = useState<string | null>(null);
   const [searchText, setSearchText] = useState<string>('');
   const [severityFilter, setSeverityFilter] = useState<string | undefined>(undefined);
-  const [ordering, setOrdering] = useState<string>('-timestamp');
+  const [widths, setWidths] = useState<Record<string, number>>(DEFAULT_WIDTHS);
   const [detailOpen, setDetailOpen] = useState<boolean>(false);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
 
-  const load = async (
-    p = page,
-    ps = pageSize,
-    opts?: { q?: string; severity?: string; ordering?: string }
-  ) => {
+  // Backend caps the list at ~100 rows and ignores filter/sort params, so we
+  // fetch the full capped set once and do filtering/sorting/paging client-side.
+  const load = async () => {
     setLoading(true);
-    const start = performance.now();
     try {
-      const res = await fetchAlerts(p, ps, undefined, {
-        q: opts?.q ?? searchText,
-        severity: opts?.severity ?? severityFilter,
-        ordering: opts?.ordering ?? ordering,
-      });
+      const res = await fetchAlerts(1, 100);
       setAlerts(res.alerts || []);
-      setTotal(res.total || (res.alerts || []).length);
-      setSource(res.source || null);
-      setActiveIndex(res.applied_index || res.active_index || null);
-      if (res.ordering) setOrdering(String(res.ordering));
     } catch (err) {
       console.error('Failed to load alerts', err);
       setAlerts([]);
-      setTotal(0);
-      setSource(null);
-      setActiveIndex(null);
     } finally {
       setLoading(false);
-      const ms = Math.round(performance.now() - start);
-      setLastLoadMs(ms);
-      if (ms > 1000) console.warn(`AlertList load took ${ms}ms`);
     }
   };
 
   useEffect(() => {
-    load(1, pageSize);
-    setPage(1);
-
-    const onConnectorSwitch = () => {
-      setPage(1);
-      load(1, pageSize);
-    };
+    load();
+    const onConnectorSwitch = () => load();
     window.addEventListener('siem_es_connector_switched', onConnectorSwitch as EventListener);
-    return () => {
-      window.removeEventListener('siem_es_connector_switched', onConnectorSwitch as EventListener);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => window.removeEventListener('siem_es_connector_switched', onConnectorSwitch as EventListener);
   }, []);
 
-  const orderingToSortOrder = (field: string): 'ascend' | 'descend' | null => {
-    if (ordering === field) return 'ascend';
-    if (ordering === `-${field}`) return 'descend';
-    return null;
+  // ---- Client-side filtering ----
+  const filtered = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    const sev = severityFilter;
+    return (alerts || []).filter((row: any) => {
+      if (sev && normalizeAlertSeverity(getSeverity(row)) !== sev) return false;
+      if (q) {
+        const haystack = [
+          getId(row),
+          getMessage(row),
+          getDetails(row),
+          row.rule_name,
+          row.rule_id,
+          getHost(row),
+          getSourceIp(row),
+        ]
+          .map((v) => String(v ?? '').toLowerCase())
+          .join(' ');
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [alerts, searchText, severityFilter]);
+
+  const resetFilters = () => {
+    setSearchText('');
+    setSeverityFilter(undefined);
   };
 
-  const onTableChange = (pagination: any, _filters: any, sorter: any) => {
-    const s = Array.isArray(sorter) ? sorter[0] : sorter;
-    let nextOrdering = ordering;
-    const field = String(s?.field || '');
-    const order = s?.order as 'ascend' | 'descend' | undefined;
-    if (field && order) nextOrdering = order === 'descend' ? `-${field}` : field;
-    if (field && !order && (field === 'timestamp' || field === 'severity' || field === 'message' || field === 'source_index' || field === 'alert_id')) {
-      nextOrdering = '-timestamp';
+  const copyId = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      navigator.clipboard?.writeText(id);
+      message.success('Alert ID copied');
+    } catch {
+      message.error('Copy failed');
     }
-    const nextPageSize = Number(pagination?.pageSize || pageSize);
-    const clickedPage = Number(pagination?.current || page);
-    const sortChanged = nextOrdering !== ordering;
-    const nextPage = sortChanged ? 1 : clickedPage;
-
-    setOrdering(nextOrdering);
-    setPageSize(nextPageSize);
-    setPage(nextPage);
-    load(nextPage, nextPageSize, { ordering: nextOrdering });
   };
+
+  const handleResize = (key: string) => (_e: React.SyntheticEvent, data: ResizeCallbackData) => {
+    setWidths((w) => ({ ...w, [key]: Math.max(60, Math.round(data.size.width)) }));
+  };
+
+  const baseColumns: any[] = [
+    {
+      title: 'Severity',
+      key: 'severity',
+      width: widths.severity,
+      sorter: (a: any, b: any) =>
+        SEVERITY_RANK[normalizeAlertSeverity(getSeverity(a))] - SEVERITY_RANK[normalizeAlertSeverity(getSeverity(b))],
+      render: (_: any, row: any) => renderSeverityTag(getSeverity(row)),
+    },
+    {
+      title: 'ID',
+      key: 'alert_id',
+      width: widths.alert_id,
+      sorter: (a: any, b: any) => getId(a).localeCompare(getId(b)),
+      render: (_: any, row: any) => {
+        const id = getId(row);
+        if (id === '-') return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
+        return (
+          <span className="alert-id-cell">
+            <Tooltip title={id}>
+              <span className="alert-id-text">{id}</span>
+            </Tooltip>
+            <Tooltip title="Copy full ID">
+              <CopyOutlined className="alert-id-copy" onClick={(e) => copyId(id, e)} />
+            </Tooltip>
+          </span>
+        );
+      },
+    },
+    {
+      title: 'Time',
+      key: 'timestamp',
+      width: widths.timestamp,
+      defaultSortOrder: 'descend' as const,
+      sorter: (a: any, b: any) => {
+        const ta = new Date(String(getTime(a) ?? '')).getTime() || 0;
+        const tb = new Date(String(getTime(b) ?? '')).getTime() || 0;
+        return ta - tb;
+      },
+      render: (_: any, row: any) => <span style={{ whiteSpace: 'nowrap' }}>{formatTime(getTime(row))}</span>,
+    },
+    {
+      title: 'Message',
+      key: 'message',
+      width: widths.message,
+      ellipsis: true,
+      sorter: (a: any, b: any) => getMessage(a).localeCompare(getMessage(b)),
+      render: (_: any, row: any) => {
+        const msg = getMessage(row);
+        return (
+          <Tooltip title={msg === '-' ? '' : msg}>
+            <span className="alert-msg-title">{msg}</span>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: 'Detection Rule',
+      key: 'rule_name',
+      width: widths.rule_name,
+      ellipsis: true,
+      sorter: (a: any, b: any) =>
+        String(a?.rule_name || '').localeCompare(String(b?.rule_name || '')),
+      render: (_: any, row: any) => {
+        const detectionId = row.detection_rule_id;
+        if (!detectionId) return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
+        return (
+          <Link
+            href={`/settings/detection/rules/${encodeURIComponent(String(detectionId))}`}
+            className="alert-rule-link"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {String(row.rule_name || detectionId)}
+          </Link>
+        );
+      },
+    },
+    {
+      title: 'Host Name',
+      key: 'host_name',
+      width: widths.host_name,
+      ellipsis: true,
+      sorter: (a: any, b: any) => getHost(a).localeCompare(getHost(b)),
+      render: (_: any, row: any) => {
+        const host = getHost(row);
+        return host === '-' ? <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span> : <Text>{host}</Text>;
+      },
+    },
+    {
+      title: 'Source IP',
+      key: 'source_ip',
+      width: widths.source_ip,
+      ellipsis: true,
+      sorter: (a: any, b: any) => getSourceIp(a).localeCompare(getSourceIp(b)),
+      render: (_: any, row: any) => {
+        const ip = getSourceIp(row);
+        return ip === '-' ? (
+          <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>
+        ) : (
+          <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}>{ip}</span>
+        );
+      },
+    },
+  ];
+
+  const columns = baseColumns.map((col) => ({
+    ...col,
+    onHeaderCell: (column: any) => ({
+      width: column.width,
+      onResize: handleResize(col.key),
+    }),
+  }));
 
   return (
     <div>
-      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <Text strong>Alerts</Text>
-          {source && <Text type="secondary" style={{ marginLeft: 12 }}>Source: {source}{lastLoadMs ? ` • ${lastLoadMs}ms` : ''}</Text>}
-          {activeIndex && <Text type="secondary" style={{ marginLeft: 12 }}>Index: {activeIndex}</Text>}
-        </div>
-        <Space>
-          <Input.Search
-            allowClear
-            placeholder="Filter by id/message/details/rule"
-            style={{ width: 320 }}
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            onSearch={() => {
-              setPage(1);
-              load(1, pageSize, { q: searchText, severity: severityFilter, ordering });
-            }}
-          />
-          <Select
-            allowClear
-            placeholder="Severity"
-            style={{ width: 140 }}
-            value={severityFilter}
-            onChange={(v) => {
-              setSeverityFilter(v);
-              setPage(1);
-              load(1, pageSize, { q: searchText, severity: v, ordering });
-            }}
-            options={[
-              { label: 'Critical', value: 'critical' },
-              { label: 'High', value: 'high' },
-              { label: 'Medium', value: 'medium' },
-              { label: 'Low', value: 'low' },
-              { label: 'Unknown', value: 'unknown' },
-            ]}
-          />
-          <Button
-            onClick={() => {
-              setSearchText('');
-              setSeverityFilter(undefined);
-              setOrdering('-timestamp');
-              setPage(1);
-              load(1, pageSize, { q: '', severity: '', ordering: '-timestamp' });
-            }}
-          >
-            Reset
-          </Button>
-        </Space>
+      {/* Slim toolbar — no title / debug text */}
+      <div className="alerts-toolbar">
+        <Input
+          allowClear
+          prefix={<SearchOutlined style={{ color: 'rgba(127,127,127,0.7)' }} />}
+          placeholder="Filter by id / message / details / rule / host / ip"
+          className="alerts-search"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+        />
+        <Select
+          allowClear
+          suffixIcon={<FilterOutlined />}
+          placeholder="Severity"
+          className="alerts-severity-select"
+          value={severityFilter}
+          onChange={(v) => setSeverityFilter(v)}
+          options={[
+            { label: 'Critical', value: 'critical' },
+            { label: 'High', value: 'high' },
+            { label: 'Medium', value: 'medium' },
+            { label: 'Low', value: 'low' },
+            { label: 'Unknown', value: 'unknown' },
+          ]}
+        />
+        <Button icon={<ReloadOutlined />} onClick={resetFilters}>
+          Reset
+        </Button>
       </div>
 
-      <div style={{ width: '100%', overflowX: 'hidden' }}>
+      <div className="alerts-table-wrap">
         <Table
+          className="alerts-resizable-table"
           rowKey="alert_id"
-          dataSource={alerts}
+          dataSource={filtered}
           loading={loading}
-          tableLayout="fixed"
-          style={{ width: '100%' }}
+          size="middle"
           scroll={{ x: 1080 }}
+          components={{ header: { cell: ResizableTitle } }}
+          columns={columns as any}
           pagination={{
-            current: page,
-            pageSize: pageSize,
-            total: total,
+            pageSize,
             showSizeChanger: true,
-            showQuickJumper: { goButton: <Button size="small">Go</Button> },
+            pageSizeOptions: ['10', '20', '50', '100'],
+            onShowSizeChange: (_c, size) => setPageSize(size),
             showTotal: (t) => `${t} alerts`,
           }}
-          onChange={onTableChange}
           onRow={(record: any) => ({
             onClick: () => {
               setSelectedAlert(record);
@@ -237,97 +346,6 @@ const AlertList: React.FC = () => {
             },
             style: { cursor: 'pointer' },
           })}
-          columns={[
-          {
-            title: 'ID',
-            dataIndex: 'alert_id',
-            key: 'alert_id',
-            sorter: true,
-            sortOrder: orderingToSortOrder('alert_id') as any,
-            width: 260,
-            ellipsis: true,
-            render: (_: any, row: any) => {
-              const id = normalizeText(pick(row, ['alert_id', '_id']));
-              return (
-                <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}>
-                  {ellipsisNode(id, id === '-' ? '' : id)}
-                </span>
-              );
-            },
-          },
-          {
-            title: 'Time',
-            dataIndex: 'timestamp',
-            key: 'timestamp',
-            sorter: true,
-            sortOrder: orderingToSortOrder('timestamp') as any,
-            width: 150,
-            ellipsis: true,
-            render: (_: any, row: any) => formatTime(pick(row, ['timestamp', '@timestamp', 'event_time', 'time'])),
-          },
-          {
-            title: 'Severity',
-            dataIndex: 'severity',
-            key: 'severity',
-            sorter: true,
-            sortOrder: orderingToSortOrder('severity') as any,
-            width: 110,
-            render: (_: any, row: any) => renderSeverityTag(String(pick(row, ['severity', 'level', 'log.level']) || 'unknown')),
-          },
-          {
-            title: 'Message',
-            dataIndex: 'message',
-            key: 'message',
-            sorter: true,
-            sortOrder: orderingToSortOrder('message') as any,
-            width: 210,
-            ellipsis: true,
-            render: (_: any, row: any) => {
-              const msg = normalizeText(pick(row, ['message', 'title', 'event.original', 'log.message', 'summary']));
-              return ellipsisNode(msg, msg === '-' ? '' : msg);
-            },
-          },
-          {
-            title: 'Details',
-            dataIndex: 'description',
-            width: 250,
-            ellipsis: true,
-            render: (_: any, row: any) => {
-              const d = normalizeText(pick(row, ['description', 'details', 'event.reason', 'raw_message']));
-              return ellipsisNode(d, d === '-' ? '' : d);
-            },
-          },
-          {
-            title: 'Source Index',
-            dataIndex: 'source_index',
-            key: 'source_index',
-            sorter: true,
-            sortOrder: orderingToSortOrder('source_index') as any,
-            width: 100,
-            ellipsis: true,
-            render: (_: any, row: any) => normalizeText(pick(row, ['source_index', '_index'])),
-          },
-          {
-            title: 'Detection Rule',
-            dataIndex: 'rule_name',
-            key: 'rule_name',
-            width: 180,
-            ellipsis: true,
-            render: (_: any, row: any) => {
-              const name = row.rule_name || row.rule_id;
-              const id = row.rule_id;
-              if (!name) return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
-              if (id) {
-                return (
-                  <Link href={`/detections/rules/${id}`} onClick={(e) => e.stopPropagation()}>
-                    {String(name)}
-                  </Link>
-                );
-              }
-              return <span>{String(name)}</span>;
-            },
-          },
-          ]}
         />
       </div>
 
@@ -349,46 +367,51 @@ const AlertList: React.FC = () => {
               }}
             >
               <Space size={10} wrap>
-                {renderSeverityTag(String(pick(selectedAlert, ['severity', 'level', 'log.level']) || 'unknown'))}
+                {renderSeverityTag(getSeverity(selectedAlert))}
                 <Tag color="blue">{normalizeText(pick(selectedAlert, ['source_index', '_index']))}</Tag>
-                <Tag>{formatTime(pick(selectedAlert, ['timestamp', '@timestamp', 'event_time', 'time']))}</Tag>
+                <Tag>{formatTime(getTime(selectedAlert))}</Tag>
               </Space>
               <div style={{ marginTop: 10 }}>
                 <Text strong>ID:</Text>{' '}
                 <Text code style={{ wordBreak: 'break-all' }}>
-                  {normalizeText(pick(selectedAlert, ['alert_id', '_id']))}
+                  {getId(selectedAlert)}
                 </Text>
               </div>
             </div>
 
             <div>
               <Text strong>Message</Text>
-              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                {normalizeText(pick(selectedAlert, ['message', 'title', 'event.original', 'log.message', 'summary']))}
-              </div>
+              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{getMessage(selectedAlert)}</div>
             </div>
 
             <div>
               <Text strong>Details</Text>
-              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                {normalizeText(pick(selectedAlert, ['description', 'details', 'event.reason', 'raw_message']))}
-              </div>
+              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{getDetails(selectedAlert)}</div>
             </div>
 
-            {(selectedAlert.rule_id || selectedAlert.rule_name) && (
+            <Space size={40} wrap>
               <div>
-                <Text strong>Detection Rule</Text>
-                <div style={{ marginTop: 6 }}>
-                  {selectedAlert.rule_id ? (
-                    <Link href={`/detections/rules/${selectedAlert.rule_id}`}>
-                      {selectedAlert.rule_name || selectedAlert.rule_id}
-                    </Link>
-                  ) : (
-                    <span>{selectedAlert.rule_name}</span>
-                  )}
-                </div>
+                <Text strong>Host Name</Text>
+                <div style={{ marginTop: 6 }}>{getHost(selectedAlert)}</div>
               </div>
-            )}
+              <div>
+                <Text strong>Source IP</Text>
+                <div style={{ marginTop: 6 }}>{getSourceIp(selectedAlert)}</div>
+              </div>
+            </Space>
+
+            <div>
+              <Text strong>Detection Rule</Text>
+              <div style={{ marginTop: 6 }}>
+                {selectedAlert.detection_rule_id ? (
+                  <Link href={`/settings/detection/rules/${encodeURIComponent(String(selectedAlert.detection_rule_id))}`}>
+                    {selectedAlert.rule_name || selectedAlert.detection_rule_id}
+                  </Link>
+                ) : (
+                  <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>
+                )}
+              </div>
+            </div>
 
             <div>
               <Text strong>Raw Context</Text>

@@ -21,7 +21,7 @@ import threading
 import requests
 
 from django.db import DatabaseError, IntegrityError, transaction
-from django.db.models import Case, CharField, Count, IntegerField, Sum, Value, When
+from django.db.models import Case, CharField, Count, IntegerField, Q, Sum, Value, When
 from django.db.models.functions import TruncHour, TruncDate
 from django.utils import timezone
 from django.core.cache import cache
@@ -341,18 +341,55 @@ def _ensure_alert_identity(doc: Dict, fallback_index: str | None = None) -> str:
 
 
 def _enrich_rule_names(alerts: List[Dict]) -> List[Dict]:
-    """Inject rule_name into alert dicts via a single bulk DB lookup."""
+    """Inject rule_name/detection_rule_id into alert dicts via a bulk DB lookup.
+
+    An alert's ``rule_id`` can carry either identifier of a detection rule:
+      * the local Sigma id (``LocalDetectionRule.rule_uuid``), or
+      * the Kibana rule id assigned on publish, stored inside the JSON payload
+        (``payload.kibana_rule_id`` / ``payload.kibana_remote_id`` /
+        ``payload.kibana_metadata.remote_id``).
+
+    Alerts produced by the Kibana Detection Engine template ``{{rule.id}}`` carry
+    the Kibana id, not the local uuid, so we match on both. ``detection_rule_id``
+    is always set to the ``rule_uuid`` because that is what the
+    ``/detections/rules/<id>`` route resolves; the frontend uses its presence as
+    the authoritative "a matching detection rule exists" signal and leaves the
+    column empty otherwise.
+    """
     rule_ids = {a.get('rule_id') for a in alerts if a.get('rule_id')}
     if not rule_ids:
         return alerts
-    name_map = dict(
-        LocalDetectionRule.objects.filter(rule_uuid__in=rule_ids, is_deleted=False)
-        .values_list('rule_uuid', 'name')
-    )
+
+    rules = LocalDetectionRule.objects.filter(
+        Q(rule_uuid__in=rule_ids)
+        | Q(payload__kibana_rule_id__in=rule_ids)
+        | Q(payload__kibana_remote_id__in=rule_ids)
+        | Q(payload__kibana_metadata__remote_id__in=rule_ids),
+        is_deleted=False,
+    ).only('rule_uuid', 'name', 'payload')
+
+    # Map every identifier a rule can be referenced by -> (rule_uuid, name).
+    id_map: Dict[str, tuple] = {}
+    for rule in rules:
+        payload = rule.payload if isinstance(rule.payload, dict) else {}
+        kibana_meta = payload.get('kibana_metadata') if isinstance(payload.get('kibana_metadata'), dict) else {}
+        for candidate in (
+            rule.rule_uuid,
+            payload.get('kibana_rule_id'),
+            payload.get('kibana_remote_id'),
+            kibana_meta.get('remote_id'),
+        ):
+            if candidate:
+                # rule_uuid (direct) wins over kibana aliases on collisions.
+                id_map.setdefault(str(candidate), (rule.rule_uuid, rule.name))
+        id_map[str(rule.rule_uuid)] = (rule.rule_uuid, rule.name)
+
     for alert in alerts:
         rid = alert.get('rule_id')
-        if rid and rid in name_map:
-            alert['rule_name'] = name_map[rid]
+        match = id_map.get(str(rid)) if rid else None
+        if match:
+            alert['rule_name'] = match[1]
+            alert['detection_rule_id'] = match[0]
     return alerts
 
 

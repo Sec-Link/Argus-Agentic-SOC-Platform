@@ -21,6 +21,7 @@ import {
   createAssetColumn,
   deleteAssetColumn,
 } from 'services/cmdb';
+import { useResizableColumns } from 'components/table/resizableColumns';
 
 const { Option } = Select;
 
@@ -34,6 +35,7 @@ export default function AssetList() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
+  const [ordering, setOrdering] = useState('-updated_at');
 
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -52,7 +54,7 @@ export default function AssetList() {
       const colRes = await fetchAssetColumns();
       setColumnsDef(colRes || []);
 
-      const res = await fetchAssets(page, pageSize, search);
+      const res = await fetchAssets(page, pageSize, search, ordering);
       setAssets(res.results || []);
       setTotal(res.count || 0);
     } catch (error) {
@@ -65,7 +67,23 @@ export default function AssetList() {
 
   useEffect(() => {
     loadData();
-  }, [page, pageSize, search]);
+  }, [page, pageSize, search, ordering]);
+
+  // Server-side sorting (DRF OrderingFilter) + pagination via one handler.
+  const handleTableChange = (pagination: any, _filters: any, sorter: any) => {
+    const s = Array.isArray(sorter) ? sorter[0] : sorter;
+    const field = s?.field ? String(s.field) : '';
+    const order = s?.order as 'ascend' | 'descend' | undefined;
+    const nextOrdering = field && order ? (order === 'descend' ? `-${field}` : field) : '-updated_at';
+    const nextPageSize = Number(pagination?.pageSize || pageSize);
+    if (nextOrdering !== ordering) {
+      setOrdering(nextOrdering);
+      setPage(1);
+    } else {
+      setPage(Number(pagination?.current || page));
+    }
+    setPageSize(nextPageSize);
+  };
 
   const handleSave = async (values: any) => {
     try {
@@ -196,18 +214,21 @@ export default function AssetList() {
       title: 'IP Address',
       dataIndex: 'ip_address',
       key: 'ip_address',
+      sorter: true,
       width: 130,
     },
     {
       title: 'Type',
       dataIndex: 'asset_type',
       key: 'asset_type',
+      sorter: true,
       width: 100,
     },
     {
       title: 'Level',
       dataIndex: 'asset_level',
       key: 'asset_level',
+      sorter: true,
       width: 100,
       render: (text: string) => (
         <span style={{
@@ -269,6 +290,8 @@ export default function AssetList() {
     }
   ];
 
+  const { columns: resizableColumns, components: resizableComponents } = useResizableColumns(tableColumns);
+
   return (
     <div style={{ padding: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -318,7 +341,9 @@ export default function AssetList() {
 
       <Table
         dataSource={assets}
-        columns={tableColumns}
+        columns={resizableColumns}
+        components={resizableComponents}
+        onChange={handleTableChange}
         rowKey="id"
         loading={loading}
         scroll={{ x: 1000 }}
@@ -326,7 +351,6 @@ export default function AssetList() {
             current: page,
             pageSize: pageSize,
             total: total,
-            onChange: (p, ps) => { setPage(p); setPageSize(ps); },
         }}
       />
 

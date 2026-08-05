@@ -1,4 +1,7 @@
+"use client";
+
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { App, Button, Input, Modal, Space, Tabs } from "antd";
 
 import {
@@ -69,8 +72,10 @@ type MappingDraft = {
   event_category: string;
 };
 
-export default function Detections() {
+export default function Detections({ initialRuleId }: { initialRuleId?: string } = {}) {
   const { message } = App.useApp();
+  const router = useRouter();
+  const DETECTION_BASE = "/settings/detection";
 
   const [topTab, setTopTab] = useState("rules");
   const [rules, setRules] = useState<RuleRow[]>([]);
@@ -232,6 +237,20 @@ export default function Detections() {
     loadDeployments();
     loadConnectors();
   }, []);
+
+  // Deep link from other modules (e.g. the Alerts "Detection Rule" quick link).
+  // Supports both the dedicated route /detections/rules/<rule_uuid> (via the
+  // initialRuleId prop) and /settings/detection?rule=<rule_uuid> (query param).
+  useEffect(() => {
+    const queryParam = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("rule") : null;
+    const ruleParam = initialRuleId || queryParam;
+    if (!ruleParam) return;
+    setTopTab("rules");
+    loadDetail(ruleParam).catch(() => {
+      message.error("Failed to load detection rule");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRuleId]);
 
   const filteredRules = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -726,10 +745,7 @@ export default function Detections() {
                 elasticActionsText={elasticActionsText}
                 elasticIndexPatternsText={elasticIndexPatternsText}
                 kibanaMetadata={kibanaMetadata}
-                onBack={() => {
-                  setSelectedId("");
-                  setDetail(null);
-                }}
+                onBack={() => router.push(DETECTION_BASE)}
                 onEdit={() => {
                   setEditorId(selectedId);
                   setEditorYaml(detail.yaml || "");
@@ -777,7 +793,7 @@ export default function Detections() {
                 setGithubUrl={setGithubUrl}
                 onReload={loadRules}
                 onDeleteSelected={deleteSelectedRules}
-                onSelectRule={loadDetail}
+                onSelectRule={(id) => router.push(`${DETECTION_BASE}/rules/${encodeURIComponent(String(id))}`)}
                 onUploadFiles={handleUploadFiles}
                 onExportRules={handleExportRules}
                 onCreateRule={() => {
