@@ -1,6 +1,16 @@
 version: "3.9"
 
 services:
+  backend-app-init:
+    build:
+      context: backend
+    user: root
+    entrypoint: []
+    command: ["sh", "-c", "mkdir -p /shared/app && if [ ! -f /shared/app/manage.py ]; then cp -a /app/. /shared/app/; fi && mkdir -p /shared/app/workflows/flows/generated && chown -R app:app /shared/app"]
+    volumes:
+      - backend_app:/shared/app
+    restart: "no"
+
   backend:
     build:
       context: backend
@@ -10,9 +20,12 @@ services:
     env_file:
       - .env
     volumes:
-      - ./backend:/app       # 开发热更新，生产可删
+      - backend_app:/app
     depends_on:
-      - db
+      db:
+        condition: service_started
+      backend-app-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   frontend:
@@ -45,3 +58,5 @@ services:
 
 volumes:
   postgres_data:
+  backend_app:
+    name: argus_backend_app

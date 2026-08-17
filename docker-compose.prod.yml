@@ -1,5 +1,15 @@
 version: "3.8"
 services:
+  backend-app-init:
+    build:
+      context: backend
+    user: root
+    entrypoint: []
+    command: ["sh", "-c", "mkdir -p /shared/app && if [ ! -f /shared/app/manage.py ]; then cp -a /app/. /shared/app/; fi && mkdir -p /shared/app/workflows/flows/generated && chown -R app:app /shared/app"]
+    volumes:
+      - backend_app:/shared/app
+    restart: "no"
+
   db:
     image: postgres:16
     container_name: postgres
@@ -20,13 +30,17 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=siem_project.settings
     depends_on:
-      - db
+      db:
+        condition: service_started
+      backend-app-init:
+        condition: service_completed_successfully
     restart: always
     ports:
       - "8000:8000"
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - backend_app:/app
     command: ["gunicorn","siem_project.wsgi:application","--bind","0.0.0.0:8000","--workers","4","--log-level","info","--access-logfile","-"]
 
   frontend:
@@ -45,3 +59,5 @@ volumes:
   postgres_data:
   static_volume:
   media_volume:
+  backend_app:
+    name: argus_backend_app
