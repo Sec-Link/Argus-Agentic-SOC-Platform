@@ -8,6 +8,7 @@ from accounts.permissions import HasDjangoPermissions
 from .kibana_service import (
     create_published_rule,
     delete_published_rule,
+    fetch_rule_preview_alert_summary,
     kibana_proxy,
     serialize_published_rule,
     update_published_rule,
@@ -153,8 +154,14 @@ class KibanaDetectionRulePreviewView(APIView):
 
     def post(self, request):
         status_code, body = kibana_proxy("POST", "/api/detection_engine/rules/preview", payload=request.data or {})
-        if status_code == 404:
-            status_code, body = kibana_proxy("POST", "/api/detection_engine/rules/_preview", payload=request.data or {})
+        if status_code < 400 and isinstance(body, dict):
+            rule_id = str((request.data or {}).get("rule_id") or (request.data or {}).get("id") or "").strip()
+            preview_id = str(body.get("previewId") or body.get("preview_id") or "").strip()
+            if rule_id:
+                body = {
+                    **body,
+                    "alert_summary": fetch_rule_preview_alert_summary(rule_id=rule_id, preview_id=preview_id or None),
+                }
         return Response(body, status=status_code)
 
 

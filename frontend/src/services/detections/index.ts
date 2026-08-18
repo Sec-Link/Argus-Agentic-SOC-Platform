@@ -5,6 +5,7 @@ export {
   type DetectionRuleItem,
   type PublishedDetectionRule,
   createDetectionDeployment,
+  compileDetectionRule,
   listDetectionRules,
   listDetectionMappings,
   listDetectionDeployments,
