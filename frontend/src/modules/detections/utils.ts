@@ -2,15 +2,6 @@ export function formatJson(value: any) {
   return JSON.stringify(value, null, 2);
 }
 
-export type AlertMode = "notable" | "risk";
-export type RiskEntityType = "host" | "user" | "ip" | "service" | "risk_object";
-export type RiskEntityConfig = {
-  entity_type: RiskEntityType;
-  entity_field: string;
-  risk_score: number;
-  output: AlertMode;
-};
-
 export type RiskIncidentConfig = {
   enabled?: boolean;
   window?: string;
@@ -24,31 +15,6 @@ export type RiskIncidentConfig = {
   risk_object_field?: string;
 };
 
-export const RISK_ENTITY_FIELD_OPTIONS: Record<RiskEntityType, string[]> = {
-  host: ["host.name", "host.hostname", "host.id"],
-  user: ["user.name", "user.id", "user.email"],
-  ip: ["source.ip", "destination.ip", "client.ip", "server.ip", "host.ip"],
-  service: ["service.name", "service.id", "service.type"],
-  risk_object: ["risk_object"],
-};
-
-export function defaultRiskEntityField(type: RiskEntityType) {
-  return RISK_ENTITY_FIELD_OPTIONS[type][0];
-}
-
-export function resolveAlertModeConnector(
-  connectors: Array<{ id: string; name: string; connector_type_id?: string }>,
-  mode: AlertMode,
-) {
-  const indexConnectors = (Array.isArray(connectors) ? connectors : []).filter((connector) =>
-    String(connector?.connector_type_id || "").toLowerCase().includes(".index"),
-  );
-  return indexConnectors.find((connector) => {
-    const name = String(connector?.name || "").toLowerCase();
-    return mode === "risk" ? name.includes("risk") : name.includes("notable") || name.includes("alert");
-  });
-}
-
 function commonEventDocument(sigmaRuleId?: string) {
   return {
     "@timestamp": "{{context.alerts.0.@timestamp}}",
@@ -59,37 +25,6 @@ function commonEventDocument(sigmaRuleId?: string) {
     reason: "{{context.alerts.0.kibana.alert.reason}}",
     ...(sigmaRuleId ? { sigma_rule_id: sigmaRuleId } : {}),
   };
-}
-
-export function riskEventDocument(entity: RiskEntityConfig, sigmaRuleId?: string) {
-  const entityType = entity.entity_type === "risk_object"
-    ? "{{context.alerts.0.risk_object_type}}"
-    : entity.entity_type;
-  return {
-    ...commonEventDocument(sigmaRuleId),
-    event_kind: "risk",
-    risk_score: entity.risk_score,
-    risk_object_type: entityType,
-    risk_object_field: entity.entity_field,
-    risk_object: `{{context.alerts.0.${entity.entity_field}}}`,
-  };
-}
-
-export function notableEventDocument(entity: RiskEntityConfig, sigmaRuleId?: string) {
-  const entityType = entity.entity_type === "risk_object"
-    ? "{{context.alerts.0.risk_object_type}}"
-    : entity.entity_type;
-  const common = {
-    ...commonEventDocument(sigmaRuleId),
-    event_kind: "notable",
-    status: "new",
-    risk_score: entity.risk_score,
-    risk_object_type: entityType,
-    risk_object_field: entity.entity_field,
-    risk_object: `{{context.alerts.0.${entity.entity_field}}}`,
-    produces_risk_event: true,
-  };
-  return common;
 }
 
 function riskIncidentFields(config: RiskIncidentConfig) {
@@ -129,48 +64,53 @@ export function riskIncidentNotableEventDocument(config: RiskIncidentConfig, sig
   };
 }
 
-export function routeElasticActionsByAlertMode(
-  connectors: Array<{ id: string; name: string; connector_type_id?: string }>,
-  entities: RiskEntityConfig[],
-  sigmaRuleId?: string,
-) {
-  if (!entities.length) return [];
-  const riskTarget = resolveAlertModeConnector(connectors, "risk");
-  if (!riskTarget) {
-    throw new Error('No .index connector containing "Risk" in its name is configured');
+export function parseElasticActions(text: string) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("Elastic actions must be a JSON array");
+  return parsed;
+}
+
+export function defaultConnectorParams(connectorTypeId?: string) {
+  const typeId = String(connectorTypeId || "").toLowerCase();
+  if (typeId.includes(".index")) {
+    return {
+      documents: [
+        {
+          "@timestamp": "{{context.alerts.0.@timestamp}}",
+          title: "{{context.rule.name}}",
+          description: "{{context.alerts.0.kibana.alert.reason}}",
+          severity: "{{context.rule.severity}}",
+          rule_id: "{{rule.id}}",
+          alert_id: "{{alert.id}}",
+        },
+      ],
+    };
   }
-  const notableEntities = entities.filter((entity) => entity.output === "notable");
-  const needsNotable = notableEntities.length > 0;
-  const notableTarget = needsNotable ? resolveAlertModeConnector(connectors, "notable") : undefined;
-  if (needsNotable && !notableTarget) {
-    throw new Error('No .index connector containing "Notable" or "Alert" in its name is configured');
+  if (typeId.includes(".email")) {
+    return {
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: "{{context.rule.name}}",
+      message: "{{context.alerts.0.kibana.alert.reason}}",
+    };
   }
-  const frequency = {
-    summary: false,
-    notifyWhen: "onActiveAlert",
-    throttle: null,
-  };
-  const routedActions = entities.map((entity) => ({
-      group: "default",
-      id: riskTarget.id,
-      action_type_id: riskTarget.connector_type_id || ".index",
-      params: {
-        documents: [riskEventDocument(entity, sigmaRuleId)],
+  if (typeId.includes(".slack") || typeId.includes(".teams")) {
+    return {
+      message: "{{context.rule.name}}: {{context.alerts.0.kibana.alert.reason}}",
+    };
+  }
+  if (typeId.includes(".webhook")) {
+    return {
+      body: {
+        rule: "{{context.rule.name}}",
+        reason: "{{context.alerts.0.kibana.alert.reason}}",
       },
-      frequency,
-    }));
-  if (notableTarget) {
-    routedActions.push(...notableEntities.map((entity) => ({
-      group: "default",
-      id: notableTarget.id,
-      action_type_id: notableTarget.connector_type_id || ".index",
-      params: {
-        documents: [notableEventDocument(entity, sigmaRuleId)],
-      },
-      frequency,
-    })));
+    };
   }
-  return routedActions;
+  return {};
 }
 
 export function guessElasticIndexPatternsFromProfile(profile?: string) {
@@ -210,4 +150,58 @@ export function applyIndexPatternsToEsql(query: string, indexPatterns: string[])
     const metadata = metadataMatch?.index !== undefined ? currentFrom.slice(metadataMatch.index) : "";
     return `${prefix}${nextFrom}${metadata} `;
   });
+}
+
+export function enrichElasticActions(actions: any[], connectors: Array<{ id: string; connector_type_id?: string }>) {
+  return (Array.isArray(actions) ? actions : []).map((action) => {
+    const connector = connectors.find((item) => item.id === String(action?.id || ""));
+    const connectorTypeId = String(action?.action_type_id || connector?.connector_type_id || "").trim();
+    let nextParams = action?.params;
+    if (
+      connectorTypeId.toLowerCase().includes(".index") &&
+      nextParams &&
+      !Array.isArray(nextParams?.documents) &&
+      nextParams?.document
+    ) {
+      nextParams = {
+        ...nextParams,
+        documents: [nextParams.document],
+      };
+      delete nextParams.document;
+    }
+    return {
+      ...action,
+      ...(nextParams ? { params: nextParams } : {}),
+      ...(connectorTypeId ? { action_type_id: connectorTypeId } : {}),
+      frequency: {
+        ...(action?.frequency || {}),
+        summary: false,
+        notifyWhen: "onActiveAlert",
+        throttle: null,
+      },
+    };
+  });
+}
+
+export function dedupeElasticActions(actions: any[]) {
+  const list = Array.isArray(actions) ? actions : [];
+  const deduped: any[] = [];
+  const byConnectorId = new Map<string, number>();
+
+  list.forEach((action) => {
+    const connectorId = String(action?.id || "").trim();
+    if (!connectorId) {
+      deduped.push(action);
+      return;
+    }
+    const existingIndex = byConnectorId.get(connectorId);
+    if (existingIndex === undefined) {
+      byConnectorId.set(connectorId, deduped.length);
+      deduped.push(action);
+      return;
+    }
+    deduped[existingIndex] = action;
+  });
+
+  return deduped;
 }

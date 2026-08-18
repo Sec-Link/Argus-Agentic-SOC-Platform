@@ -1,20 +1,7 @@
-import re
-
 from rest_framework import serializers
 
 from .models import LocalDetectionDeployment, LocalDetectionFieldMapping
 
-
-class RiskEntitySerializer(serializers.Serializer):
-    entity_type = serializers.ChoiceField(choices=("host", "user", "ip", "service", "risk_object"))
-    entity_field = serializers.CharField(allow_blank=False)
-    risk_score = serializers.IntegerField(min_value=0, max_value=100)
-    output = serializers.ChoiceField(choices=("risk", "notable"))
-
-    def validate_entity_field(self, value):
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(value)):
-            raise serializers.ValidationError("Use a valid ECS-style field path.")
-        return value
 
 class DetectionRuleSaveSerializer(serializers.Serializer):
     yaml = serializers.CharField(required=True, allow_blank=False)
@@ -25,31 +12,12 @@ class DetectionRuleSaveSerializer(serializers.Serializer):
     )
     schedule_interval = serializers.RegexField(r"^[1-9]\d*[smhd]$", required=False)
     schedule_from = serializers.RegexField(r"^now-[1-9]\d*[smhd]$", required=False)
-    entity_risk_enabled = serializers.BooleanField(required=False)
-    alert_mode = serializers.ChoiceField(
-        choices=("notable", "risk"),
-        required=False,
-    )
-    risk_entity_type = serializers.ChoiceField(
-        choices=("host", "user", "ip", "service", "risk_object"),
-        required=False,
-    )
-    risk_entity_field = serializers.CharField(required=False, allow_blank=False)
-    risk_entities = RiskEntitySerializer(many=True, required=False, allow_empty=True)
     elastic_actions = serializers.ListField(required=False)
     elastic_index_patterns = serializers.ListField(
         child=serializers.CharField(allow_blank=False),
         required=False,
     )
     kibana_metadata = serializers.DictField(required=False)
-
-    def validate(self, attrs):
-        entity_field = str(attrs.get("risk_entity_field") or "")
-        if entity_field and not re.fullmatch(r"[A-Za-z0-9_.-]+", entity_field):
-            raise serializers.ValidationError({"risk_entity_field": "Use a valid ECS-style field path."})
-        if attrs.get("entity_risk_enabled") and not attrs.get("risk_entities"):
-            raise serializers.ValidationError({"risk_entities": "At least one entity is required when Entity Risk is enabled."})
-        return attrs
 
 
 class DetectionRuleCompileSerializer(serializers.Serializer):
