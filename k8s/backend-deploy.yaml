@@ -33,10 +33,13 @@ spec:
         - sh
         - -c
         - |
+          set -eu
           mkdir -p /shared/app
-          cp -a /app/. /shared/app/
-          mkdir -p /shared/app/workflows/flows/generated
-          chown -R 999:999 /shared/app
+          if [ ! -f /shared/app/manage.py ]; then
+            cp -R --no-preserve=mode,ownership,timestamps /app/. /shared/app/
+          fi
+          mkdir -p /shared/app/workflows/flows/generated /shared/app/staticfiles /shared/app/media
+          chmod -R 0777 /shared/app/workflows/flows/generated /shared/app/staticfiles /shared/app/media
         volumeMounts:
         - name: backend-app
           mountPath: /shared/app
