@@ -30,8 +30,31 @@ from .condition_evaluator import (
     extract_condition_fields as shared_extract_condition_fields,
     normalize_condition_field as shared_normalize_condition_field,
 )
+from .secret_config import decrypt_config_for_execution, redact_values, sensitive_fields
 
 logger = logging.getLogger(__name__)
+
+
+class WorkflowExecutionUnavailable(ValueError):
+    """Raised before an execution is created when a workflow cannot run."""
+
+
+def ensure_workflow_is_runnable(workflow: Workflow) -> None:
+    if not workflow.is_active:
+        raise WorkflowExecutionUnavailable('Workflow must be active before execution.')
+
+    from .publisher import load_current_published_manifest
+
+    try:
+        load_current_published_manifest(workflow)
+    except FileNotFoundError as exc:
+        raise WorkflowExecutionUnavailable(
+            'Workflow must be published before execution.'
+        ) from exc
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise WorkflowExecutionUnavailable(
+            'Published workflow manifest is unavailable or invalid; publish the workflow again.'
+        ) from exc
 
 
 class WorkflowEngine:
@@ -168,6 +191,7 @@ class WorkflowEngine:
         step_exec = self._create_step_execution(step, 'running', attempt)
         step_exec.input_data = self.context.copy()
         step_exec.save()
+        secrets = []
 
         try:
             # Get the action handler
@@ -179,8 +203,17 @@ class WorkflowEngine:
                 config.update(step.action_template.default_config)
             config.update(step.action_config)
 
-            # Execute the action
-            result = action.execute(config, self.context)
+            # Credentials remain encrypted in ORM and execution history. Only
+            # this short-lived copy is decrypted immediately before execution.
+            execution_config = decrypt_config_for_execution(step.action_type, config)
+            secrets = [
+                execution_config.get(field)
+                for field in sensitive_fields(step.action_type)
+            ]
+            result = action.execute(execution_config, self.context)
+            result.data = redact_values(result.data, secrets)
+            result.error = redact_values(result.error, secrets)
+            result.logs = redact_values(result.logs, secrets)
 
             # Update step execution
             step_exec.status = 'completed' if result.success else 'failed'
@@ -194,14 +227,15 @@ class WorkflowEngine:
             return result
 
         except Exception as e:
-            logger.exception(f"Step execution error: {step.name}")
+            safe_error = redact_values(str(e), secrets)
+            logger.error("Step execution error for %s: %s", step.name, safe_error)
             step_exec.status = 'failed'
             step_exec.completed_at = timezone.now()
-            step_exec.error_message = str(e)
-            step_exec.error_traceback = traceback.format_exc()
+            step_exec.error_message = safe_error
+            step_exec.error_traceback = redact_values(traceback.format_exc(), secrets)
             step_exec.save()
 
-            return ActionResult(success=False, error=str(e))
+            return ActionResult(success=False, error=safe_error)
 
     def _create_step_execution(
         self,
@@ -428,7 +462,11 @@ def execute_workflow(
     Returns:
         The ``WorkflowExecution`` record (already persisted).
     """
-    # Create the execution record in PENDING state before dispatching.
+    # A draft may have unpublished changes and is still runnable using its last
+    # published snapshot. The manifest itself, not is_draft, is authoritative.
+    ensure_workflow_is_runnable(workflow)
+
+    # Create the execution record in PENDING state only after preflight passes.
     execution = WorkflowExecution.objects.create(
         workflow=workflow,
         trigger_source=trigger_source,

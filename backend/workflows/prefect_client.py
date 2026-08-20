@@ -178,26 +178,36 @@ def update_deployment_schedule(
     """
     Update the schedule attached to a Prefect deployment.
 
-    Prefect 3.7.x accepts a ``schedule`` object on the deployment. We use this
-    to keep Prefect's scheduler aligned with Django's WorkflowSchedule records.
+    Prefect 3.x represents deployment schedules as a ``schedules`` list. We
+    keep a stable slug so subsequent updates replace the Argus-owned schedule.
     """
     url = f"{_api_base()}/deployments/{deployment_id}"
-    payload: Dict[str, Any] = {
-        'schedule': schedule,
-        'is_schedule_active': bool(is_active),
-    }
+    payload: Dict[str, Any] = {'schedules': []}
+    if schedule is not None:
+        payload['schedules'] = [{
+            'schedule': schedule,
+            'active': bool(is_active),
+            'slug': 'argus-workflow-schedule',
+        }]
     resp = requests.patch(url, json=payload, headers=_headers(), timeout=_timeout())
     if resp.status_code >= 400:
         raise PrefectAPIError(
             f'Prefect update_deployment_schedule returned {resp.status_code}: {resp.text[:500]}'
         )
+    if not resp.text.strip():
+        return {}
     return resp.json()
 
 
 def list_deployments(limit: int = 200) -> list[Dict[str, Any]]:
     """List Prefect deployments for UI sync."""
-    url = f"{_api_base()}/deployments?limit={limit}"
-    resp = requests.get(url, headers=_headers(), timeout=_timeout())
+    url = f"{_api_base()}/deployments/filter"
+    resp = requests.post(
+        url,
+        json={'limit': max(int(limit), 1)},
+        headers=_headers(),
+        timeout=_timeout(),
+    )
     if resp.status_code >= 400:
         raise PrefectAPIError(
             f'Prefect list_deployments returned {resp.status_code}: {resp.text[:500]}'

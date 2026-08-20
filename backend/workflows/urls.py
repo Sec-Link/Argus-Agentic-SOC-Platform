@@ -15,7 +15,7 @@ from .views import (
     WorkflowExecutionViewSet,
     WorkflowStatsView,
     WorkflowPublishView,
-    WorkflowPublishedListView,
+    # WorkflowPublishedListView,  # Disabled: no server-manifest disaster recovery.
     WorkflowImportView,
     SavedWorkflowNodeViewSet,
     WorkflowScheduleViewSet,
@@ -44,7 +44,9 @@ urlpatterns = [
     path('prefect/deployments/', PrefectDeploymentListView.as_view(), name='prefect-deployments'),
     path('prefect/sync/', PrefectDeploymentSyncView.as_view(), name='prefect-sync'),
     path('workflows/<uuid:pk>/publish/', WorkflowPublishView.as_view(), name='workflow-publish'),
-    path('publish/manifests/', WorkflowPublishedListView.as_view(), name='workflow-published-list'),
+    # Intentionally disabled rather than deleted. Server-manifest recovery can
+    # mismatch manifest and database UUIDs, and disaster recovery is out of scope.
+    # path('publish/manifests/', WorkflowPublishedListView.as_view(), name='workflow-published-list'),
     path('import/', WorkflowImportView.as_view(), name='workflow-import'),
     path('ticket-playbooks/suggest/', TicketCallablePlaybookSuggestView.as_view(), name='ticket-playbook-suggest'),
     path('ticket-playbooks/<uuid:workflow_id>/inputs-schema/', TicketCallablePlaybookSchemaView.as_view(), name='ticket-playbook-inputs-schema'),

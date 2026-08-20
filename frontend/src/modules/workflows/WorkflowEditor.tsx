@@ -90,7 +90,14 @@ const getApiErrorMessage = (err: any, fallback: string): string => {
   if (typeof data === 'string') return data;
   if (typeof data?.detail === 'string') return data.detail;
   if (typeof data?.error === 'string') return data.error;
-  return fallback;
+  const messages: string[] = [];
+  const collect = (value: any) => {
+    if (typeof value === 'string') messages.push(value);
+    else if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === 'object') Object.values(value).forEach(collect);
+  };
+  collect(data);
+  return messages[0] || fallback;
 };
 
 const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onSaved }) => {
@@ -372,13 +379,28 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
           </Col>
           <Col>
             <Space>
-              {!isNew && workflow?.is_active && (
-                <Button
-                  icon={<PlayCircleOutlined />}
-                  onClick={handleExecute}
+              {!isNew && (
+                <Tooltip
+                  title={
+                    !workflow?.is_active
+                      ? 'Activate this workflow before execution'
+                      : !workflow?.published_version
+                        ? 'Publish this workflow before execution'
+                        : workflow.has_unpublished_changes
+                          ? `Execute the last published version (v${workflow.published_version})`
+                          : `Execute published version v${workflow.published_version}`
+                  }
                 >
-                  Execute
-                </Button>
+                  <span>
+                    <Button
+                      icon={<PlayCircleOutlined />}
+                      onClick={handleExecute}
+                      disabled={!workflow?.is_active || !workflow?.published_version}
+                    >
+                      Execute
+                    </Button>
+                  </span>
+                </Tooltip>
               )}
               <Button
                 icon={<SaveOutlined />}
@@ -676,7 +698,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
               <Row gutter={16}>
                 <Col span={8}>
                   <Form.Item name="timeout_seconds" label="Timeout (seconds)">
-                    <InputNumber min={1} max={3600} style={{ width: '100%' }} />
+                    <InputNumber min={1} max={3601} style={{ width: '100%' }} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>

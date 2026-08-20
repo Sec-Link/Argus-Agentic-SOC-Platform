@@ -35,7 +35,10 @@ export {
   deleteSavedWorkflowNode,
   // Publish & Import
   publishWorkflow,
-  listPublishedManifests,
-  importWorkflowFromManifest,
+  exportWorkflow,
+  // Server-manifest recovery is intentionally disabled (not deleted) because
+  // disaster recovery is out of scope and manifest/DB UUIDs may not match.
+  // listPublishedManifests,
+  // importWorkflowFromManifest,
   importWorkflowFromFile,
 } from '../../api';

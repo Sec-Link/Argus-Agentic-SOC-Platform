@@ -13,7 +13,7 @@
  *   Integration   : create_ticket, update_ticket
  *   Utility       : log, delay
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Form,
   Input,
@@ -43,6 +43,8 @@ const { Text } = Typography;
 interface ActionConfigBuilderProps {
   actionType: string;
   config: Record<string, any>;
+  configKey?: string;
+  configuredSecretFields?: string[];
   onChange: (config: Record<string, any>) => void;
 }
 
@@ -59,6 +61,8 @@ type FieldDef = {
   options?: Array<{ value: string; label: string }>;
   default?: any;
   description?: string;
+  sensitive?: boolean;
+  providers?: string[];
 };
 
 type SchemaDef = { name: string; description: string; fields: FieldDef[] };
@@ -91,7 +95,7 @@ const actionSchemas: Record<string, SchemaDef> = {
     fields: [
       {
         name: 'seconds', label: 'Seconds', type: 'number', required: true,
-        default: 5, description: 'Wait time (1–3600 seconds)',
+        default: 5, description: 'Wait time (1–3600 seconds); node timeout must be greater',
       },
     ],
   },
@@ -138,6 +142,7 @@ const actionSchemas: Record<string, SchemaDef> = {
       {
         name: 'headers', label: 'Headers', type: 'keyvalue',
         description: 'Optional HTTP headers sent with the request',
+        sensitive: true,
       },
       {
         name: 'body_template', label: 'Request Body (JSON)', type: 'textarea',
@@ -211,6 +216,14 @@ const actionSchemas: Record<string, SchemaDef> = {
     description: 'Block an IP address via a security-device API (firewall / EDR)',
     fields: [
       {
+        name: 'provider', label: 'Provider', type: 'select', required: true,
+        options: [
+          { value: 'generic', label: 'Generic API' },
+          { value: 'opnsense', label: 'OPNsense' },
+        ],
+        default: 'generic',
+      },
+      {
         name: 'ip_address', label: 'IP Address', type: 'string', required: true,
         placeholder: '{{trigger_data.source_ip}}',
         description: 'Supports dynamic values extracted from the triggering case or alert',
@@ -222,10 +235,27 @@ const actionSchemas: Record<string, SchemaDef> = {
       {
         name: 'api_key', label: 'API Key', type: 'password', required: true,
         placeholder: 'Your API key / token',
+        sensitive: true,
+      },
+      {
+        name: 'api_secret', label: 'API Secret', type: 'password', required: true,
+        placeholder: 'Your OPNsense API secret', sensitive: true, providers: ['opnsense'],
+      },
+      {
+        name: 'alias_name', label: 'Alias Name', type: 'string', required: true,
+        default: 'ARGUS_BLOCKLIST', providers: ['opnsense'],
+      },
+      {
+        name: 'verify_tls', label: 'Verify TLS Certificate', type: 'boolean',
+        default: true, providers: ['opnsense'],
+      },
+      {
+        name: 'kill_states', label: 'Kill Active States', type: 'boolean',
+        default: false, providers: ['opnsense'],
       },
       {
         name: 'duration_hours', label: 'Block Duration (hours)', type: 'number',
-        default: 24, description: '0 = permanent block',
+        default: 24, description: '0 = permanent block', providers: ['generic'],
       },
       {
         name: 'reason', label: 'Reason', type: 'string',
@@ -265,6 +295,14 @@ const actionSchemas: Record<string, SchemaDef> = {
     description: 'Release (unblock) an IP address via a security-device API',
     fields: [
       {
+        name: 'provider', label: 'Provider', type: 'select', required: true,
+        options: [
+          { value: 'generic', label: 'Generic API' },
+          { value: 'opnsense', label: 'OPNsense' },
+        ],
+        default: 'generic',
+      },
+      {
         name: 'ip_address', label: 'IP Address', type: 'string', required: true,
         placeholder: '{{trigger_data.source_ip}}',
         description: 'Supports dynamic values extracted from the triggering case or alert',
@@ -276,6 +314,19 @@ const actionSchemas: Record<string, SchemaDef> = {
       {
         name: 'api_key', label: 'API Key', type: 'password', required: true,
         placeholder: 'Your API key / token',
+        sensitive: true,
+      },
+      {
+        name: 'api_secret', label: 'API Secret', type: 'password', required: true,
+        placeholder: 'Your OPNsense API secret', sensitive: true, providers: ['opnsense'],
+      },
+      {
+        name: 'alias_name', label: 'Alias Name', type: 'string', required: true,
+        default: 'ARGUS_BLOCKLIST', providers: ['opnsense'],
+      },
+      {
+        name: 'verify_tls', label: 'Verify TLS Certificate', type: 'boolean',
+        default: true, providers: ['opnsense'],
       },
       {
         name: 'reason', label: 'Reason', type: 'string',
@@ -583,24 +634,99 @@ const KeyValueInput: React.FC<{
 const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
   actionType,
   config,
+  configKey,
+  configuredSecretFields = [],
   onChange,
 }) => {
   const [mode, setMode] = useState<'form' | 'json'>('form');
   const [jsonValue, setJsonValue] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [protectedTargetChanged, setProtectedTargetChanged] = useState(false);
+  const [aliasChanged, setAliasChanged] = useState(false);
   const [form] = Form.useForm();
+  const loadedConfigKey = useRef<string | null>(null);
+  const initialTargets = useRef<Record<string, any>>({});
+  const provider = Form.useWatch('provider', form) || config?.provider || 'generic';
 
   const schema = actionSchemas[actionType];
+  const configuredSecretSet = new Set(configuredSecretFields);
+  const targetCredentialFields = actionType === 'send_webhook'
+    ? ['headers']
+    : actionType === 'block_ip' || actionType === 'release_ip'
+      ? ['api_key', 'api_secret']
+      : ['api_key'];
+  const isConfiguredForCurrentTarget = (fieldName: string) => (
+    configuredSecretSet.has(fieldName)
+    && !(protectedTargetChanged && targetCredentialFields.includes(fieldName))
+  );
+
+  const normalizeTargetValue = (value: any) => String(value || '').trim().replace(/\/+$/, '');
 
   useEffect(() => {
+    const nextConfigKey = `${actionType}:${configKey || ''}`;
+    if (loadedConfigKey.current === nextConfigKey) return;
+    loadedConfigKey.current = nextConfigKey;
+    initialTargets.current = {
+      provider: String(config?.provider || 'generic').toLowerCase(),
+      api_url: normalizeTargetValue(config?.api_url),
+      url: normalizeTargetValue(config?.url),
+      alias_name: String(config?.alias_name || 'ARGUS_BLOCKLIST').trim(),
+    };
+    setProtectedTargetChanged(false);
+    setAliasChanged(false);
     if (config) {
-      form.setFieldsValue(config);
-      setJsonValue(JSON.stringify(config, null, 2));
+      const safeConfig = Object.fromEntries(
+        Object.entries(config).filter(([name, value]) => (
+          !configuredSecretFields.includes(name)
+          && !(typeof value === 'string' && value.startsWith('enc:v1:'))
+        ))
+      );
+      form.resetFields();
+      form.setFieldsValue(safeConfig);
+      setJsonValue(JSON.stringify(safeConfig, null, 2));
     }
-  }, [config, form]);
+  }, [actionType, config, configKey, configuredSecretFields, form]);
+
+  const applyTargetProtection = (inputValues: Record<string, any>) => {
+    const values = { ...inputValues };
+    const initial = initialTargets.current;
+    const apiUrlChanged = normalizeTargetValue(values.api_url) !== initial.api_url;
+    const webhookUrlChanged = normalizeTargetValue(values.url) !== initial.url;
+    const providerChanged = (
+      String(values.provider || 'generic').toLowerCase() !== initial.provider
+    );
+    const isOPNsenseAction = actionType === 'block_ip' || actionType === 'release_ip';
+    const protectedChanged = configuredSecretFields.length > 0 && (
+      actionType === 'send_webhook'
+        ? webhookUrlChanged
+        : apiUrlChanged || (isOPNsenseAction && providerChanged)
+    );
+    const nextAliasChanged = (
+      isOPNsenseAction
+      && configuredSecretFields.some((field) => field === 'api_key' || field === 'api_secret')
+      && String(values.alias_name || 'ARGUS_BLOCKLIST').trim() !== initial.alias_name
+    );
+    setProtectedTargetChanged(protectedChanged);
+    setAliasChanged(nextAliasChanged);
+
+    if (actionType === 'send_webhook' && protectedChanged && !values.headers) {
+      // Headers are optional. A URL change clears them explicitly unless the
+      // user supplies a replacement, so they can never leak to a new target.
+      values.headers = null;
+    }
+    if (
+      isOPNsenseAction
+      && values.provider === 'generic'
+    ) {
+      // OPNsense's optional secret must be explicitly cleared when switching
+      // providers; the API key remains required and must be entered again.
+      values.api_secret = null;
+    }
+    return values;
+  };
 
   const handleFormChange = () => {
-    const values = form.getFieldsValue();
+    const values = applyTargetProtection(form.getFieldsValue(true));
     onChange(values);
     setJsonValue(JSON.stringify(values, null, 2));
   };
@@ -609,9 +735,16 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
     setJsonValue(value);
     try {
       const parsed = JSON.parse(value);
+      if (Object.values(parsed).some((item) => (
+        typeof item === 'string' && item.startsWith('enc:v1:')
+      ))) {
+        setJsonError('Encrypted values cannot be viewed or edited here');
+        return;
+      }
+      const protectedValues = applyTargetProtection(parsed);
       setJsonError(null);
-      onChange(parsed);
-      form.setFieldsValue(parsed);
+      onChange(protectedValues);
+      form.setFieldsValue(protectedValues);
     } catch {
       setJsonError('Invalid JSON format');
     }
@@ -622,7 +755,16 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
       case 'string':
         return <Input placeholder={field.placeholder} />;
       case 'password':
-        return <Input.Password placeholder={field.placeholder} />;
+        return (
+          <Input.Password
+            autoComplete="new-password"
+            placeholder={
+              isConfiguredForCurrentTarget(field.name)
+                ? 'Configured — leave blank to keep it'
+                : field.placeholder
+            }
+          />
+        );
       case 'number':
         return <InputNumber style={{ width: '100%' }} min={0} />;
       case 'boolean':
@@ -687,7 +829,33 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
             <Text type="secondary" style={{ fontSize: 12 }}>{schema.description}</Text>
           </Card>
 
-          {schema.fields.map((field) => (
+          {protectedTargetChanged && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="Credential re-entry required"
+              description={
+                actionType === 'send_webhook'
+                  ? 'The webhook URL changed. Existing headers will not be reused; enter replacement headers or leave them empty to clear them.'
+                  : 'The Provider or API URL changed. Re-enter the API Key and, for OPNsense, the API Secret before saving.'
+              }
+            />
+          )}
+
+          {aliasChanged && !protectedTargetChanged && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="Existing OPNsense credentials will be reused"
+              description="Only the Alias Name changed. The saved API Key and API Secret will be securely rebound to the new alias."
+            />
+          )}
+
+          {schema.fields
+            .filter((field) => !field.providers || field.providers.includes(provider))
+            .map((field) => (
             <Form.Item
               key={field.name}
               name={field.name}
@@ -695,6 +863,9 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
                 <Space>
                   {field.label}
                   {field.required && <Text type="danger">*</Text>}
+                  {isConfiguredForCurrentTarget(field.name) && (
+                    <Tag color="green">Configured</Tag>
+                  )}
                   {field.description && (
                     <Tooltip title={field.description}>
                       <InfoCircleOutlined style={{ color: '#999' }} />
@@ -703,12 +874,17 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
                 </Space>
               }
               rules={
-                field.required
+                field.required && !isConfiguredForCurrentTarget(field.name)
                   ? [{ required: true, message: `${field.label} is required` }]
                   : []
               }
               valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
               initialValue={field.default}
+              help={
+                isConfiguredForCurrentTarget(field.name)
+                  ? 'Already configured. Leave empty to keep the existing value.'
+                  : undefined
+              }
             >
               {renderField(field)}
             </Form.Item>

@@ -21,7 +21,10 @@ import django
 
 django.setup()
 
+from django.utils import timezone
+
 from workflows.condition_evaluator import evaluate_condition_object, resolve_context_path
+from workflows.models import StepExecution, WorkflowExecution, WorkflowStep
 from workflows.tasks import (
     block_ip_task,
     create_ticket_task,
@@ -116,6 +119,121 @@ def _update_context_after_step(
     }
 
 
+def _mark_execution_running(
+    execution_id: str,
+    *,
+    total_steps: int,
+    context: Dict[str, Any],
+) -> None:
+    """Keep the Argus execution row authoritative while Prefect runs it."""
+    execution = WorkflowExecution.objects.get(id=execution_id)
+    execution.status = 'running'
+    execution.started_at = execution.started_at or timezone.now()
+    execution.completed_at = None
+    execution.error_message = ''
+    execution.total_steps = total_steps
+    execution.context = context
+    execution.save(update_fields=[
+        'status', 'started_at', 'completed_at', 'error_message',
+        'total_steps', 'context', 'updated_at',
+    ])
+
+
+def _persist_step_result(
+    execution_id: str,
+    entry: Dict[str, Any],
+    *,
+    context: Dict[str, Any],
+    current_step: int,
+) -> None:
+    """Write one Prefect step result back to Django immediately."""
+    execution = WorkflowExecution.objects.select_related('workflow').get(id=execution_id)
+    try:
+        step = WorkflowStep.objects.get(
+            id=entry.get('step_id'),
+            workflow=execution.workflow,
+        )
+    except (WorkflowStep.DoesNotExist, ValueError, TypeError):
+        return
+
+    now = timezone.now()
+    StepExecution.objects.update_or_create(
+        workflow_execution=execution,
+        step=step,
+        defaults={
+            'status': entry.get('status') or 'completed',
+            'attempt_number': max(int(entry.get('attempt_number') or 1), 1),
+            'started_at': now,
+            'completed_at': now,
+            'input_data': entry.get('input_data') or {},
+            'output_data': entry.get('output_data') or {},
+            'error_message': entry.get('error_message') or '',
+            'logs': entry.get('logs') or '',
+        },
+    )
+
+    processed_count = execution.step_executions.filter(
+        status__in=('completed', 'failed', 'skipped', 'cancelled'),
+    ).count()
+    execution.current_step = max(current_step, 0)
+    execution.completed_steps = min(processed_count, execution.total_steps)
+    execution.update_progress()
+    execution.context = context
+    execution.save(update_fields=[
+        'current_step', 'completed_steps', 'progress_percent', 'context', 'updated_at',
+    ])
+
+
+def _mark_execution_finished(
+    execution_id: str,
+    *,
+    status: str,
+    results: List[Dict[str, Any]],
+    context: Dict[str, Any],
+    error: str = '',
+) -> Dict[str, Any]:
+    payload = {
+        'execution_id': execution_id,
+        'status': status,
+        'step_results': results,
+    }
+    if error:
+        payload['error'] = error
+
+    execution = WorkflowExecution.objects.get(id=execution_id)
+    execution.status = status
+    execution.completed_at = timezone.now()
+    execution.error_message = error
+    execution.context = context
+    execution.result_data = payload
+    if status == 'completed':
+        execution.completed_steps = execution.total_steps
+        execution.progress_percent = 100.0 if execution.total_steps else 0.0
+    execution.save(update_fields=[
+        'status', 'completed_at', 'error_message', 'context', 'result_data',
+        'completed_steps', 'progress_percent', 'updated_at',
+    ])
+    return payload
+
+
+def _fail_execution(
+    execution_id: str,
+    *,
+    results: List[Dict[str, Any]],
+    context: Dict[str, Any],
+    error: str,
+) -> None:
+    """Persist a business failure and make Prefect report a FAILED run."""
+    _mark_execution_finished(
+        execution_id,
+        status='failed',
+        results=results,
+        context=context,
+        error=error,
+    )
+    raise RuntimeError(error)
+
+
 @flow(name='soar-generic')
 def run_soar_workflow(
     manifest_ref: str,
@@ -146,12 +264,14 @@ def run_soar_workflow(
     }
 
     steps = list(workflow_definition.get('steps', []) or [])
+    _mark_execution_running(execution_id, total_steps=len(steps), context=context)
     if not steps:
-        return {
-            'execution_id': execution_id,
-            'status': 'completed',
-            'step_results': [],
-        }
+        return _mark_execution_finished(
+            execution_id,
+            status='completed',
+            results=[],
+            context=context,
+        )
 
     steps_by_id = {str(step.get('id')): step for step in steps if step.get('id')}
     ordered_steps = sorted(steps, key=lambda item: item.get('order', 0))
@@ -167,20 +287,25 @@ def run_soar_workflow(
     while current_step_id:
         iterations += 1
         if iterations > max_iterations:
-            return {
-                'execution_id': execution_id,
-                'status': 'failed',
-                'step_results': results,
-                'error': 'Workflow exceeded max iteration limit; possible loop in graph.',
-            }
+            _fail_execution(
+                execution_id,
+                results=results,
+                context=context,
+                error='Workflow exceeded max iteration limit; possible loop in graph.',
+            )
 
         step = steps_by_id.get(str(current_step_id))
         if not step:
-            break
+            _fail_execution(
+                execution_id,
+                results=results,
+                context=context,
+                error=f'Workflow references missing step: {current_step_id}',
+            )
 
         node_type = step.get('node_type')
         if node_type in ('start', 'end'):
-            results.append({
+            step_result = {
                 'step_id': step.get('id'),
                 'status': 'skipped',
                 'attempt_number': 1,
@@ -188,7 +313,14 @@ def run_soar_workflow(
                 'output_data': {},
                 'error_message': '',
                 'logs': f'skipped {node_type} node',
-            })
+            }
+            results.append(step_result)
+            _persist_step_result(
+                execution_id,
+                step_result,
+                context=context,
+                current_step=iterations - 1,
+            )
             if node_type == 'end':
                 break
             current_step_id = _next_step_id(ordered_steps, order_index, step)
@@ -226,12 +358,19 @@ def run_soar_workflow(
                 _update_context_after_step(context, step.get('id'), False, {})
 
             results.append(step_result)
+            _persist_step_result(
+                execution_id,
+                step_result,
+                context=context,
+                current_step=iterations - 1,
+            )
             if step_result.get('status') == 'failed' and step.get('on_failure') == 'stop':
-                return {
-                    'execution_id': execution_id,
-                    'status': 'failed',
-                    'step_results': results,
-                }
+                _fail_execution(
+                    execution_id,
+                    results=results,
+                    context=context,
+                    error=step_result.get('error_message') or f"Condition step '{step.get('name')}' failed.",
+                )
 
             current_step_id = _next_step_id(ordered_steps, order_index, step, condition_result=condition_result)
             continue
@@ -239,7 +378,7 @@ def run_soar_workflow(
         action_type = step.get('action_type')
         action_task = ACTION_TASKS.get(action_type)
         if not action_task:
-            results.append({
+            step_result = {
                 'step_id': step.get('id'),
                 'status': 'failed',
                 'attempt_number': 1,
@@ -247,13 +386,22 @@ def run_soar_workflow(
                 'output_data': {},
                 'error_message': f'Unknown action type: {action_type}',
                 'logs': 'No task mapped for action type',
-            })
+            }
+            results.append(step_result)
+            _update_context_after_step(context, step.get('id'), False, {})
+            _persist_step_result(
+                execution_id,
+                step_result,
+                context=context,
+                current_step=iterations - 1,
+            )
             if step.get('on_failure') == 'stop':
-                return {
-                    'execution_id': execution_id,
-                    'status': 'failed',
-                    'step_results': results,
-                }
+                _fail_execution(
+                    execution_id,
+                    results=results,
+                    context=context,
+                    error=step_result['error_message'],
+                )
             current_step_id = _next_step_id(ordered_steps, order_index, step)
             continue
 
@@ -272,7 +420,7 @@ def run_soar_workflow(
         success = bool(action_result.get('success', True)) if isinstance(action_result, dict) else True
         attempt_number = 1
 
-        results.append({
+        step_result = {
             'step_id': step.get('id'),
             'status': 'completed' if success else 'failed',
             'attempt_number': attempt_number,
@@ -280,20 +428,29 @@ def run_soar_workflow(
             'output_data': output_data,
             'error_message': action_result.get('error', '') if isinstance(action_result, dict) else '',
             'logs': action_result.get('logs', '') if isinstance(action_result, dict) else '',
-        })
+        }
+        results.append(step_result)
         _update_context_after_step(context, step.get('id'), success, output_data)
+        _persist_step_result(
+            execution_id,
+            step_result,
+            context=context,
+            current_step=iterations - 1,
+        )
 
         if success is False and step.get('on_failure') == 'stop':
-            return {
-                'execution_id': execution_id,
-                'status': 'failed',
-                'step_results': results,
-            }
+            _fail_execution(
+                execution_id,
+                results=results,
+                context=context,
+                error=step_result.get('error_message') or f"Action step '{step.get('name')}' failed.",
+            )
 
         current_step_id = _next_step_id(ordered_steps, order_index, step)
 
-    return {
-        'execution_id': execution_id,
-        'status': 'completed',
-        'step_results': results,
-    }
+    return _mark_execution_finished(
+        execution_id,
+        status='completed',
+        results=results,
+        context=context,
+    )

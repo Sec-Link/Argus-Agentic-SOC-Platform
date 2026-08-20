@@ -14,12 +14,14 @@ Action categories:
   - utility      : Log, Delay
 """
 import json
+import ipaddress
 import logging
 import re
 import requests
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
+from urllib.parse import quote, urlparse
 from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
@@ -320,6 +322,9 @@ class SendWebhookAction(BaseAction):
             "headers": {
                 "type": "object",
                 "description": "Request headers (key-value pairs)",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["url"],
             },
             "body_template": {
                 "type": "string",
@@ -788,6 +793,9 @@ class IPLookupAction(BaseAction):
             "api_key": {
                 "type": "string",
                 "description": "API key for the threat-intelligence platform",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["api_url"],
             },
             "timeout": {"type": "integer", "default": 15},
         },
@@ -908,6 +916,9 @@ class HashLookupAction(BaseAction):
             "api_key": {
                 "type": "string",
                 "description": "API key for the threat-intelligence platform",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["api_url"],
             },
             "timeout": {"type": "integer", "default": 15},
         },
@@ -985,6 +996,168 @@ class HashLookupAction(BaseAction):
 
 # ============ Containment Actions ============
 
+_OPNSENSE_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$")
+
+
+def _boolean_config(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _opnsense_alias_action(
+    *,
+    operation: str,
+    ip: str,
+    api_url: str,
+    api_key: str,
+    api_secret: str,
+    alias_name: str,
+    timeout: int,
+    verify_tls: bool,
+    kill_states: bool = False,
+) -> ActionResult:
+    """Add/delete an address using the OPNsense alias utility API."""
+    try:
+        normalised_ip = str(ipaddress.ip_address(str(ip).strip()))
+    except ValueError:
+        return ActionResult(success=False, error="ip_address is not a valid IPv4 or IPv6 address")
+
+    parsed_url = urlparse(api_url.strip())
+    if parsed_url.scheme.lower() != "https" or not parsed_url.netloc:
+        return ActionResult(success=False, error="OPNsense api_url must be an absolute HTTPS URL")
+    if (
+        parsed_url.username
+        or parsed_url.password
+        or parsed_url.query
+        or parsed_url.fragment
+        or parsed_url.path not in {"", "/"}
+    ):
+        return ActionResult(
+            success=False,
+            error="OPNsense api_url must be a base URL without credentials, path, query, or fragment",
+        )
+    base_url = api_url.strip().rstrip("/")
+    alias_name = alias_name.strip()
+    if not _OPNSENSE_ALIAS_PATTERN.fullmatch(alias_name):
+        return ActionResult(
+            success=False,
+            error="alias_name must be 1-32 characters using letters, numbers, underscore, dot, or hyphen",
+        )
+    if not api_key or not api_secret:
+        return ActionResult(success=False, error="OPNsense api_key and api_secret are required")
+    if operation not in {"add", "delete"}:
+        return ActionResult(success=False, error="Unsupported OPNsense alias operation")
+
+    endpoint = f"{base_url}/api/firewall/alias_util/{operation}/{quote(alias_name, safe='')}"
+    if not verify_tls:
+        logger.warning(
+            "[SECURITY] OPNsense TLS certificate verification is disabled for host %s",
+            parsed_url.hostname,
+        )
+
+    try:
+        response = requests.post(
+            endpoint,
+            auth=(api_key, api_secret),
+            json={"address": normalised_ip},
+            timeout=timeout,
+            verify=verify_tls,
+            allow_redirects=False,
+        )
+        try:
+            response_payload = response.json() if response.content else {}
+        except ValueError:
+            response_payload = {}
+        business_success = (
+            200 <= response.status_code < 300
+            and isinstance(response_payload, dict)
+            and response_payload.get("status") == "done"
+        )
+        result_data = {
+            "provider": "opnsense",
+            "ip": normalised_ip,
+            "alias_name": alias_name,
+            "operation": operation,
+            "status_code": response.status_code,
+            "api_status": response_payload.get("status") if isinstance(response_payload, dict) else None,
+            "state_cleanup": {"requested": False},
+        }
+
+        if not business_success:
+            return ActionResult(
+                success=False,
+                data=result_data,
+                error=(
+                    f"OPNsense alias {operation} failed: HTTP {response.status_code}, "
+                    f"status={result_data['api_status']!r}"
+                ),
+                logs=f"OPNsense alias {operation} for {normalised_ip} was not completed",
+            )
+
+        cleanup_warning = ""
+        if operation == "add" and kill_states:
+            cleanup_endpoint = f"{base_url}/api/diagnostics/firewall/kill_states"
+            try:
+                cleanup = requests.post(
+                    cleanup_endpoint,
+                    auth=(api_key, api_secret),
+                    json={"filter": normalised_ip},
+                    timeout=timeout,
+                    verify=verify_tls,
+                    allow_redirects=False,
+                )
+                try:
+                    cleanup_payload = cleanup.json() if cleanup.content else {}
+                except ValueError:
+                    cleanup_payload = {}
+                cleanup_status = cleanup_payload.get("status") if isinstance(cleanup_payload, dict) else None
+                cleanup_success = (
+                    200 <= cleanup.status_code < 300
+                    and cleanup_status in {"done", "ok"}
+                )
+                result_data["state_cleanup"] = {
+                    "requested": True,
+                    "success": cleanup_success,
+                    "status_code": cleanup.status_code,
+                    "api_status": cleanup_status,
+                }
+            except requests.RequestException as exc:
+                cleanup_success = False
+                result_data["state_cleanup"] = {
+                    "requested": True,
+                    "success": False,
+                    "error": exc.__class__.__name__,
+                }
+            if not cleanup_success:
+                cleanup_warning = "State cleanup failed after the IP was blocked"
+                logger.warning(
+                    "OPNsense state cleanup failed for %s",
+                    normalised_ip,
+                )
+
+        past_tense = "blocked" if operation == "add" else "released"
+        result_data[past_tense] = True
+        result_data[f"{past_tense}_at"] = timezone.now().isoformat()
+        if cleanup_warning:
+            result_data["warning"] = cleanup_warning
+        return ActionResult(
+            success=True,
+            data=result_data,
+            logs=(
+                f"OPNsense {past_tense} {normalised_ip} in alias {alias_name}"
+                + (f"; warning: {cleanup_warning}" if cleanup_warning else "")
+            ),
+        )
+    except requests.RequestException as exc:
+        return ActionResult(
+            success=False,
+            error=f"OPNsense request failed: {exc.__class__.__name__}",
+            logs=f"OPNsense alias {operation} request failed for {normalised_ip}",
+        )
+
 class BlockIPAction(BaseAction):
     """Block an IP address via an external security-device API.
 
@@ -1007,6 +1180,12 @@ class BlockIPAction(BaseAction):
     config_schema = {
         "type": "object",
         "properties": {
+            "provider": {
+                "type": "string",
+                "enum": ["generic", "opnsense"],
+                "default": "generic",
+                "description": "Security-device API provider",
+            },
             "ip_address": {
                 "type": "string",
                 "description": (
@@ -1021,6 +1200,33 @@ class BlockIPAction(BaseAction):
             "api_key": {
                 "type": "string",
                 "description": "API key / token for the security device",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["provider", "api_url", "alias_name"],
+                "x-secret-rebindable": ["alias_name"],
+            },
+            "api_secret": {
+                "type": "string",
+                "description": "OPNsense API secret",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["provider", "api_url", "alias_name"],
+                "x-secret-rebindable": ["alias_name"],
+            },
+            "alias_name": {
+                "type": "string",
+                "default": "ARGUS_BLOCKLIST",
+                "description": "OPNsense firewall alias name",
+            },
+            "verify_tls": {
+                "type": "boolean",
+                "default": True,
+                "description": "Verify the OPNsense TLS certificate",
+            },
+            "kill_states": {
+                "type": "boolean",
+                "default": False,
+                "description": "Kill active firewall states after a successful block",
             },
             "duration_hours": {
                 "type": "integer",
@@ -1037,14 +1243,19 @@ class BlockIPAction(BaseAction):
     }
 
     def execute(self, config: Dict, context: Dict) -> ActionResult:
+        provider = str(config.get("provider") or "generic").strip().lower()
         ip = self.resolve_variables(config.get("ip_address", ""), context)
         api_url = self.resolve_variables(config.get("api_url", ""), context)
         api_key = self.resolve_variables(config.get("api_key", ""), context)
+        api_secret = self.resolve_variables(config.get("api_secret", ""), context)
         duration = config.get("duration_hours", 24)
         reason = self.resolve_variables(
             config.get("reason", "Blocked by SOAR workflow"), context
         )
-        timeout = int(config.get("timeout", 15))
+        try:
+            timeout = int(config.get("timeout", 15))
+        except (TypeError, ValueError):
+            return ActionResult(success=False, error="timeout must be an integer number of seconds")
 
         if not ip:
             return ActionResult(
@@ -1052,6 +1263,21 @@ class BlockIPAction(BaseAction):
                 error="ip_address is empty after variable resolution",
                 logs="Block IP aborted: no IP address provided",
             )
+
+        if provider == "opnsense":
+            return _opnsense_alias_action(
+                operation="add",
+                ip=ip,
+                api_url=api_url,
+                api_key=api_key,
+                api_secret=api_secret,
+                alias_name=str(config.get("alias_name") or "ARGUS_BLOCKLIST"),
+                timeout=max(1, min(timeout, 120)),
+                verify_tls=_boolean_config(config.get("verify_tls"), True),
+                kill_states=_boolean_config(config.get("kill_states"), False),
+            )
+        if provider != "generic":
+            return ActionResult(success=False, error=f"Unsupported Block IP provider: {provider}")
 
         try:
             response = requests.post(
@@ -1128,6 +1354,9 @@ class DisableUserAction(BaseAction):
             "api_key": {
                 "type": "string",
                 "description": "API key / token for the security device",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["api_url"],
             },
             "reason": {
                 "type": "string",
@@ -1145,7 +1374,10 @@ class DisableUserAction(BaseAction):
         reason = self.resolve_variables(
             config.get("reason", "Disabled by SOAR workflow"), context
         )
-        timeout = int(config.get("timeout", 15))
+        try:
+            timeout = int(config.get("timeout", 15))
+        except (TypeError, ValueError):
+            return ActionResult(success=False, error="timeout must be an integer number of seconds")
 
         if not username:
             return ActionResult(
@@ -1213,6 +1445,12 @@ class ReleaseIPAction(BaseAction):
     config_schema = {
         "type": "object",
         "properties": {
+            "provider": {
+                "type": "string",
+                "enum": ["generic", "opnsense"],
+                "default": "generic",
+                "description": "Security-device API provider",
+            },
             "ip_address": {
                 "type": "string",
                 "description": (
@@ -1227,6 +1465,28 @@ class ReleaseIPAction(BaseAction):
             "api_key": {
                 "type": "string",
                 "description": "API key / token for the security device",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["provider", "api_url", "alias_name"],
+                "x-secret-rebindable": ["alias_name"],
+            },
+            "api_secret": {
+                "type": "string",
+                "description": "OPNsense API secret",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["provider", "api_url", "alias_name"],
+                "x-secret-rebindable": ["alias_name"],
+            },
+            "alias_name": {
+                "type": "string",
+                "default": "ARGUS_BLOCKLIST",
+                "description": "OPNsense firewall alias name",
+            },
+            "verify_tls": {
+                "type": "boolean",
+                "default": True,
+                "description": "Verify the OPNsense TLS certificate",
             },
             "reason": {
                 "type": "string",
@@ -1238,13 +1498,18 @@ class ReleaseIPAction(BaseAction):
     }
 
     def execute(self, config: Dict, context: Dict) -> ActionResult:
+        provider = str(config.get("provider") or "generic").strip().lower()
         ip = self.resolve_variables(config.get("ip_address", ""), context)
         api_url = self.resolve_variables(config.get("api_url", ""), context)
         api_key = self.resolve_variables(config.get("api_key", ""), context)
+        api_secret = self.resolve_variables(config.get("api_secret", ""), context)
         reason = self.resolve_variables(
             config.get("reason", "Released by SOAR workflow"), context
         )
-        timeout = int(config.get("timeout", 15))
+        try:
+            timeout = int(config.get("timeout", 15))
+        except (TypeError, ValueError):
+            return ActionResult(success=False, error="timeout must be an integer number of seconds")
 
         if not ip:
             return ActionResult(
@@ -1252,6 +1517,20 @@ class ReleaseIPAction(BaseAction):
                 error="ip_address is empty after variable resolution",
                 logs="Release IP aborted: no IP address provided",
             )
+
+        if provider == "opnsense":
+            return _opnsense_alias_action(
+                operation="delete",
+                ip=ip,
+                api_url=api_url,
+                api_key=api_key,
+                api_secret=api_secret,
+                alias_name=str(config.get("alias_name") or "ARGUS_BLOCKLIST"),
+                timeout=max(1, min(timeout, 120)),
+                verify_tls=_boolean_config(config.get("verify_tls"), True),
+            )
+        if provider != "generic":
+            return ActionResult(success=False, error=f"Unsupported Release IP provider: {provider}")
 
         try:
             response = requests.post(
@@ -1325,6 +1604,9 @@ class EnableUserAction(BaseAction):
             "api_key": {
                 "type": "string",
                 "description": "API key / token for the security device",
+                "writeOnly": True,
+                "x-sensitive": True,
+                "x-secret-bindings": ["api_url"],
             },
             "reason": {
                 "type": "string",

@@ -32,8 +32,18 @@ def execute_action(action_type: str, action_config: Dict[str, Any], context: Dic
     """Execute an action via ActionRegistry and return a normalized dict."""
     ensure_django_ready()
     from ..actions import ActionRegistry
+    from ..secret_config import decrypt_config_for_execution, redact_values, sensitive_fields
 
     action = ActionRegistry.get_action(action_type)
-    result = action.execute(action_config or {}, context or {})
-    return normalize_action_result(result)
+    # why here need to decypt twice
+    execution_config = decrypt_config_for_execution(action_type, action_config or {})
+    secrets = [execution_config.get(field) for field in sensitive_fields(action_type)]
+    try:
+        result = action.execute(execution_config, context or {})
+    except Exception as exc:
+        # Prefect persists task exceptions, so never let a credential-bearing
+        # upstream error escape into task state or logs.
+        safe_error = redact_values(str(exc), secrets)
+        raise RuntimeError(safe_error) from None
+    return redact_values(normalize_action_result(result), secrets)
 

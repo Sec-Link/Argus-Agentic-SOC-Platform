@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 def _serialize_step(step: WorkflowStep) -> Dict[str, Any]:
+    action_config: Dict[str, Any] = {}
+    if step.action_template and step.action_template.default_config:
+        action_config.update(step.action_template.default_config)
+    action_config.update(step.action_config or {})
     return {
         'id': str(step.id),
         'order': step.order,
@@ -23,7 +27,9 @@ def _serialize_step(step: WorkflowStep) -> Dict[str, Any]:
         'node_type': step.node_type,
         'node_category': step.node_category,
         'action_type': step.action_type,
-        'action_config': step.action_config or {},
+        # This is intentionally ciphertext. Prefect task parameters and
+        # generated manifests must never receive decrypted credentials.
+        'action_config': action_config,
         'timeout_seconds': step.timeout_seconds,
         'on_failure': step.on_failure,
         'retry_count': step.retry_count,
