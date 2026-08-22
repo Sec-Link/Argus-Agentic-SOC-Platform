@@ -1790,6 +1790,9 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                 <Divider>Action Configuration</Divider>
                 <ActionConfigBuilder
                   actionType={selectedNode.data.actionType || ''}
+                  actionInfo={availableActions.find(
+                    (action) => action.action_type === selectedNode.data.actionType
+                  )}
                   config={actionConfig}
                   configKey={String(selectedNode.id)}
                   configuredSecretFields={selectedNode.data.configuredSecretFields || []}
