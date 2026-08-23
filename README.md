@@ -1,53 +1,47 @@
 # Argus-Agentic-SOC-Platform
 
-This repository contains the Argus-Agentic-SOC-Platform — an AI-native Agentic Security Operations Center (SOC) platform focused on unifying alerts ingestion, incident investigation, ticket collaboration, asset correlation, workflow orchestration, and AI-assisted analysis.
+一个面向现代安全运营团队的 **AI Native Agentic SOC 开源平台**，将告警、工单、资产、编排与 AI 助手整合为统一工作台。
 
-The project uses a separated frontend/backend architecture: the frontend is built with Next.js + React to provide the operator console, the backend uses Django + Django REST Framework to provide APIs and orchestration, and PostgreSQL is the primary data store. Elasticsearch is optionally supported as an external alert source.
+> 设计目标：**前后端分离、模块清晰、开箱即用、便于二次开发**
 
 ---
 <img width="1445" height="703" alt="image" src="https://github.com/user-attachments/assets/e4d1b273-3090-4632-85b9-2b455860e73a" />
 
-
 ---
-## 1. Product Positioning
+## 1. 项目亮点
 
-The platform consolidates core SOC objects into one product with open-source solutions:
-
-- Alerts: alert ingestion, caching, search, and display
-- Tickets: incident/ticket management and collaboration
-- CMDB: asset inventory and contextual linking
-- Dashboards: operational dashboards and visualizations
-- Integrations: connectors and external configuration
-- Correlation: correlation rules and analysis
-- Workflows / Orchestrator: automation and scheduling
-- AI Assistant: security-focused intelligent analysis and MCP tool integration
+| 特性 | 说明 |
+| --- | --- |
+| 前后端分离 | 前端采用 Next.js + React，后端采用 Django + DRF，职责边界清晰，便于并行开发与独立部署 |
+| 模块化架构 | 告警、工单、CMDB、关联分析、工作流、编排器、AI 助手等模块分层组织，易理解、易扩展 |
+| 便于二次开发 | 标准化 API 前缀、清晰目录结构、可插拔集成与 MCP 工具链，方便按场景快速定制 |
+| 开箱即用 | 提供 Docker Compose 与 Kubernetes 部署清单，支持快速启动本地与生产环境 |
 
 ---
 
-## 2. Core Capabilities
+## 2. 核心能力
 
-### Security Operations
-- Unified alert ingestion and paginated lists
-- Ticket lifecycle and activity history
-- Asset-context enrichment
-- Dashboard-based operational views
-- Correlation rules and investigative helpers
+### 安全运营闭环
+- 统一告警接入、检索与展示
+- 工单全生命周期管理与协同
+- CMDB 资产上下文关联
+- 可视化运营看板
+- 关联规则与调查辅助
 
-### Automation
-- Workflow orchestration and API-driven calls
-- Scheduled task execution and audit logs
-- Automation chains for tickets/alerts
+### 自动化编排
+- 工作流定义与 API 驱动执行
+- 定时任务调度与审计追踪
+- 告警/工单自动化处理链路
 
-### AI Features
-- Built-in AI Assistant conversational interface
-- MCP-style tool registry and JSON-RPC connector
-- Ticket-context queries, similar-case retrieval, CMDB queries, and observable extraction
+### AI 能力
+- 内置 AI Assistant 对话式分析
+- MCP 风格工具注册与 JSON-RPC 调用
+- 面向工单、资产、可观测对象的上下文智能查询
 
-### Platform Capabilities
-- Token-based authentication
-- OTP login/verification endpoints
-- PostgreSQL persistence
-- Docker Compose and Kubernetes deployment manifests
+### 平台基础能力
+- Token 鉴权与 OTP 登录验证
+- PostgreSQL 持久化（可选 Elasticsearch 扩展）
+- 面向开发与部署的标准化工程配置
 
 ---
 
