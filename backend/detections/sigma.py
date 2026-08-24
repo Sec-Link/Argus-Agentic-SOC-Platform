@@ -43,17 +43,62 @@ MITRE_ATTACK_GITHUB_URL = (
     "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
 )
 
-def load_rule_document(yaml_text: str) -> dict:
+DEFAULT_ELASTIC_INDEX_PATTERNS = {
+    "argus_risk": ["argus-risk-events"],
+}
+
+BUILTIN_CORRELATION_SOURCES = {
+    "argus_risk_events": {
+        "profile": "argus_risk",
+        "index_patterns": ["argus-risk-events"],
+    },
+}
+
+CORRELATION_OPERATORS = {
+    "gt": ">",
+    "gte": ">=",
+    "lt": "<",
+    "lte": "<=",
+    "eq": "==",
+    ">": ">",
+    ">=": ">=",
+    "<": "<",
+    "<=": "<=",
+    "=": "==",
+    "==": "==",
+}
+
+def load_rule_documents(yaml_text: str) -> list[dict]:
     try:
-        data = yaml.safe_load(yaml_text) or {}
-        if not isinstance(data, dict):
-            return {}
-        return data
+        return [item for item in yaml.safe_load_all(yaml_text) if isinstance(item, dict)]
     except Exception:
-        return {}
+        return []
+
+
+def _primary_rule_document(documents: list[dict]) -> dict:
+    return next(
+        (document for document in documents if isinstance(document.get("correlation"), dict)),
+        documents[0] if documents else {},
+    )
+
+
+def _event_rule_document(documents: list[dict]) -> dict:
+    return next(
+        (document for document in documents if isinstance(document.get("detection"), dict)),
+        documents[0] if documents else {},
+    )
+
+
+def load_rule_document(yaml_text: str) -> dict:
+    return _primary_rule_document(load_rule_documents(yaml_text))
 
 
 def extract_rule_id(yaml_text: str) -> str:
+    parsed = load_rule_document(yaml_text)
+    parsed_id = str(parsed.get("id") or "").strip()
+    if parsed_id:
+        return parsed_id
+
     match = re.search(r"(?mi)^id:\s*(.+?)\s*$", yaml_text or "")
     if match:
         rule_id = match.group(1).strip().strip('"').strip("'")
@@ -67,9 +112,11 @@ def extract_rule_id(yaml_text: str) -> str:
 
 
 def extract_rule_meta(yaml_text: str) -> dict:
-    data = load_rule_document(yaml_text)
+    documents = load_rule_documents(yaml_text)
+    data = _primary_rule_document(documents)
+    event_rule = _event_rule_document(documents)
 
-    logsource = data.get("logsource") if isinstance(data.get("logsource"), dict) else {}
+    logsource = event_rule.get("logsource") if isinstance(event_rule.get("logsource"), dict) else {}
     product = str(logsource.get("product") or "").strip()
     service = str(logsource.get("service") or "").strip()
     category = str(logsource.get("category") or "").strip()
@@ -92,9 +139,14 @@ def extract_rule_meta(yaml_text: str) -> dict:
 
 
 def build_rule_detail_metadata(yaml_text: str) -> dict:
-    parsed = load_rule_document(yaml_text)
+    documents = load_rule_documents(yaml_text)
+    parsed = _primary_rule_document(documents)
+    event_rule = _event_rule_document(documents)
     meta = extract_rule_meta(yaml_text)
-    detection = parsed.get("detection") if isinstance(parsed.get("detection"), dict) else {}
+    if isinstance(parsed.get("correlation"), dict):
+        detection = {"correlation": parsed["correlation"]}
+    else:
+        detection = event_rule.get("detection") if isinstance(event_rule.get("detection"), dict) else {}
     detection_preview = (
         yaml.safe_dump(detection, allow_unicode=True, sort_keys=False).strip() if detection else ""
     )
@@ -413,7 +465,138 @@ def _elastic_index_patterns_for_profiles(candidates: list[str]) -> list[str]:
             if pattern and pattern not in seen:
                 seen.add(pattern)
                 patterns.append(pattern)
+    if not patterns:
+        for profile in candidates:
+            for pattern in DEFAULT_ELASTIC_INDEX_PATTERNS.get(profile, []):
+                if pattern not in seen:
+                    seen.add(pattern)
+                    patterns.append(pattern)
     return patterns
+
+
+def _value_sum_correlation_definition(documents: list[dict]) -> dict | None:
+    correlation_rule = next(
+        (
+            document
+            for document in documents
+            if isinstance(document.get("correlation"), dict)
+            and str(document["correlation"].get("type") or "").strip().lower() == "value_sum"
+        ),
+        None,
+    )
+    if correlation_rule is None:
+        return None
+
+    raw = correlation_rule["correlation"]
+    window = str(raw.get("timespan") or "").strip()
+    window_match = re.fullmatch(r"(?P<value>[1-9]\d*)\s*(?P<unit>s|m|h|d|w|M|y)", window)
+    if not window_match:
+        raise ValueError("value_sum correlation timespan must use a value such as 15m, 1h, or 1d")
+    unit_names = {
+        "s": "seconds",
+        "m": "minutes",
+        "h": "hours",
+        "d": "days",
+        "w": "weeks",
+        "M": "months",
+        "y": "years",
+    }
+    window_value = int(window_match.group("value"))
+    window_unit = window_match.group("unit")
+
+    condition = raw.get("condition") if isinstance(raw.get("condition"), dict) else {}
+    score_field = str(condition.get("field") or "").strip()
+    if not re.fullmatch(r"[A-Za-z_@][A-Za-z0-9_.@-]*", score_field):
+        raise ValueError("value_sum correlation condition.field must be a valid field path")
+
+    group_by_raw = raw.get("group-by")
+    if isinstance(group_by_raw, str):
+        group_by = [group_by_raw.strip()] if group_by_raw.strip() else []
+    elif isinstance(group_by_raw, list):
+        group_by = [str(value or "").strip() for value in group_by_raw if str(value or "").strip()]
+    else:
+        group_by = []
+    if not group_by:
+        raise ValueError("value_sum correlation group-by must contain at least one field")
+    if any(not re.fullmatch(r"[A-Za-z_@][A-Za-z0-9_.@-]*", field) for field in group_by):
+        raise ValueError("value_sum correlation group-by contains an invalid field path")
+
+    operator_keys = [key for key in ("gt", "gte", "lt", "lte", "eq") if key in condition]
+    if len(operator_keys) != 1:
+        raise ValueError("value_sum correlation condition must contain exactly one comparison operator")
+    operator_key = operator_keys[0]
+    operator = CORRELATION_OPERATORS.get(operator_key)
+
+    threshold_raw = condition[operator_key]
+    try:
+        threshold = float(threshold_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("value_sum correlation threshold must be numeric") from exc
+    if threshold.is_integer():
+        threshold = int(threshold)
+
+    references = raw.get("rules")
+    if isinstance(references, str):
+        references = [references]
+    if not isinstance(references, list) or not references:
+        raise ValueError("value_sum correlation must reference an event rule")
+    references = [str(value or "").strip() for value in references if str(value or "").strip()]
+    event_rules = [document for document in documents if isinstance(document.get("detection"), dict)]
+    by_reference = {}
+    for event_rule in event_rules:
+        for key in (event_rule.get("name"), event_rule.get("id")):
+            if str(key or "").strip():
+                by_reference[str(key).strip()] = event_rule
+    resolved_references = [
+        {
+            "event_rule": by_reference.get(reference),
+            "builtin_source": BUILTIN_CORRELATION_SOURCES.get(reference),
+        }
+        for reference in references
+    ]
+    if any(not item["event_rule"] and not item["builtin_source"] for item in resolved_references):
+        missing = [
+            reference
+            for reference, item in zip(references, resolved_references)
+            if not item["event_rule"] and not item["builtin_source"]
+        ]
+        raise ValueError(f"value_sum correlation references unknown rule(s): {', '.join(missing)}")
+    if len(resolved_references) != 1:
+        raise ValueError("Argus ES|QL value_sum conversion currently requires exactly one referenced event rule")
+
+    resolved_reference = resolved_references[0]
+
+    return {
+        "correlation_rule": correlation_rule,
+        "event_rule": resolved_reference["event_rule"],
+        "builtin_source": resolved_reference["builtin_source"],
+        "window": window,
+        "window_value": window_value,
+        "window_esql_unit": unit_names[window_unit],
+        "score_field": score_field,
+        "group_by": group_by,
+        "operator": operator,
+        "value": threshold,
+        "risk_score_output_field": "risk_score",
+        "risk_event_count_field": "risk_event_count",
+    }
+
+
+def _append_value_sum_correlation_esql(query: str, definition: dict, candidates: list[str]) -> str:
+    field_mapping = _elastic_field_mapping_for_profiles(candidates)
+    score_field = field_mapping.get(definition["score_field"], definition["score_field"])
+    group_by = [field_mapping.get(field, field) for field in definition["group_by"]]
+    score_output = definition["risk_score_output_field"]
+    count_output = definition["risk_event_count_field"]
+    threshold = definition["value"]
+    return "\n".join(
+        [
+            str(query or "").rstrip(),
+            f'| WHERE @timestamp >= NOW() - {definition["window_value"]} {definition["window_esql_unit"]}',
+            f'| STATS {score_output} = SUM({score_field}), {count_output} = COUNT(*) BY {", ".join(group_by)}',
+            f'| WHERE {score_output} {definition["operator"]} {threshold}',
+        ]
+    )
 
 def _elastic_multivalue_fields_for_profiles(candidates: list[str]) -> list[str]:
     rows = LocalDetectionFieldMapping.objects.filter(
@@ -495,18 +678,19 @@ def _build_processing_pipeline(candidates: list[str]):
 
 
 def _normalize_yaml_for_pysigma(yaml_text: str) -> str:
-    parsed = load_rule_document(yaml_text)
-    if not parsed:
+    documents = load_rule_documents(yaml_text)
+    if not documents:
         return yaml_text
 
-    rule_id = str(parsed.get("id") or "").strip()
-    try:
-        uuid.UUID(rule_id)
-    except Exception:
-        stable_name = rule_id or extract_rule_id(yaml_text)
-        parsed["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"local-detection:{stable_name}"))
+    for index, parsed in enumerate(documents):
+        rule_id = str(parsed.get("id") or "").strip()
+        try:
+            uuid.UUID(rule_id)
+        except Exception:
+            stable_name = rule_id or str(parsed.get("name") or parsed.get("title") or f"rule-{index}")
+            parsed["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"local-detection:{stable_name}"))
 
-    return yaml.safe_dump(parsed, allow_unicode=True, sort_keys=False)
+    return yaml.safe_dump_all(documents, allow_unicode=True, sort_keys=False, explicit_start=False)
 
 
 def _render_queries(backend_cls, yaml_text: str, candidates: list[str]) -> list[str]:
@@ -530,10 +714,38 @@ def _join_queries(queries: list[str], fallback: str = "*") -> str:
 
 
 def compile_queries_from_yaml(yaml_text: str) -> dict:
-    parsed = load_rule_document(yaml_text)
-    candidates = _mapping_candidates(parsed)
-    index_patterns = _elastic_index_patterns_for_profiles(candidates)
+    documents = load_rule_documents(yaml_text)
+    event_rule = _event_rule_document(documents)
+    default_candidates = _mapping_candidates(event_rule)
+    default_index_patterns = _elastic_index_patterns_for_profiles(default_candidates)
+
+    try:
+        value_sum_correlation = _value_sum_correlation_definition(documents)
+    except ValueError as exc:
+        return {
+            "profiles": default_candidates,
+            "elastic_index_patterns": default_index_patterns,
+            "language": "esql",
+            "esql": "*",
+            "error": str(exc),
+        }
+    builtin_source = value_sum_correlation.get("builtin_source") if value_sum_correlation else None
+    candidates = (
+        [str(builtin_source["profile"])]
+        if builtin_source
+        else default_candidates
+    )
+    index_patterns = (
+        list(builtin_source["index_patterns"])
+        if builtin_source
+        else default_index_patterns
+    )
     multivalue_fields = _elastic_multivalue_fields_for_profiles(candidates)
+    compile_yaml = (
+        yaml.safe_dump(value_sum_correlation["event_rule"], allow_unicode=True, sort_keys=False)
+        if value_sum_correlation and value_sum_correlation.get("event_rule")
+        else yaml_text
+    )
 
     try:
         components = _sigma_runtime()
@@ -550,17 +762,52 @@ def compile_queries_from_yaml(yaml_text: str) -> dict:
         }
 
     try:
-        esql_queries = _render_queries(components["ESQLBackend"], yaml_text, candidates)
-        esql = _rewrite_multivalue_equals_to_match(_join_queries(esql_queries), multivalue_fields)
+        if builtin_source:
+            esql = "FROM * METADATA _id, _index, _version"
+        else:
+            esql_queries = _render_queries(components["ESQLBackend"], compile_yaml, candidates)
+            esql = _rewrite_multivalue_equals_to_match(_join_queries(esql_queries), multivalue_fields)
         esql = _apply_index_patterns_to_esql(esql, index_patterns)
-        return {
+        result = {
             "profiles": candidates,
             "elastic_index_patterns": index_patterns,
             "language": "esql",
             "esql": esql,
         }
+        if value_sum_correlation:
+            esql = _append_value_sum_correlation_esql(esql, value_sum_correlation, candidates)
+            result["esql"] = esql
+            result["risk_incident"] = {
+                "enabled": True,
+                "source": "sigma_correlation",
+                "correlation_type": "value_sum",
+                "window": value_sum_correlation["window"],
+                "score_field": value_sum_correlation["score_field"],
+                "group_by": value_sum_correlation["group_by"],
+                "operator": value_sum_correlation["operator"],
+                "value": value_sum_correlation["value"],
+                "risk_score_output_field": value_sum_correlation["risk_score_output_field"],
+                "risk_event_count_field": value_sum_correlation["risk_event_count_field"],
+                "risk_object_type_field": (
+                    value_sum_correlation["group_by"][0]
+                    if len(value_sum_correlation["group_by"]) > 1
+                    else "risk_object_type"
+                ),
+                "risk_object_field": value_sum_correlation["group_by"][-1],
+                "source_index": index_patterns[0] if index_patterns else "",
+            }
+        return result
     except Exception as exc:
         esql_error = str(exc).strip() or "ES|QL compilation failed"
+
+    if value_sum_correlation:
+        return {
+            "profiles": candidates,
+            "elastic_index_patterns": index_patterns,
+            "language": "esql",
+            "esql": "*",
+            "error": esql_error,
+        }
 
     try:
         lucene_queries = _render_queries(components["LuceneBackend"], yaml_text, candidates)

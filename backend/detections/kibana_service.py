@@ -1,9 +1,12 @@
 import uuid
+import time
+from datetime import timedelta
 from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.utils.dateparse import parse_datetime
 from django.utils import timezone
 
 from integrations.models import Integration
@@ -32,6 +35,17 @@ def kibana_connection_config() -> dict:
     if integration and isinstance(integration.config, dict):
         cfg = dict(integration.config)
     return cfg
+
+
+def elasticsearch_integration() -> Integration | None:
+    return Integration.objects.filter(type="elasticsearch", config__has_key="host").order_by("-updated_at", "-created_at").first()
+
+
+def elasticsearch_connection_config() -> dict:
+    integration = elasticsearch_integration() or kibana_integration()
+    if integration and isinstance(integration.config, dict):
+        return dict(integration.config)
+    return {}
 
 
 def derive_kibana_base_url(cfg: dict) -> str:
@@ -80,6 +94,254 @@ def kibana_auth():
     return None
 
 
+def elasticsearch_base() -> str:
+    integration = elasticsearch_integration()
+    cfg = dict(integration.config or {}) if integration and isinstance(integration.config, dict) else {}
+    if not cfg:
+        cfg = kibana_connection_config()
+    host = str(
+        cfg.get("elasticsearch_host")
+        or cfg.get("es_host")
+        or cfg.get("host")
+        or getattr(settings, "ELASTICSEARCH_HOST", "")
+        or ""
+    ).strip().rstrip("/")
+    if host and not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    if not integration and host:
+        try:
+            parsed = urlparse(host)
+            if parsed.hostname and parsed.port == 5601:
+                host = f"{parsed.scheme}://{parsed.hostname}:9200"
+        except Exception:
+            pass
+    return host
+
+
+def elasticsearch_auth():
+    cfg = elasticsearch_connection_config()
+    user = str(cfg.get("username") or getattr(settings, "ELASTICSEARCH_USERNAME", "") or "").strip()
+    password = cfg.get("password") or getattr(settings, "ELASTICSEARCH_PASSWORD", "") or ""
+    if user:
+        return (user, password)
+    return None
+
+
+def elasticsearch_headers() -> dict:
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    cfg = elasticsearch_connection_config()
+    api_key = str(cfg.get("api_key") or getattr(settings, "ELASTICSEARCH_API_KEY", "") or "").strip()
+    if api_key:
+        headers["Authorization"] = f"ApiKey {api_key}"
+    return headers
+
+
+def elasticsearch_proxy(method: str, path: str, params=None, payload=None) -> tuple[int, dict]:
+    base = elasticsearch_base()
+    if not base:
+        return 500, {"detail": "Elasticsearch host is not configured"}
+    try:
+        response = requests.request(
+            method=method,
+            url=f"{base}{path}",
+            headers=elasticsearch_headers(),
+            params=params,
+            json=payload,
+            auth=elasticsearch_auth(),
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        return 502, {"detail": f"Elasticsearch request failed: {exc}"}
+    try:
+        data = response.json()
+    except Exception:
+        data = {"detail": response.text or response.reason or "Elasticsearch returned an empty response"}
+    return response.status_code, data
+
+
+def _parse_now_minus(value: str, end):
+    raw = str(value or "").strip().lower()
+    if not raw.startswith("now-"):
+        return end - timedelta(minutes=16)
+    amount = raw[4:-1]
+    unit = raw[-1:]
+    try:
+        number = int(amount)
+    except Exception:
+        number = 16
+        unit = "m"
+    if unit == "s":
+        return end - timedelta(seconds=number)
+    if unit == "h":
+        return end - timedelta(hours=number)
+    if unit == "d":
+        return end - timedelta(days=number)
+    return end - timedelta(minutes=number)
+
+
+def fetch_esql_preview_summary(payload: dict) -> dict:
+    query = str((payload or {}).get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "Preview payload missing ES|QL query", "count": None, "rows": []}
+    timeframe_end_raw = str((payload or {}).get("timeframeEnd") or "").strip()
+    timeframe_end = parse_datetime(timeframe_end_raw) if timeframe_end_raw else None
+    if timeframe_end is None:
+        timeframe_end = timezone.now()
+    if timezone.is_naive(timeframe_end):
+        timeframe_end = timezone.make_aware(timeframe_end, timezone=timezone.utc)
+    interval_start = _parse_now_minus(str((payload or {}).get("from") or "now-16m"), timeframe_end)
+    interval_seconds = max(1, int((timeframe_end - interval_start).total_seconds()))
+    invocation_count = int((payload or {}).get("invocationCount") or 1)
+    timeframe_start = timeframe_end - timedelta(seconds=interval_seconds * max(1, invocation_count))
+    query_with_limit = query if "| limit " in query.lower() else f"{query} | limit 101"
+    es_payload = {
+        "query": query_with_limit,
+        "filter": {
+            "bool": {
+                "filter": [
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "lte": timeframe_end.isoformat().replace("+00:00", "Z"),
+                                "gte": timeframe_start.isoformat().replace("+00:00", "Z"),
+                                "format": "strict_date_optional_time",
+                            }
+                        }
+                    },
+                    {"bool": {"must": [], "filter": [], "should": [], "must_not": []}},
+                ]
+            }
+        },
+        "wait_for_completion_timeout": "4m",
+        "keep_alive": "60s",
+    }
+    status_code, body = elasticsearch_proxy(
+        "POST",
+        "/_query/async",
+        params={"drop_null_columns": "true", "allow_partial_results": "true"},
+        payload=es_payload,
+    )
+    if status_code >= 400:
+        return {"ok": False, "error": body.get("detail") or body.get("error") or body, "count": None, "rows": [], "request": es_payload}
+    columns = body.get("columns") if isinstance(body.get("columns"), list) else []
+    values = body.get("values") if isinstance(body.get("values"), list) else []
+    rows = [
+        {str(columns[index].get("name") or index): value for index, value in enumerate(row) if index < len(columns)}
+        for row in values[:10]
+        if isinstance(row, list)
+    ]
+    is_partial = bool(body.get("is_partial"))
+    return {
+        "ok": True,
+        "count": len(values),
+        "rows": rows,
+        "columns": columns,
+        "is_partial": is_partial,
+        "request": es_payload,
+        "response_id": body.get("id"),
+    }
+
+
+def fetch_rule_preview_alert_summary(rule_id: str, preview_id: str | None = None, wait_seconds: float = 0.5) -> dict:
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+    cfg = kibana_connection_config()
+    space = str(cfg.get("kibana_space") or getattr(settings, "KIBANA_SPACE", "default") or "default").strip() or "default"
+    index_patterns = [
+        f".internal.preview.alerts-security.alerts-{space}",
+        f".internal.preview.alerts-security.alerts-{space}-*",
+        ".internal.preview.alerts-security.alerts-*",
+        ".internal.preview.alerts-*",
+        f".preview.alerts-security.alerts-{space}",
+        f".preview.alerts-security.alerts-{space}-*",
+        ".preview.alerts-security.alerts-*",
+        ".preview.alerts-*",
+    ]
+    cat_status, cat_body = elasticsearch_proxy(
+        "GET",
+        "/_cat/indices/.internal.preview*,.preview*",
+        params={"format": "json", "expand_wildcards": "hidden,open", "allow_no_indices": "true", "ignore_unavailable": "true"},
+    )
+    if cat_status < 400 and isinstance(cat_body, list):
+        discovered = [
+            str(row.get("index") or "").strip()
+            for row in cat_body
+            if isinstance(row, dict) and str(row.get("index") or "").strip()
+        ]
+        index_patterns = discovered + [pattern for pattern in index_patterns if pattern not in discovered]
+    filters = [{"term": {"kibana.alert.rule.uuid": preview_id}}] if preview_id else [{"term": {"kibana.alert.rule.rule_id": rule_id}}]
+    params = {"allow_no_indices": "true", "ignore_unavailable": "true", "expand_wildcards": "hidden,open"}
+    last_error = None
+    tried_patterns = []
+
+    def _extract_count(search_body):
+        hits = search_body.get("hits") if isinstance(search_body, dict) else {}
+        total = hits.get("total") if isinstance(hits, dict) else 0
+        return int(total.get("value") or 0) if isinstance(total, dict) else int(total or 0)
+
+    def search_once(active_filters):
+        nonlocal last_error, tried_patterns
+        payload = {
+            "size": 10,
+            "track_total_hits": True,
+            "sort": [{"kibana.alert.rule.execution.timestamp": {"order": "desc", "unmapped_type": "date"}}],
+            "query": {"bool": {"filter": active_filters}},
+        }
+        first_success = None
+        first_success_index = ""
+        for index_pattern in index_patterns:
+            if index_pattern not in tried_patterns:
+                tried_patterns.append(index_pattern)
+            status_code, body = elasticsearch_proxy(
+                "POST",
+                f"/{index_pattern}/_search",
+                params=params,
+                payload=payload,
+            )
+            if status_code < 400:
+                if first_success is None:
+                    first_success = (status_code, body)
+                    first_success_index = index_pattern
+                if _extract_count(body) > 0:
+                    body["_matched_query_index"] = index_pattern
+                    return status_code, body
+                continue
+            last_error = body.get("detail") or body.get("error") or body
+        if first_success is not None:
+            first_success[1]["_matched_query_index"] = first_success_index
+            return first_success
+        return status_code, body
+
+    status_code = 500
+    body = {}
+    for attempt in range(5):
+        status_code, body = search_once(filters)
+        if status_code < 400:
+            count = _extract_count(body)
+            if count > 0 or attempt == 4:
+                break
+        time.sleep(0.5)
+
+    if status_code >= 400:
+        return {"ok": False, "error": last_error, "count": None, "alerts": [], "tried_indices": tried_patterns}
+    hits = body.get("hits") if isinstance(body, dict) else {}
+    total = hits.get("total") if isinstance(hits, dict) else 0
+    if isinstance(total, dict):
+        count = int(total.get("value") or 0)
+    else:
+        count = int(total or 0)
+    rows = hits.get("hits") if isinstance(hits, dict) and isinstance(hits.get("hits"), list) else []
+    alerts = [
+        {
+            "id": row.get("_id"),
+            "index": row.get("_index"),
+            "source": row.get("_source") if isinstance(row.get("_source"), dict) else {},
+        }
+        for row in rows
+    ]
+    return {"ok": True, "count": count, "alerts": alerts, "matched_index": body.get("_matched_query_index"), "tried_indices": tried_patterns}
+
+
 def kibana_proxy(method: str, path: str, params=None, payload=None) -> tuple[int, dict]:
     base = kibana_base()
     if not base:
@@ -101,7 +363,7 @@ def kibana_proxy(method: str, path: str, params=None, payload=None) -> tuple[int
     try:
         data = response.json()
     except Exception:
-        data = {"raw": response.text}
+        data = {"detail": response.text or response.reason or "Kibana returned an empty response"}
     return response.status_code, data
 
 

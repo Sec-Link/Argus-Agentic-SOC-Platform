@@ -16,11 +16,11 @@ from .views import (
 urlpatterns = [
     # Publish/remote rule APIs (legacy `kibana/*` paths kept for compatibility)
     path("publish/rules/", KibanaDetectionRulesView.as_view(), name="publish-detection-rules"),
+    path("publish/rules/preview/", KibanaDetectionRulePreviewView.as_view(), name="publish-detection-rule-preview"),
     path("publish/rules/<str:rule_id>/", KibanaDetectionRuleDetailView.as_view(), name="publish-detection-rule-detail"),
     path("publish/rules/<str:rule_id>", KibanaDetectionRuleDetailView.as_view()),
     path("publish/rules/<str:rule_id>/versions/", KibanaDetectionRuleVersionsView.as_view(), name="publish-detection-rule-versions"),
     path("publish/rules/<str:rule_id>/rollback/", KibanaDetectionRuleVersionsView.as_view()),
-    path("publish/rules/preview/", KibanaDetectionRulePreviewView.as_view(), name="publish-detection-rule-preview"),
     path("publish/connectors/", KibanaConnectorsView.as_view(), name="publish-connectors"),
 
     # Local rule APIs
