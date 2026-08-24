@@ -1,11 +1,33 @@
 import React from "react";
-import { Button, Card, Input, Popconfirm, Select, Space, Tag, Typography } from "antd";
+import { Button, Card, Checkbox, Input, Popconfirm, Select, Space, Tag, Tooltip, Typography } from "antd";
 
 import type { DetectionRuleDetail } from "services/detections";
 import { applyIndexPatternsToEsql, parseIndexPatterns } from "./utils";
 
 type ConnectorRow = { id: string; name: string; connector_type_id?: string };
 type KibanaMetadata = { published?: boolean; remote_id?: string; rule_id?: string; enabled?: boolean; name?: string; updated_at?: string };
+
+type RiskFieldConfig = { field: string; type: string };
+type RiskAliasConfig = { source: string; ecs: string };
+
+const ECS_PRESETS: RiskFieldConfig[] = [
+  { field: 'host.name',            type: 'host'  },
+  { field: 'host.id',              type: 'host'  },
+  { field: 'user.name',            type: 'user'  },
+  { field: 'user.id',              type: 'user'  },
+  { field: 'source.ip',            type: 'ip'    },
+  { field: 'source.port',          type: 'other' },
+  { field: 'destination.ip',       type: 'ip'    },
+  { field: 'destination.port',     type: 'other' },
+  { field: 'process.name',         type: 'other' },
+  { field: 'process.pid',          type: 'other' },
+  { field: 'process.command_line', type: 'other' },
+  { field: 'process.parent.name',  type: 'other' },
+  { field: 'file.name',            type: 'other' },
+  { field: 'file.hash.sha256',     type: 'hash'  },
+];
+
+const PRESET_FIELDS = ECS_PRESETS.map((p) => p.field);
 
 type Props = {
   detail: DetectionRuleDetail;
@@ -18,6 +40,15 @@ type Props = {
   elasticActionsText: string;
   elasticIndexPatternsText: string;
   kibanaMetadata: KibanaMetadata;
+  // Risk Object Config
+  riskFields: RiskFieldConfig[];
+  riskAliases: RiskAliasConfig[];
+  riskEnabled: boolean;
+  globalRiskFields: RiskFieldConfig[];
+  onSetRiskFields: (fields: RiskFieldConfig[]) => void;
+  onSetRiskAliases: (aliases: RiskAliasConfig[]) => void;
+  onSetRiskEnabled: (enabled: boolean) => void;
+  onSaveRiskConfig: () => Promise<void>;
   onBack: () => void;
   onEdit: () => void;
   onPublish: () => Promise<void>;
@@ -124,6 +155,153 @@ export default function DetectionRuleDetail(props: Props) {
             <Button size="small" danger disabled={!props.kibanaMetadata.published}>Delete Kibana Rule</Button>
           </Popconfirm>
         </Space>
+      </Card>
+
+      <Card
+        size="small"
+        title="Risk Object Fields"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Space size={8}>
+            {props.riskFields.length === 0 && props.globalRiskFields.length > 0 && (
+              <Tooltip title={`Using global defaults: ${props.globalRiskFields.map((f) => f.field).join(', ')}`}>
+                <Tag color="blue">Global default</Tag>
+              </Tooltip>
+            )}
+            <Button
+              size="small"
+              type={props.riskEnabled ? "primary" : "default"}
+              onClick={() => props.onSetRiskEnabled(!props.riskEnabled)}
+            >
+              {props.riskEnabled ? "RBA ON" : "RBA OFF"}
+            </Button>
+            <Button size="small" onClick={props.onSaveRiskConfig}>Save</Button>
+          </Space>
+        }
+      >
+        {(() => {
+          const TYPE_MAP: Record<string, string> = Object.fromEntries(ECS_PRESETS.map((p) => [p.field, p.type]));
+          const GROUP_LABELS: Record<string, string> = {
+            host: 'Host', user: 'User', ip: 'Network', other: 'Process / File / Other', hash: 'File',
+          };
+          const groupedOptions = [
+            { label: 'Host',    options: ECS_PRESETS.filter((p) => p.type === 'host').map((p) => ({ value: p.field, label: p.field })) },
+            { label: 'User',    options: ECS_PRESETS.filter((p) => p.type === 'user').map((p) => ({ value: p.field, label: p.field })) },
+            { label: 'Network', options: ECS_PRESETS.filter((p) => ['source.ip','source.port','destination.ip','destination.port'].includes(p.field)).map((p) => ({ value: p.field, label: p.field })) },
+            { label: 'Process', options: ECS_PRESETS.filter((p) => p.field.startsWith('process.')).map((p) => ({ value: p.field, label: p.field })) },
+            { label: 'File',    options: ECS_PRESETS.filter((p) => p.field.startsWith('file.')).map((p) => ({ value: p.field, label: p.field })) },
+          ];
+
+          return (
+            <Space direction="vertical" style={{ width: '100%' }} size={10}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Select ECS fields to extract as risk objects when alerts are ingested. Type to search or enter a custom field path.
+              </Typography.Text>
+
+              <Select
+                mode="tags"
+                showSearch
+                style={{ width: '100%' }}
+                placeholder="Select or type ECS fields, e.g. source.ip, user.name, kubernetes.pod.name"
+                value={props.riskFields.map((f) => f.field)}
+                options={groupedOptions}
+                tokenSeparators={[',']}
+                onChange={(values: string[]) => {
+                  props.onSetRiskFields(
+                    values.map((v) => ({ field: v, type: TYPE_MAP[v] || 'other' }))
+                  );
+                }}
+                tagRender={({ value, closable, onClose }) => {
+                  const t = TYPE_MAP[value as string] || 'other';
+                  const color = t === 'ip' ? 'blue' : t === 'user' ? 'purple' : t === 'host' ? 'cyan' : t === 'hash' ? 'orange' : 'default';
+                  return (
+                    <Tag color={color} closable={closable} onClose={onClose} style={{ fontFamily: 'monospace', fontSize: 11, marginRight: 4 }}>
+                      {value}
+                    </Tag>
+                  );
+                }}
+              />
+
+              {/* Field Aliases */}
+              <div style={{ borderTop: '1px solid var(--colorBorderSecondary, rgba(148,163,184,0.16))', paddingTop: 10 }}>
+                <Space style={{ marginBottom: 6 }}>
+                  <Typography.Text strong style={{ fontSize: 12 }}>Field Aliases</Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    Map source log fields → ECS fields when the ECS path is absent in alerts
+                  </Typography.Text>
+                </Space>
+                <Space direction="vertical" style={{ width: '100%' }} size={4}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto', gap: '4px 8px', alignItems: 'center', fontSize: 11, color: 'var(--colorTextSecondary)' }}>
+                    <span>Source field (in alert)</span><span /><span>ECS field (risk target)</span><span />
+                  </div>
+                  {props.riskAliases.map((a, idx) => (
+                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto', gap: '4px 8px', alignItems: 'center' }}>
+                      <Input
+                        size="small"
+                        placeholder="src_ip"
+                        value={a.source}
+                        style={{ fontFamily: 'monospace', fontSize: 12 }}
+                        onChange={(e) => {
+                          const next = [...props.riskAliases];
+                          next[idx] = { ...a, source: e.target.value };
+                          props.onSetRiskAliases(next);
+                        }}
+                      />
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>→</Typography.Text>
+                      <Select
+                        size="small"
+                        showSearch
+                        placeholder="source.ip"
+                        value={a.ecs || undefined}
+                        style={{ width: '100%', fontSize: 12 }}
+                        options={[
+                          ...PRESET_FIELDS.map((f) => ({ value: f, label: f })),
+                        ]}
+                        onChange={(v) => {
+                          const next = [...props.riskAliases];
+                          next[idx] = { ...a, ecs: v };
+                          props.onSetRiskAliases(next);
+                        }}
+                        dropdownRender={(menu) => (
+                          <>
+                            {menu}
+                            <div style={{ padding: '4px 8px', borderTop: '1px solid #eee' }}>
+                              <Input
+                                size="small"
+                                placeholder="Custom ECS path"
+                                onPressEnter={(e) => {
+                                  const val = (e.target as HTMLInputElement).value.trim();
+                                  if (val) {
+                                    const next = [...props.riskAliases];
+                                    next[idx] = { ...a, ecs: val };
+                                    props.onSetRiskAliases(next);
+                                  }
+                                }}
+                              />
+                            </div>
+                          </>
+                        )}
+                      />
+                      <Button
+                        size="small"
+                        danger
+                        onClick={() => props.onSetRiskAliases(props.riskAliases.filter((_, i) => i !== idx))}
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    size="small"
+                    onClick={() => props.onSetRiskAliases([...props.riskAliases, { source: '', ecs: '' }])}
+                  >
+                    + Add Alias
+                  </Button>
+                </Space>
+              </div>
+            </Space>
+          );
+        })()}
       </Card>
 
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>

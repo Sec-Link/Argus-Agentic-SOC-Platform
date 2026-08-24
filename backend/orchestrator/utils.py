@@ -334,6 +334,19 @@ def execute_task(task: Task) -> TaskRun:
             log_lines.append(
                 f"Sync result (alerts ORM): fetched={len(docs)} inserted={inserted} updated={updated} unchanged={unchanged}"
             )
+
+            # --- Risk scoring: process newly inserted alerts ---
+            if inserted > 0:
+                try:
+                    from risk.services import process_alert_for_risk
+                    risk_events_total = 0
+                    for doc in ticket_candidates:
+                        events = process_alert_for_risk(doc)
+                        risk_events_total += len(events)
+                    if risk_events_total:
+                        log_lines.append(f"Risk processing: created {risk_events_total} risk event(s)")
+                except Exception as risk_exc:
+                    log_lines.append(f"Risk processing error (non-fatal): {risk_exc}")
             res = {'status': 'ok', 'inserted_es_ids': [], 'docs': docs, 'docs_with_ids': None}
             # if sync produced a log file, try to include its contents
             try:
@@ -645,6 +658,14 @@ def execute_task(task: Task) -> TaskRun:
                         had_nonfatal_errors = True
             except Exception as e:
                 log_lines.append(f"Ticket creation failed: {str(e)}")
+                had_nonfatal_errors = True
+        elif cfg.get('sync') == 'risk_score_decay':
+            try:
+                from risk.services import apply_score_decay
+                result = apply_score_decay()
+                log_lines.append(f"Risk decay: decayed={result['decayed']} zeroed={result['zeroed']}")
+            except Exception as decay_exc:
+                log_lines.append(f"Risk decay failed: {decay_exc}")
                 had_nonfatal_errors = True
         else:
             log_lines.append(f"Executing task {task.id}")
