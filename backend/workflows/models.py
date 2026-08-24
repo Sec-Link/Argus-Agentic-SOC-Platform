@@ -14,6 +14,30 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 
+def _secure_action_config(instance, field_name, action_type):
+    """Encrypt sensitive values and preserve omitted write-only values on save."""
+    from .secret_config import prepare_config_for_storage
+
+    existing = {}
+    if instance.pk:
+        existing = (
+            instance.__class__.objects.filter(pk=instance.pk)
+            .values_list(field_name, flat=True)
+            .first()
+            or {}
+        )
+    current = getattr(instance, field_name) or {}
+    secured = prepare_config_for_storage(action_type or "", current, existing=existing)
+    setattr(instance, field_name, secured)
+    return secured != current
+
+
+def _include_secured_field(kwargs, field_name):
+    update_fields = kwargs.get("update_fields")
+    if update_fields is not None and field_name not in update_fields:
+        kwargs["update_fields"] = set(update_fields) | {field_name}
+
+
 class ActionTemplate(models.Model):
     """
     Reusable action templates that can be used in workflow steps.
@@ -68,6 +92,11 @@ class ActionTemplate(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.action_type})"
+
+    def save(self, *args, **kwargs):
+        if _secure_action_config(self, "default_config", self.action_type):
+            _include_secured_field(kwargs, "default_config")
+        return super().save(*args, **kwargs)
 
 
 class Workflow(models.Model):
@@ -389,6 +418,11 @@ class WorkflowStep(models.Model):
     def __str__(self):
         return f"{self.workflow.name} - Step {self.order}: {self.name}"
 
+    def save(self, *args, **kwargs):
+        if _secure_action_config(self, "action_config", self.action_type):
+            _include_secured_field(kwargs, "action_config")
+        return super().save(*args, **kwargs)
+
 
 class SavedWorkflowNode(models.Model):
     """Reusable node template saved from workflow editor (Save As)."""
@@ -414,6 +448,11 @@ class SavedWorkflowNode(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.node_category})"
+
+    def save(self, *args, **kwargs):
+        if _secure_action_config(self, "action_config", self.action_type):
+            _include_secured_field(kwargs, "action_config")
+        return super().save(*args, **kwargs)
 
 
 class WorkflowExecution(models.Model):
@@ -632,6 +671,41 @@ class StepExecution(models.Model):
 
     def __str__(self):
         return f"{self.step.name} - {self.status}"
+
+    def save(self, *args, **kwargs):
+        from .secret_config import prepare_config_for_storage
+
+        existing = {}
+        if self.pk:
+            existing = (
+                StepExecution.objects.filter(pk=self.pk)
+                .values_list("input_data", flat=True)
+                .first()
+                or {}
+            )
+        current = self.input_data or {}
+        if isinstance(current.get("action_config"), dict):
+            secured = dict(current)
+            existing_action_config = (
+                existing.get("action_config", {})
+                if isinstance(existing.get("action_config"), dict)
+                else {}
+            )
+            secured["action_config"] = prepare_config_for_storage(
+                self.step.action_type,
+                current["action_config"],
+                existing=existing_action_config,
+            )
+        else:
+            secured = prepare_config_for_storage(
+                self.step.action_type,
+                current,
+                existing=existing,
+            )
+        if secured != current:
+            self.input_data = secured
+            _include_secured_field(kwargs, "input_data")
+        return super().save(*args, **kwargs)
 
     def get_duration_seconds(self):
         """Calculate step duration in seconds."""

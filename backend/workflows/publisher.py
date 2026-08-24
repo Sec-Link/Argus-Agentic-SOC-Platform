@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+from copy import deepcopy
 from datetime import datetime, timezone as dt_timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -12,6 +13,13 @@ from typing import Any, Dict, Iterable, List
 from .models import Workflow
 from .persistence import persist_workflow_definition
 from .prefect_dispatcher import _serialize_workflow
+from .secret_config import (
+    SecretConfigError,
+    decrypt_sensitive_value,
+    is_encrypted,
+    prepare_config_for_storage,
+    sensitive_fields,
+)
 from .flows.generic_workflow_flow import ACTION_TASKS
 
 logger = logging.getLogger(__name__)
@@ -62,6 +70,32 @@ def _validate_action_types(steps: Iterable[Dict[str, Any]]) -> None:
         raise ValueError(f'Unsupported workflow action types: {joined}')
 
 
+def _validate_action_configs(steps: Iterable[Dict[str, Any]]) -> None:
+    invalid: List[str] = []
+    for step in steps:
+        if step.get('node_type') != 'action':
+            continue
+        action_type = str(step.get('action_type') or '').strip()
+        config = step.get('action_config') or {}
+        try:
+            # Validation only: reuse stored ciphertext without decrypting values
+            # into the manifest or changing the database configuration.
+            prepare_config_for_storage(
+                action_type,
+                {},
+                existing=config,
+                require_sensitive=True,
+            )
+        except SecretConfigError as exc:
+            detail = '; '.join(str(message) for message in exc.messages)
+            invalid.append(f"{step.get('name') or action_type}: {detail}")
+
+    if invalid:
+        raise ValueError(
+            'Workflow action configuration is incomplete: ' + '; '.join(invalid)
+        )
+
+
 def _build_manifest_record(workflow: Workflow, version: int) -> Dict[str, Any]:
     payload = _serialize_workflow(workflow)
     payload['trigger_conditions'] = workflow.trigger_conditions or {}
@@ -106,10 +140,33 @@ def resolve_manifest_metadata(workflow: Workflow) -> Dict[str, Any]:
         return json.load(handle)
 
 
+def load_current_published_manifest(workflow: Workflow) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Load and validate the manifest selected by a workflow's current pointer."""
+    pointer = resolve_manifest_metadata(workflow)
+    manifest_filename = str(pointer.get('manifest_filename') or '').strip()
+    try:
+        manifest_version = int(pointer.get('current_version') or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Published manifest version is invalid.') from exc
+
+    if manifest_version < 1 or not manifest_filename:
+        raise ValueError('Published manifest pointer is incomplete.')
+    if Path(manifest_filename).name != manifest_filename:
+        raise ValueError('Published manifest filename is invalid.')
+
+    manifest = load_manifest_definition(workflow, manifest_version)
+    meta = manifest.get('_meta') or {}
+    if int(meta.get('version') or 0) != manifest_version:
+        raise ValueError('Published manifest version does not match its pointer.')
+    if manifest_filename != _manifest_filename(manifest_version):
+        raise ValueError('Published manifest filename does not match its version.')
+    return pointer, manifest
+
+
 def get_published_state(workflow: Workflow) -> Dict[str, Any]:
     try:
-        pointer = resolve_manifest_metadata(workflow)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pointer, _ = load_current_published_manifest(workflow)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
         return {
             'published_version': None,
             'published_at': None,
@@ -121,6 +178,16 @@ def get_published_state(workflow: Workflow) -> Dict[str, Any]:
         'published_at': pointer.get('published_at'),
         'has_unpublished_changes': bool(workflow.is_draft),
     }
+
+
+def build_published_export(workflow: Workflow) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Return the last published manifest, including encrypted secret values."""
+    pointer, manifest = load_current_published_manifest(workflow)
+    exported = deepcopy(manifest)
+    meta = exported.setdefault('_meta', {})
+    meta['export_source'] = 'last_published_manifest'
+    meta['contains_encrypted_sensitive_values'] = True
+    return exported, pointer
 
 
 def _next_publish_version(workflow: Workflow) -> int:
@@ -154,6 +221,7 @@ def publish_workflow(
 ) -> Dict[str, Any]:
     active_steps = _active_steps(workflow)
     _validate_action_types(active_steps)
+    _validate_action_configs(active_steps)
 
     publish_version = _next_publish_version(workflow)
     manifest = _build_manifest_record(workflow, publish_version)
@@ -184,6 +252,9 @@ def publish_workflow(
 
 
 def list_published_manifests() -> List[Dict[str, Any]]:
+    # Intentionally retained but not exposed by URLs/UI. The product does not
+    # currently support disaster recovery from server-local manifests, and
+    # restoring one can mismatch database UUIDs and published-state pointers.
     if not GENERATED_FLOWS_DIR.exists():
         return []
 
@@ -221,6 +292,8 @@ def import_workflow_from_manifest(
     created_by,
     update_existing: bool = True,
 ) -> Workflow:
+    # Intentionally retained as dormant recovery code. See the comment on
+    # list_published_manifests; normal transfers must use uploaded JSON.
     manifest_path = GENERATED_FLOWS_DIR / filename
     if not manifest_path.exists():
         raise FileNotFoundError(f'Manifest file not found: {filename}')
@@ -239,7 +312,46 @@ def import_workflow_from_json_payload(
     *,
     created_by,
     update_existing: bool = True,
+    import_report: Dict[str, Any] | None = None,
 ) -> Workflow:
+    payload = deepcopy(payload)
+    removed_secret_fields: List[Dict[str, Any]] = []
+    for step in payload.get('steps') or []:
+        if not isinstance(step, dict):
+            continue
+        action_type = str(step.get('action_type') or '').strip()
+        config = step.get('action_config')
+        if not isinstance(config, dict):
+            continue
+
+        original_config = deepcopy(config)
+        invalid_fields: List[str] = []
+        for field in sensitive_fields(action_type):
+            value = original_config.get(field)
+            if not is_encrypted(value):
+                continue
+            try:
+                decrypt_sensitive_value(
+                    action_type,
+                    field,
+                    value,
+                    original_config,
+                )
+            except SecretConfigError:
+                invalid_fields.append(field)
+
+        for field in invalid_fields:
+            config.pop(field, None)
+        if invalid_fields:
+            removed_secret_fields.append({
+                'step_name': str(step.get('name') or action_type or 'Unnamed step'),
+                'action_type': action_type,
+                'fields': sorted(invalid_fields),
+            })
+
+    if import_report is not None:
+        import_report['removed_secret_fields'] = removed_secret_fields
+
     meta = payload.get('_meta', {})
     trigger_type = meta.get('trigger_type') or payload.get('trigger_type', 'manual')
     trigger_conditions = meta.get('trigger_conditions') or payload.get('trigger_conditions') or {}
@@ -252,10 +364,12 @@ def import_workflow_from_json_payload(
         trigger_type=trigger_type,
         trigger_conditions=trigger_conditions,
         schedule_cron=schedule_cron,
-        is_active=True,
-        is_draft=False,
+        is_active=False,
+        is_draft=True,
         tags=tags,
         update_existing=update_existing,
+        require_sensitive=False,
+        preserve_existing_secrets=False,
     )
-    logger.info('Imported workflow "%s" (id=%s) from published payload', workflow.name, workflow.id)
+    logger.info('Imported workflow "%s" (id=%s) as an inactive draft', workflow.name, workflow.id)
     return workflow

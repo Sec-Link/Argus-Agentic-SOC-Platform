@@ -4,6 +4,7 @@ Workflow Serializers
 Serializers for the workflow API endpoints.
 """
 from rest_framework import serializers
+from django.db import transaction
 from .models import (
     ActionTemplate,
     Workflow,
@@ -15,6 +16,69 @@ from .models import (
     TicketWorkflowBinding,
 )
 from .publisher import get_published_state
+from .secret_config import (
+    SecretConfigError,
+    prepare_config_for_storage,
+    redact_config,
+)
+
+
+def _secure_config(action_type, incoming, *, existing=None, require_sensitive=False):
+    try:
+        return prepare_config_for_storage(
+            action_type or "",
+            incoming,
+            existing=existing,
+            require_sensitive=require_sensitive,
+        )
+    except SecretConfigError as exc:
+        raise serializers.ValidationError(exc.messages) from exc
+
+
+def _step_existing_config(instance, attrs):
+    existing = {}
+    template = (
+        attrs.get('action_template')
+        if 'action_template' in attrs
+        else getattr(instance, 'action_template', None)
+    )
+    if template and template.default_config:
+        existing.update(template.default_config)
+    if instance and instance.action_config:
+        existing.update(instance.action_config)
+    return existing
+
+
+def _validate_step_timeout(action_type, config, timeout_seconds):
+    if action_type != 'delay':
+        return
+    try:
+        delay_seconds = min(max(int((config or {}).get('seconds', 5)), 1), 3600)
+        timeout_value = int(timeout_seconds or 0)
+    except (TypeError, ValueError) as exc:
+        raise serializers.ValidationError({
+            'timeout_seconds': 'Delay seconds and timeout_seconds must be integers.'
+        }) from exc
+    if timeout_value <= delay_seconds:
+        raise serializers.ValidationError({
+            'timeout_seconds': 'Delay step timeout_seconds must be greater than its seconds value.'
+        })
+
+
+class SensitiveConfigRepresentationMixin:
+    sensitive_config_field = 'action_config'
+
+    def _representation_action_type(self, obj):
+        return getattr(obj, 'action_type', '') or ''
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        field_name = self.sensitive_config_field
+        action_type = self._representation_action_type(instance)
+        safe_config, configured = redact_config(action_type, representation.get(field_name) or {})
+        representation[field_name] = safe_config
+        representation['configured_secret_fields'] = configured
+        return representation
 
 
 class WorkflowPublishedStateMixin:
@@ -29,25 +93,38 @@ class WorkflowPublishedStateMixin:
         return cache[key]
 
 
-class ActionTemplateSerializer(serializers.ModelSerializer):
+class ActionTemplateSerializer(SensitiveConfigRepresentationMixin, serializers.ModelSerializer):
     """Serializer for ActionTemplate model."""
+
+    sensitive_config_field = 'default_config'
+    configured_secret_fields = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = ActionTemplate
         fields = [
             'id', 'name', 'category', 'description', 'action_type',
-            'config_schema', 'default_config', 'is_active',
+            'config_schema', 'default_config', 'configured_secret_fields', 'is_active',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def validate(self, attrs):
+        action_type = attrs.get('action_type') or getattr(self.instance, 'action_type', '')
+        if 'default_config' in attrs:
+            existing = getattr(self.instance, 'default_config', {}) if self.instance else {}
+            attrs['default_config'] = _secure_config(
+                action_type, attrs['default_config'], existing=existing
+            )
+        return attrs
 
-class WorkflowStepSerializer(serializers.ModelSerializer):
+
+class WorkflowStepSerializer(SensitiveConfigRepresentationMixin, serializers.ModelSerializer):
     """Serializer for WorkflowStep model."""
     action_template_name = serializers.CharField(
         source='action_template.name',
         read_only=True
     )
+    configured_secret_fields = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = WorkflowStep
@@ -55,15 +132,32 @@ class WorkflowStepSerializer(serializers.ModelSerializer):
             'id', 'workflow', 'order', 'name',
             'node_type', 'node_category', 'position_x', 'position_y',
             'action_template', 'action_template_name', 'action_type',
-            'action_config', 'timeout_seconds', 'on_failure',
+            'action_config', 'configured_secret_fields', 'timeout_seconds', 'on_failure',
             'retry_count', 'retry_delay_seconds', 'condition',
             'next_step_true', 'next_step_false', 'connections',
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def validate(self, attrs):
+        action_type = attrs.get('action_type') or getattr(self.instance, 'action_type', '')
+        if 'action_config' in attrs:
+            existing = _step_existing_config(self.instance, attrs)
+            attrs['action_config'] = _secure_config(
+                action_type,
+                attrs['action_config'],
+                existing=existing,
+                require_sensitive=True,
+            )
+        _validate_step_timeout(
+            action_type,
+            attrs.get('action_config') or getattr(self.instance, 'action_config', {}),
+            attrs.get('timeout_seconds', getattr(self.instance, 'timeout_seconds', 300)),
+        )
+        return attrs
 
-class WorkflowStepCreateSerializer(serializers.ModelSerializer):
+
+class WorkflowStepCreateSerializer(SensitiveConfigRepresentationMixin, serializers.ModelSerializer):
     """Serializer for creating/updating WorkflowStep."""
     id = serializers.UUIDField(required=False, allow_null=True)
     next_step_true = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -72,13 +166,14 @@ class WorkflowStepCreateSerializer(serializers.ModelSerializer):
         child=serializers.CharField(allow_blank=True),
         required=False,
     )
+    configured_secret_fields = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = WorkflowStep
         fields = [
             'id', 'order', 'name', 'node_type', 'node_category', 'position_x', 'position_y',
             'action_template', 'action_type',
-            'action_config', 'timeout_seconds', 'on_failure',
+            'action_config', 'configured_secret_fields', 'timeout_seconds', 'on_failure',
             'retry_count', 'retry_delay_seconds', 'condition',
             'next_step_true', 'next_step_false', 'connections', 'is_active'
         ]
@@ -86,6 +181,27 @@ class WorkflowStepCreateSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'id': {'read_only': False, 'required': False},
         }
+
+    def validate(self, attrs):
+        # Nested workflow writes need the parent serializer to merge secrets by
+        # original Step ID before the existing rows are rebuilt.
+        if self.parent is not None:
+            return attrs
+        action_type = attrs.get('action_type') or getattr(self.instance, 'action_type', '')
+        if 'action_config' in attrs:
+            existing = _step_existing_config(self.instance, attrs)
+            attrs['action_config'] = _secure_config(
+                action_type,
+                attrs['action_config'],
+                existing=existing,
+                require_sensitive=True,
+            )
+        _validate_step_timeout(
+            action_type,
+            attrs.get('action_config') or getattr(self.instance, 'action_config', {}),
+            attrs.get('timeout_seconds', getattr(self.instance, 'timeout_seconds', 300)),
+        )
+        return attrs
 
 
 class WorkflowScheduleSerializer(serializers.ModelSerializer):
@@ -270,9 +386,31 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
                     sanitized.append(str(parsed))
             step_data['connections'] = sanitized
 
-    def _create_step(self, workflow, step_data, order_offset=0):
+    def _prepare_step_config(self, step_data, existing_config=None):
+        action_type = step_data.get('action_type') or ''
+        base_config = {}
+        action_template = step_data.get('action_template')
+        if action_template and action_template.default_config:
+            base_config.update(action_template.default_config)
+        if self.context.get('preserve_existing_secrets', True):
+            base_config.update(existing_config or {})
+        step_data['action_config'] = _secure_config(
+            action_type,
+            step_data.get('action_config') or {},
+            existing=base_config,
+            require_sensitive=self.context.get('require_sensitive', True),
+        )
+        _validate_step_timeout(
+            action_type,
+            step_data['action_config'],
+            step_data.get('timeout_seconds', 300),
+        )
+        return step_data
+
+    def _create_step(self, workflow, step_data, order_offset=0, existing_config=None):
         step_id = self._to_uuid_or_none(step_data.pop('id', None))
         self._sanitize_step_references(step_data)
+        self._prepare_step_config(step_data, existing_config)
 
         if 'order' in step_data:
             step_data['order'] = step_data['order'] + order_offset
@@ -285,6 +423,7 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
 
         return step
 
+    @transaction.atomic
     def create(self, validated_data):
         steps_data = validated_data.pop('steps', [])
         workflow = Workflow.objects.create(**validated_data)
@@ -294,34 +433,70 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
 
         return workflow
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         steps_data = validated_data.pop('steps', None)
+
+        prepared_steps = None
+        if steps_data is not None:
+            existing_steps = {
+                str(step.id): step.action_config or {}
+                for step in instance.steps.all()
+            }
+            prepared_steps = []
+            for raw_step_data in steps_data:
+                step_data = raw_step_data.copy()
+                original_id = self._to_uuid_or_none(step_data.get('id'))
+                self._prepare_step_config(
+                    step_data,
+                    existing_steps.get(str(original_id), {}),
+                )
+                prepared_steps.append(step_data)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        if steps_data is not None:
+        if prepared_steps is not None:
             instance.steps.all().delete()
-            for step_data in steps_data:
+            for step_data in prepared_steps:
                 self._create_step(instance, step_data.copy())
 
         return instance
 
 
-class StepExecutionSerializer(serializers.ModelSerializer):
+class StepExecutionSerializer(SensitiveConfigRepresentationMixin, serializers.ModelSerializer):
     """Serializer for StepExecution model."""
     step_name = serializers.CharField(source='step.name', read_only=True)
     step_order = serializers.IntegerField(source='step.order', read_only=True)
     action_type = serializers.CharField(source='step.action_type', read_only=True)
     duration_seconds = serializers.SerializerMethodField()
+    configured_secret_fields = serializers.ListField(child=serializers.CharField(), read_only=True)
+    sensitive_config_field = 'input_data'
+
+    def _representation_action_type(self, obj):
+        return getattr(getattr(obj, 'step', None), 'action_type', '') or ''
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        input_data = representation.get('input_data') or {}
+        nested = input_data.get('action_config') if isinstance(input_data, dict) else None
+        if isinstance(nested, dict):
+            safe_nested, nested_configured = redact_config(
+                self._representation_action_type(instance), nested
+            )
+            input_data['action_config'] = safe_nested
+            representation['configured_secret_fields'] = sorted(set(
+                representation.get('configured_secret_fields', []) + nested_configured
+            ))
+        return representation
 
     class Meta:
         model = StepExecution
         fields = [
             'id', 'step', 'step_name', 'step_order', 'action_type',
             'status', 'attempt_number', 'started_at', 'completed_at',
-            'input_data', 'output_data', 'error_message', 'logs',
+            'input_data', 'configured_secret_fields', 'output_data', 'error_message', 'logs',
             'duration_seconds', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -394,17 +569,35 @@ class WorkflowExecuteSerializer(serializers.Serializer):
     confirm_mass_update = serializers.BooleanField(required=False, default=False)
 
 
-class SavedWorkflowNodeSerializer(serializers.ModelSerializer):
+class SavedWorkflowNodeSerializer(SensitiveConfigRepresentationMixin, serializers.ModelSerializer):
     """Serializer for reusable saved workflow nodes."""
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    configured_secret_fields = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = SavedWorkflowNode
         fields = [
             'id', 'name', 'node_type', 'node_category',
-            'action_type', 'action_config', 'timeout_seconds', 'on_failure',
+            'action_type', 'action_config', 'configured_secret_fields', 'timeout_seconds', 'on_failure',
             'retry_count', 'retry_delay_seconds', 'condition', 'is_active',
             'created_by', 'created_by_username', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_by', 'created_by_username', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        action_type = attrs.get('action_type') or getattr(self.instance, 'action_type', '')
+        if 'action_config' in attrs:
+            existing = getattr(self.instance, 'action_config', {}) if self.instance else {}
+            attrs['action_config'] = _secure_config(
+                action_type,
+                attrs['action_config'],
+                existing=existing,
+                require_sensitive=True,
+            )
+        _validate_step_timeout(
+            action_type,
+            attrs.get('action_config') or getattr(self.instance, 'action_config', {}),
+            attrs.get('timeout_seconds', getattr(self.instance, 'timeout_seconds', 300)),
+        )
+        return attrs
 

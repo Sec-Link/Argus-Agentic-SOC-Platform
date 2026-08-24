@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .actions import ActionRegistry
-from .engine import execute_workflow
+from .engine import WorkflowExecutionUnavailable, execute_workflow
 from .models import (
     ActionTemplate,
     SavedWorkflowNode,
@@ -113,7 +113,6 @@ class ActionTemplateViewSet(viewsets.ModelViewSet):
                 'description': preset['description'],
                 'category': preset['category'],
                 'config_schema': meta.get('config_schema', {}),
-                'default_config': {},
                 'is_active': True,
             }
             obj, was_created = ActionTemplate.objects.update_or_create(
@@ -178,14 +177,42 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         workflow = self.get_object()
         serializer = WorkflowExecuteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        execution = execute_workflow(
-            workflow=workflow,
-            trigger_source=serializer.validated_data.get('trigger_source', 'manual'),
-            trigger_data=serializer.validated_data.get('trigger_data', {}),
-            executed_by=request.user if request.user.is_authenticated else None,
-        )
+        try:
+            execution = execute_workflow(
+                workflow=workflow,
+                trigger_source=serializer.validated_data.get('trigger_source', 'manual'),
+                trigger_data=serializer.validated_data.get('trigger_data', {}),
+                executed_by=request.user if request.user.is_authenticated else None,
+            )
+        except WorkflowExecutionUnavailable as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
         response = WorkflowExecutionDetailSerializer(execution)
         return Response(response.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path='export')
+    def export_published(self, request, pk=None):
+        """Download the last published manifest with secrets kept encrypted."""
+        workflow = self.get_object()
+        from .publisher import build_published_export
+
+        try:
+            payload, pointer = build_published_export(workflow)
+        except FileNotFoundError:
+            return Response(
+                {'error': 'Workflow must be published before it can be exported.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return Response(
+                {'error': f'Published workflow manifest is unavailable or invalid: {exc}'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        version = int(pointer.get('current_version') or 0)
+        filename = f'{slugify(workflow.name) or "workflow"}-published-v{version}.json'
+        response = Response(payload, content_type='application/json')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
     @staticmethod
     def _prefect_schedule_payload(schedule: WorkflowSchedule | None) -> Dict[str, Any] | None:
@@ -383,12 +410,15 @@ class WorkflowScheduleViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='execute')
     def execute_plan(self, request, pk=None):
         schedule = self.get_object()
-        execution = execute_workflow(
-            workflow=schedule.workflow,
-            trigger_data=schedule.trigger_data or {},
-            trigger_source=schedule.trigger_source or 'schedule',
-            executed_by=request.user,
-        )
+        try:
+            execution = execute_workflow(
+                workflow=schedule.workflow,
+                trigger_data=schedule.trigger_data or {},
+                trigger_source=schedule.trigger_source or 'schedule',
+                executed_by=request.user,
+            )
+        except WorkflowExecutionUnavailable as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
         return Response(WorkflowExecutionDetailSerializer(execution).data, status=status.HTTP_201_CREATED)
 
 
@@ -623,6 +653,11 @@ class WorkflowPublishView(APIView):
         from .publisher import publish_workflow
         try:
             result = publish_workflow(workflow, register_deployment=register_deployment)
+        except ValueError as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as exc:
             logger.exception('Workflow publish failed for workflow %s', workflow.id)
             return Response(
@@ -639,7 +674,11 @@ class WorkflowPublishView(APIView):
 
 
 class WorkflowPublishedListView(APIView):
-    """List all published workflow manifests available for import."""
+    """Dormant server-manifest recovery endpoint; intentionally not routed."""
+
+    # Kept (rather than deleted) so the previous recovery implementation is
+    # documented in place. It is disabled because this product does not offer
+    # disaster recovery and imported manifest UUIDs can diverge from DB UUIDs.
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -655,7 +694,10 @@ class WorkflowImportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        from .publisher import import_workflow_from_manifest, import_workflow_from_json_payload
+        from .publisher import import_workflow_from_json_payload
+        # Server-local manifest recovery is intentionally disabled. Keep the
+        # old import available in source history without exposing it here:
+        # from .publisher import import_workflow_from_manifest
 
         update_existing = str(request.data.get('update_existing', 'true')).lower() == 'true'
 
@@ -670,51 +712,60 @@ class WorkflowImportView(APIView):
                     {'error': f'Invalid JSON file: {exc}'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            import_report = {}
             workflow = import_workflow_from_json_payload(
                 payload,
                 created_by=request.user,
                 update_existing=update_existing,
+                import_report=import_report,
             )
             return Response({
                 'status': 'imported',
                 'source': 'upload',
                 'workflow_id': str(workflow.id),
                 'workflow_name': workflow.name,
+                'removed_secret_fields': import_report.get('removed_secret_fields', []),
             }, status=status.HTTP_201_CREATED)
 
-        filename = request.data.get('filename')
-        if filename:
-            try:
-                workflow = import_workflow_from_manifest(
-                    filename,
-                    created_by=request.user,
-                    update_existing=update_existing,
-                )
-            except FileNotFoundError as exc:
-                return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
-            return Response({
-                'status': 'imported',
-                'source': 'manifest',
-                'workflow_id': str(workflow.id),
-                'workflow_name': workflow.name,
-            }, status=status.HTTP_201_CREATED)
+        # Disabled server-manifest recovery path. It is preserved as comments
+        # because recovery is out of scope and the old implementation could
+        # create a DB workflow whose UUID does not match the manifest pointer.
+        # filename = request.data.get('filename')
+        # if filename:
+        #     try:
+        #         workflow = import_workflow_from_manifest(
+        #             filename,
+        #             created_by=request.user,
+        #             update_existing=update_existing,
+        #         )
+        #     except FileNotFoundError as exc:
+        #         return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        #     return Response({
+        #         'status': 'imported',
+        #         'source': 'manifest',
+        #         'workflow_id': str(workflow.id),
+        #         'workflow_name': workflow.name,
+        #     }, status=status.HTTP_201_CREATED)
 
         workflow_definition = request.data.get('workflow_definition')
         if isinstance(workflow_definition, dict):
+            import_report = {}
             workflow = import_workflow_from_json_payload(
                 workflow_definition,
                 created_by=request.user,
                 update_existing=update_existing,
+                import_report=import_report,
             )
             return Response({
                 'status': 'imported',
                 'source': 'payload',
                 'workflow_id': str(workflow.id),
                 'workflow_name': workflow.name,
+                'removed_secret_fields': import_report.get('removed_secret_fields', []),
             }, status=status.HTTP_201_CREATED)
 
         return Response(
-            {'error': 'Provide one of: file upload, filename, or workflow_definition payload.'},
+            {'error': 'Provide either a JSON file upload or workflow_definition payload.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 

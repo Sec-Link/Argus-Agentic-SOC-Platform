@@ -1041,6 +1041,7 @@ export interface WorkflowStep {
   position_y?: number;
   action_type: string;
   action_config: Record<string, any>;
+  configured_secret_fields?: string[];
   timeout_seconds: number;
   on_failure: 'stop' | 'continue' | 'retry' | 'skip';
   retry_count: number;
@@ -1183,6 +1184,7 @@ export interface SavedWorkflowNode {
   node_category: string;
   action_type?: string;
   action_config: Record<string, any>;
+  configured_secret_fields?: string[];
   timeout_seconds: number;
   on_failure: 'stop' | 'continue' | 'retry' | 'skip';
   retry_count: number;
@@ -1407,7 +1409,25 @@ export async function publishWorkflow(id: string, options?: { register_deploymen
   return r.data;
 }
 
-// List published workflow manifests available for import
+// Export the last published manifest; sensitive values remain encrypted.
+export async function exportWorkflow(id: string): Promise<{ blob: Blob; filename: string }> {
+  const r = await client.get(`${WORKFLOWS_BASE}/workflows/${id}/export/`, {
+    responseType: 'blob',
+  });
+  return {
+    blob: r.data as Blob,
+    filename: extractDownloadFilename(
+      r.headers['content-disposition'],
+      `workflow-${id}-published.json`,
+    ),
+  };
+}
+
+/*
+ * Intentionally disabled rather than deleted. Importing server-local manifests
+ * was a disaster-recovery path, but recovery is out of scope and restored DB
+ * UUIDs can diverge from manifest pointer UUIDs. Normal transfers use JSON files.
+ *
 export async function listPublishedManifests(): Promise<{ manifests: Array<{
   filename: string;
   slug: string;
@@ -1434,6 +1454,7 @@ export async function importWorkflowFromManifest(filename: string): Promise<{
   const r = await client.post(`${WORKFLOWS_BASE}/import/`, { filename });
   return r.data;
 }
+*/
 
 // Import workflow from uploaded JSON file
 export async function importWorkflowFromFile(file: File): Promise<{
@@ -1441,6 +1462,11 @@ export async function importWorkflowFromFile(file: File): Promise<{
   source: string;
   workflow_id: string;
   workflow_name: string;
+  removed_secret_fields?: Array<{
+    step_name: string;
+    action_type: string;
+    fields: string[];
+  }>;
 }> {
   const form = new FormData();
   form.append('file', file);

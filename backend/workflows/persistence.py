@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -96,6 +97,29 @@ def build_edges_from_step_payloads(steps: Iterable[Dict[str, Any]]) -> List[Dict
     return edges
 
 
+def remap_step_ids_for_new_workflow(steps: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Assign portable node IDs and rewrite all intra-workflow references."""
+    remapped = [deepcopy(step) for step in steps]
+    id_map = {
+        _coerce_step_id(step.get('id')): str(uuid4())
+        for step in remapped
+        if step.get('id')
+    }
+
+    for step in remapped:
+        old_id = _coerce_step_id(step.get('id'))
+        step['id'] = id_map.get(old_id) or str(uuid4())
+        for field in ('next_step_true', 'next_step_false'):
+            old_target = _coerce_step_id(step.get(field))
+            step[field] = id_map.get(old_target) if old_target else None
+        step['connections'] = [
+            id_map[target]
+            for target in map(_coerce_step_id, step.get('connections') or [])
+            if target in id_map
+        ]
+    return remapped
+
+
 @transaction.atomic
 def persist_workflow_definition(
     *,
@@ -108,6 +132,8 @@ def persist_workflow_definition(
     is_draft: bool = False,
     tags: List[str] | None = None,
     update_existing: bool = True,
+    require_sensitive: bool = True,
+    preserve_existing_secrets: bool = True,
 ) -> Workflow:
     from .serializers import WorkflowCreateSerializer
 
@@ -120,6 +146,10 @@ def persist_workflow_definition(
         _normalize_step_payload(step, index)
         for index, step in enumerate(raw_steps)
     ]
+    instance = Workflow.objects.filter(name=name).first() if update_existing else None
+    if instance is None:
+        normalized_steps = remap_step_ids_for_new_workflow(normalized_steps)
+
     payload = {
         'name': name,
         'description': workflow_definition.get('description') or '',
@@ -135,8 +165,14 @@ def persist_workflow_definition(
         'execution_engine': 'prefect',
     }
 
-    instance = Workflow.objects.filter(name=name).first() if update_existing else None
-    serializer = WorkflowCreateSerializer(instance=instance, data=payload)
+    serializer = WorkflowCreateSerializer(
+        instance=instance,
+        data=payload,
+        context={
+            'require_sensitive': require_sensitive,
+            'preserve_existing_secrets': preserve_existing_secrets,
+        },
+    )
     serializer.is_valid(raise_exception=True)
     workflow = serializer.save(created_by=created_by) if instance is None else serializer.save()
 

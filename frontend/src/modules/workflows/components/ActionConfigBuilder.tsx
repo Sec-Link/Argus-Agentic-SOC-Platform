@@ -1,492 +1,176 @@
 /**
- * Action Config Builder Component
+ * Visual editor for workflow action configuration.
  *
- * Provides a visual form-based configuration for workflow actions,
- * with the option to switch to raw JSON editing mode.
- *
- * Supported action types:
- *   Control Flow  : (handled as node types – no config builder needed)
- *   Enrichment    : ip_lookup, hash_lookup
- *   Containment   : block_ip, disable_user
- *   Release       : release_ip, enable_user
- *   Notification  : send_email, send_webhook
- *   Integration   : create_ticket, update_ticket
- *   Utility       : log, delay
+ * Field definitions come from the backend Action Registry through the
+ * available-actions API. This component only maps JSON Schema primitives to
+ * Ant Design controls and keeps the existing credential-protection behaviour.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
+  Button,
+  Card,
+  Divider,
   Form,
   Input,
-  Select,
-  Switch,
   InputNumber,
-  Button,
+  Select,
   Space,
+  Switch,
   Tabs,
-  Card,
   Tag,
-  Divider,
-  Typography,
   Tooltip,
-  Alert,
+  Typography,
 } from 'antd';
 import {
   CodeOutlined,
   FormOutlined,
-  PlusOutlined,
   InfoCircleOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
+import type { ActionInfo } from 'services/workflows';
 
 const { TextArea } = Input;
 const { Text } = Typography;
 
-interface ActionConfigBuilderProps {
-  actionType: string;
-  config: Record<string, any>;
-  onChange: (config: Record<string, any>) => void;
-}
+type JsonSchemaProperty = {
+  type?: string | string[];
+  title?: string;
+  description?: string;
+  enum?: unknown[];
+  default?: unknown;
+  minimum?: number;
+  maximum?: number;
+  writeOnly?: boolean;
+  items?: JsonSchemaProperty;
+  properties?: Record<string, JsonSchemaProperty>;
+  'x-sensitive'?: boolean;
+};
 
-// ── Schema definitions ────────────────────────────────────────────────────
-// Each entry describes what visual fields the form should render.
-// Fields not listed here are still editable in JSON mode.
+type ActionConfigSchema = {
+  type?: string;
+  properties?: Record<string, JsonSchemaProperty>;
+  required?: string[];
+};
 
 type FieldDef = {
   name: string;
   label: string;
   type: 'string' | 'number' | 'boolean' | 'select' | 'textarea' | 'array' | 'password' | 'keyvalue';
-  required?: boolean;
-  placeholder?: string;
-  options?: Array<{ value: string; label: string }>;
-  default?: any;
+  required: boolean;
+  options?: Array<{ value: string | number; label: string }>;
+  default?: unknown;
   description?: string;
+  sensitive: boolean;
+  minimum?: number;
+  maximum?: number;
 };
 
-type SchemaDef = { name: string; description: string; fields: FieldDef[] };
+interface ActionConfigBuilderProps {
+  actionType: string;
+  actionInfo?: ActionInfo;
+  config: Record<string, any>;
+  configKey?: string;
+  configuredSecretFields?: string[];
+  onChange: (config: Record<string, any>) => void;
+}
 
-const actionSchemas: Record<string, SchemaDef> = {
-  // ── Utility ──────────────────────────────────────────────────────────────
-  log: {
-    name: 'Log Message',
-    description: 'Log a message for debugging purposes',
-    fields: [
-      {
-        name: 'message', label: 'Message', type: 'textarea', required: true,
-        placeholder: 'Enter log message…',
-        description: 'Supports variables like {{trigger_data.field}}',
-      },
-      {
-        name: 'level', label: 'Log Level', type: 'select',
-        options: [
-          { value: 'info', label: 'Info' },
-          { value: 'warning', label: 'Warning' },
-          { value: 'error', label: 'Error' },
-        ],
-        default: 'info',
-      },
-    ],
-  },
-  delay: {
-    name: 'Delay',
-    description: 'Wait for a specified number of seconds',
-    fields: [
-      {
-        name: 'seconds', label: 'Seconds', type: 'number', required: true,
-        default: 5, description: 'Wait time (1–3600 seconds)',
-      },
-    ],
-  },
-
-  // ── Notification ─────────────────────────────────────────────────────────
-  send_email: {
-    name: 'Send Email',
-    description: 'Send an email notification',
-    fields: [
-      {
-        name: 'to', label: 'Recipients', type: 'array', required: true,
-        placeholder: 'email@example.com',
-        description: 'Add one or more email addresses',
-      },
-      {
-        name: 'subject', label: 'Subject', type: 'string', required: true,
-        placeholder: 'Alert: {{trigger_data.alert_name}}',
-      },
-      {
-        name: 'body', label: 'Email Body', type: 'textarea', required: true,
-        placeholder: 'Alert details:\nSeverity: {{trigger_data.severity}}\nSource IP: {{trigger_data.source_ip}}',
-      },
-      { name: 'is_html', label: 'HTML Email', type: 'boolean', default: false },
-    ],
-  },
-  send_webhook: {
-    name: 'Send Webhook',
-    description: 'Send an HTTP request to a webhook URL with a configurable JSON body',
-    fields: [
-      {
-        name: 'url', label: 'Webhook URL', type: 'string', required: true,
-        placeholder: 'https://api.example.com/webhook',
-      },
-      {
-        name: 'method', label: 'HTTP Method', type: 'select',
-        options: [
-          { value: 'GET', label: 'GET' },
-          { value: 'POST', label: 'POST' },
-          { value: 'PUT', label: 'PUT' },
-          { value: 'PATCH', label: 'PATCH' },
-        ],
-        default: 'POST',
-      },
-      {
-        name: 'headers', label: 'Headers', type: 'keyvalue',
-        description: 'Optional HTTP headers sent with the request',
-      },
-      {
-        name: 'body_template', label: 'Request Body (JSON)', type: 'textarea',
-        placeholder: '{\n  "alert": "{{trigger_data.alert_name}}",\n  "severity": "{{trigger_data.severity}}"\n}',
-        description: (
-          'JSON string.  Use {{variable.path}} for dynamic values.  ' +
-          'The system validates this is valid JSON before sending.'
-        ),
-      },
-      { name: 'timeout', label: 'Timeout (seconds)', type: 'number', default: 30 },
-    ],
-  },
-
-  // ── Enrichment ───────────────────────────────────────────────────────────
-  ip_lookup: {
-    name: 'IP Lookup',
-    description: 'Check IP reputation via a configurable threat-intel platform (e.g. AbuseIPDB, VirusTotal)',
-    fields: [
-      {
-        name: 'ip_address', label: 'IP Address', type: 'string', required: true,
-        placeholder: '{{trigger_data.source_ip}}',
-        description: 'Supports dynamic values extracted from the triggering case or alert',
-      },
-      {
-        name: 'api_url', label: 'Threat-Intel API URL', type: 'string', required: true,
-        placeholder: 'https://api.abuseipdb.com/api/v2/check',
-        description: 'Full API endpoint of the threat-intelligence platform',
-      },
-      {
-        name: 'api_key', label: 'API Key', type: 'password', required: true,
-        placeholder: 'Your API key',
-        description: 'API key / token for the threat-intelligence platform',
-      },
-      { name: 'timeout', label: 'Timeout (seconds)', type: 'number', default: 15 },
-    ],
-  },
-  hash_lookup: {
-    name: 'Hash Lookup',
-    description: 'Check file-hash reputation via a configurable threat-intel platform (e.g. VirusTotal)',
-    fields: [
-      {
-        name: 'hash_value', label: 'File Hash', type: 'string', required: true,
-        placeholder: '{{trigger_data.file_hash}}',
-        description: 'Supports dynamic values extracted from the triggering case or alert',
-      },
-      {
-        name: 'hash_type', label: 'Hash Type', type: 'select',
-        options: [
-          { value: 'md5', label: 'MD5' },
-          { value: 'sha1', label: 'SHA-1' },
-          { value: 'sha256', label: 'SHA-256' },
-        ],
-        default: 'sha256',
-      },
-      {
-        name: 'api_url', label: 'Threat-Intel API URL', type: 'string', required: true,
-        placeholder: 'https://www.virustotal.com/api/v3/files/{hash}',
-        description: 'Use {hash} as a placeholder – it will be replaced with the resolved hash value',
-      },
-      {
-        name: 'api_key', label: 'API Key', type: 'password', required: true,
-        placeholder: 'Your API key',
-      },
-      { name: 'timeout', label: 'Timeout (seconds)', type: 'number', default: 15 },
-    ],
-  },
-
-  // ── Containment ──────────────────────────────────────────────────────────
-  block_ip: {
-    name: 'Block IP',
-    description: 'Block an IP address via a security-device API (firewall / EDR)',
-    fields: [
-      {
-        name: 'ip_address', label: 'IP Address', type: 'string', required: true,
-        placeholder: '{{trigger_data.source_ip}}',
-        description: 'Supports dynamic values extracted from the triggering case or alert',
-      },
-      {
-        name: 'api_url', label: 'Security Device API URL', type: 'string', required: true,
-        placeholder: 'https://firewall.example.com/api/v1/block',
-      },
-      {
-        name: 'api_key', label: 'API Key', type: 'password', required: true,
-        placeholder: 'Your API key / token',
-      },
-      {
-        name: 'duration_hours', label: 'Block Duration (hours)', type: 'number',
-        default: 24, description: '0 = permanent block',
-      },
-      {
-        name: 'reason', label: 'Reason', type: 'string',
-        placeholder: 'Blocked by SOAR workflow – {{trigger_data.alert_name}}',
-      },
-      { name: 'timeout', label: 'Timeout (seconds)', type: 'number', default: 15 },
-    ],
-  },
-  disable_user: {
-    name: 'Disable User',
-    description: 'Disable a user account via a security-device or AD API',
-    fields: [
-      {
-        name: 'username', label: 'Username / UPN', type: 'string', required: true,
-        placeholder: '{{trigger_data.username}}',
-        description: 'AD username or UPN – supports dynamic values from the triggering case or alert',
-      },
-      {
-        name: 'api_url', label: 'Security Device / AD API URL', type: 'string', required: true,
-        placeholder: 'https://ad.example.com/api/v1/users/disable',
-      },
-      {
-        name: 'api_key', label: 'API Key', type: 'password', required: true,
-        placeholder: 'Your API key / token',
-      },
-      {
-        name: 'reason', label: 'Reason', type: 'string',
-        placeholder: 'Disabled by SOAR workflow – {{trigger_data.alert_name}}',
-      },
-      { name: 'timeout', label: 'Timeout (seconds)', type: 'number', default: 15 },
-    ],
-  },
-
-  // ── Release ───────────────────────────────────────────────────────────────
-  release_ip: {
-    name: 'Release IP',
-    description: 'Release (unblock) an IP address via a security-device API',
-    fields: [
-      {
-        name: 'ip_address', label: 'IP Address', type: 'string', required: true,
-        placeholder: '{{trigger_data.source_ip}}',
-        description: 'Supports dynamic values extracted from the triggering case or alert',
-      },
-      {
-        name: 'api_url', label: 'Security Device API URL', type: 'string', required: true,
-        placeholder: 'https://firewall.example.com/api/v1/release',
-      },
-      {
-        name: 'api_key', label: 'API Key', type: 'password', required: true,
-        placeholder: 'Your API key / token',
-      },
-      {
-        name: 'reason', label: 'Reason', type: 'string',
-        placeholder: 'Released by SOAR workflow',
-      },
-      { name: 'timeout', label: 'Timeout (seconds)', type: 'number', default: 15 },
-    ],
-  },
-  enable_user: {
-    name: 'Enable User',
-    description: 'Enable (re-activate) a user account via a security-device or AD API',
-    fields: [
-      {
-        name: 'username', label: 'Username / UPN', type: 'string', required: true,
-        placeholder: '{{trigger_data.username}}',
-        description: 'AD username or UPN – supports dynamic values from the triggering case or alert',
-      },
-      {
-        name: 'api_url', label: 'Security Device / AD API URL', type: 'string', required: true,
-        placeholder: 'https://ad.example.com/api/v1/users/enable',
-      },
-      {
-        name: 'api_key', label: 'API Key', type: 'password', required: true,
-        placeholder: 'Your API key / token',
-      },
-      {
-        name: 'reason', label: 'Reason', type: 'string',
-        placeholder: 'Enabled by SOAR workflow',
-      },
-      { name: 'timeout', label: 'Timeout (seconds)', type: 'number', default: 15 },
-    ],
-  },
-
-  // ── Integration ───────────────────────────────────────────────────────────
-  create_ticket: {
-    name: 'Create Ticket',
-    description: 'Create a new incident ticket in the SIEM',
-    fields: [
-      {
-        name: 'title', label: 'Ticket Title', type: 'string', required: true,
-        placeholder: 'Security Alert: {{trigger_data.alert_name}}',
-        description: 'Maps to EventTicket.title (max 255 chars)',
-      },
-      {
-        name: 'description', label: 'Description', type: 'textarea',
-        placeholder: 'Ticket description…',
-      },
-      {
-        name: 'status', label: 'Initial Status', type: 'select',
-        options: [
-          { value: 'new', label: 'New' },
-          { value: 'acknowledged', label: 'Acknowledged' },
-          { value: 'triaged', label: 'Triaged' },
-          { value: 'contained', label: 'Contained' },
-          { value: 'resolved', label: 'Resolved' },
-          { value: 'closed', label: 'Closed' },
-        ],
-        default: 'new',
-      },
-      {
-        name: 'priority', label: 'Priority', type: 'select',
-        options: [
-          { value: 'critical', label: 'Critical' },
-          { value: 'high', label: 'High' },
-          { value: 'medium', label: 'Medium' },
-          { value: 'low', label: 'Low' },
-        ],
-        default: 'medium',
-      },
-      {
-        name: 'event_category', label: 'Event Category', type: 'select',
-        options: [
-          { value: 'account_anomalies', label: 'Account Anomalies' },
-          { value: 'denial_of_service', label: 'Denial of Service' },
-          { value: 'malware', label: 'Malware' },
-          { value: 'system_anomalies', label: 'System Anomalies' },
-          { value: 'network_anomalies', label: 'Network Anomalies' },
-          { value: 'application_anomalies', label: 'Application Anomalies' },
-          { value: 'policy', label: 'Policy' },
-          { value: 'social_engineering', label: 'Social Engineering' },
-          { value: 'others', label: 'Others' },
-        ],
-        description: 'Incident category classification',
-      },
-      { name: 'current_assign_group', label: 'Assign Group', type: 'string', placeholder: 'SOC L1' },
-      { name: 'current_assign_owner', label: 'Assign Owner', type: 'string', placeholder: 'username' },
-      {
-        name: 'alert_message', label: 'Alert Message', type: 'textarea',
-        placeholder: '{{trigger_data.raw_message}}',
-        description: 'Raw alert message content',
-      },
-    ],
-  },
-  update_ticket: {
-    name: 'Update Ticket',
-    description: 'Update tickets selected by upstream context, then apply new field values',
-    fields: [
-      {
-        name: 'ticket_number', label: 'Ticket Number', type: 'string',
-        placeholder: '{{trigger_data.ticket_number}}',
-        description: 'Optional exact ticket number match',
-      },
-      {
-        name: 'title', label: 'Ticket Title', type: 'string',
-        placeholder: '{{trigger_data.title}}',
-        description: 'Optional exact ticket title match, e.g. {{trigger_data.title}}',
-      },
-      {
-        name: 'match_status', label: 'Match Current Status', type: 'select',
-        options: [
-          { value: 'new', label: 'New' },
-          { value: 'acknowledged', label: 'Acknowledged' },
-          { value: 'triaged', label: 'Triaged' },
-          { value: 'contained', label: 'Contained' },
-          { value: 'resolved', label: 'Resolved' },
-          { value: 'closed', label: 'Closed' },
-        ],
-      },
-      {
-        name: 'match_priority', label: 'Match Current Priority', type: 'select',
-        options: [
-          { value: 'critical', label: 'Critical' },
-          { value: 'high', label: 'High' },
-          { value: 'medium', label: 'Medium' },
-          { value: 'low', label: 'Low' },
-        ],
-      },
-      {
-        name: 'match_assign_group', label: 'Match Assign Group', type: 'string',
-        placeholder: 'SOC L1',
-      },
-      {
-        name: 'match_assign_owner', label: 'Match Assign Owner', type: 'string',
-        placeholder: 'username',
-      },
-      {
-        name: 'status', label: 'New Status', type: 'select',
-        options: [
-          { value: 'new', label: 'New' },
-          { value: 'acknowledged', label: 'Acknowledged' },
-          { value: 'triaged', label: 'Triaged' },
-          { value: 'contained', label: 'Contained' },
-          { value: 'resolved', label: 'Resolved' },
-          { value: 'closed', label: 'Closed' },
-        ],
-      },
-      {
-        name: 'priority', label: 'Priority', type: 'select',
-        options: [
-          { value: 'critical', label: 'Critical' },
-          { value: 'high', label: 'High' },
-          { value: 'medium', label: 'Medium' },
-          { value: 'low', label: 'Low' },
-        ],
-      },
-      {
-        name: 'current_assign_group', label: 'Assign Group', type: 'string',
-        placeholder: 'SOC L2',
-      },
-      {
-        name: 'current_assign_owner', label: 'Reassign To', type: 'string',
-        placeholder: 'new_owner',
-      },
-      {
-        name: 'event_result', label: 'Event Result', type: 'select',
-        options: [
-          { value: 'true_positive', label: 'True Positive' },
-          { value: 'false_positive', label: 'False Positive' },
-          { value: 'true_positive_benign', label: 'True Positive – Benign' },
-        ],
-        description: 'Classification result (used when resolving)',
-      },
-      {
-        name: 'event_category', label: 'Event Category', type: 'select',
-        options: [
-          { value: 'account_anomalies', label: 'Account Anomalies' },
-          { value: 'denial_of_service', label: 'Denial of Service' },
-          { value: 'malware', label: 'Malware' },
-          { value: 'system_anomalies', label: 'System Anomalies' },
-          { value: 'network_anomalies', label: 'Network Anomalies' },
-          { value: 'application_anomalies', label: 'Application Anomalies' },
-          { value: 'policy', label: 'Policy' },
-          { value: 'social_engineering', label: 'Social Engineering' },
-          { value: 'others', label: 'Others' },
-        ],
-      },
-      {
-        name: 'ticket_records', label: 'Handling Notes', type: 'textarea',
-        placeholder: 'Update notes…',
-        description: 'Detailed handling results and notes',
-      },
-      {
-        name: 'add_comment', label: 'Comment', type: 'textarea',
-        placeholder: 'Short comment…',
-        description: 'Compatibility field mapped to ticket records when provided',
-      },
-    ],
-  },
+const ACRONYMS: Record<string, string> = {
+  api: 'API',
+  html: 'HTML',
+  id: 'ID',
+  ip: 'IP',
+  json: 'JSON',
+  tls: 'TLS',
+  uid: 'UID',
+  upn: 'UPN',
+  url: 'URL',
 };
 
-// ── Array input helper ────────────────────────────────────────────────────
+const formatLabel = (name: string): string => (
+  name
+    .split('_')
+    .map((part) => ACRONYMS[part.toLowerCase()] || `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ')
+);
+
+const formatOptionLabel = (value: unknown): string => {
+  const raw = String(value);
+  if (raw && raw === raw.toUpperCase()) return raw;
+  return formatLabel(raw.replace(/-/g, '_'));
+};
+
+const isMultilineField = (name: string): boolean => (
+  /(^|_)(body|comment|description|message|notes?|records?|template)$/.test(name)
+);
+
+const resolveFieldType = (
+  name: string,
+  property: JsonSchemaProperty,
+  sensitive: boolean,
+): FieldDef['type'] => {
+  if (Array.isArray(property.enum)) return 'select';
+
+  const propertyType = Array.isArray(property.type)
+    ? property.type.find((item) => item !== 'null')
+    : property.type;
+
+  if (propertyType === 'object') return 'keyvalue';
+  if (propertyType === 'array') return 'array';
+  if (propertyType === 'boolean') return 'boolean';
+  if (propertyType === 'integer' || propertyType === 'number') return 'number';
+  if (sensitive) return 'password';
+  if (isMultilineField(name)) return 'textarea';
+  return 'string';
+};
+
+const fieldsFromSchema = (schema?: ActionConfigSchema): FieldDef[] => {
+  const required = new Set(schema?.required || []);
+  return Object.entries(schema?.properties || {}).map(([name, property]) => {
+    const sensitive = Boolean(property.writeOnly || property['x-sensitive']);
+    return {
+      name,
+      label: property.title || formatLabel(name),
+      type: resolveFieldType(name, property, sensitive),
+      required: required.has(name),
+      options: property.enum?.map((value) => ({
+        value: typeof value === 'number' ? value : String(value),
+        label: formatOptionLabel(value),
+      })),
+      default: property.default,
+      description: property.description,
+      sensitive,
+      minimum: property.minimum,
+      maximum: property.maximum,
+    };
+  });
+};
+
+// Provider-specific visibility is presentation behaviour that is not encoded
+// in the current backend JSON Schema. Field definitions still come entirely
+// from the registry response.
+const isFieldVisible = (actionType: string, fieldName: string, provider: string): boolean => {
+  if (actionType !== 'block_ip' && actionType !== 'release_ip') return true;
+
+  const normalizedProvider = String(provider || 'generic').toLowerCase();
+  if (normalizedProvider === 'opnsense') {
+    return fieldName !== 'duration_hours';
+  }
+
+  return !['api_secret', 'alias_name', 'verify_tls', 'kill_states'].includes(fieldName);
+};
+
 const ArrayInput: React.FC<{
   value?: string[];
   onChange?: (value: string[]) => void;
-  placeholder?: string;
-}> = ({ value = [], onChange, placeholder }) => {
+}> = ({ value = [], onChange }) => {
   const [inputValue, setInputValue] = useState('');
+  const items = Array.isArray(value) ? value : [];
 
   const handleAdd = () => {
-    if (inputValue.trim() && !value.includes(inputValue.trim())) {
-      onChange?.([...value, inputValue.trim()]);
+    const nextValue = inputValue.trim();
+    if (nextValue && !items.includes(nextValue)) {
+      onChange?.([...items, nextValue]);
       setInputValue('');
     }
   };
@@ -495,9 +179,8 @@ const ArrayInput: React.FC<{
     <div>
       <Space style={{ marginBottom: 8 }}>
         <Input
-          placeholder={placeholder}
           value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
+          onChange={(event) => setInputValue(event.target.value)}
           onPressEnter={handleAdd}
           style={{ width: 220 }}
         />
@@ -506,11 +189,11 @@ const ArrayInput: React.FC<{
         </Button>
       </Space>
       <div>
-        {value.map((item, index) => (
+        {items.map((item, index) => (
           <Tag
-            key={index}
+            key={`${item}-${index}`}
             closable
-            onClose={() => onChange?.(value.filter((_, i) => i !== index))}
+            onClose={() => onChange?.(items.filter((_, itemIndex) => itemIndex !== index))}
             style={{ marginBottom: 4 }}
           >
             {item}
@@ -527,7 +210,6 @@ const KeyValueInput: React.FC<{
 }> = ({ value = {}, onChange }) => {
   const [keyInput, setKeyInput] = useState('');
   const [valueInput, setValueInput] = useState('');
-
   const entries = Object.entries(value || {});
 
   const handleAdd = () => {
@@ -548,15 +230,15 @@ const KeyValueInput: React.FC<{
     <div>
       <Space style={{ marginBottom: 8, width: '100%' }} wrap>
         <Input
-          placeholder="Header name"
+          placeholder="Key"
           value={keyInput}
-          onChange={(e) => setKeyInput(e.target.value)}
+          onChange={(event) => setKeyInput(event.target.value)}
           style={{ width: 180 }}
         />
         <Input
-          placeholder="Header value"
+          placeholder="Value"
           value={valueInput}
-          onChange={(e) => setValueInput(e.target.value)}
+          onChange={(event) => setValueInput(event.target.value)}
           style={{ width: 220 }}
         />
         <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAdd}>
@@ -579,28 +261,94 @@ const KeyValueInput: React.FC<{
   );
 };
 
-// ── Main component ────────────────────────────────────────────────────────
 const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
   actionType,
+  actionInfo,
   config,
+  configKey,
+  configuredSecretFields = [],
   onChange,
 }) => {
   const [mode, setMode] = useState<'form' | 'json'>('form');
   const [jsonValue, setJsonValue] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [protectedTargetChanged, setProtectedTargetChanged] = useState(false);
+  const [aliasChanged, setAliasChanged] = useState(false);
   const [form] = Form.useForm();
+  const loadedConfigKey = useRef<string | null>(null);
+  const initialTargets = useRef<Record<string, any>>({});
+  const provider = Form.useWatch('provider', form) || config?.provider || 'generic';
 
-  const schema = actionSchemas[actionType];
+  const schema = actionInfo?.config_schema as ActionConfigSchema | undefined;
+  const fields = fieldsFromSchema(schema);
+  const configuredSecretSet = new Set(configuredSecretFields);
+  const targetCredentialFields = fields
+    .filter((field) => field.sensitive)
+    .map((field) => field.name);
+  const isConfiguredForCurrentTarget = (fieldName: string) => (
+    configuredSecretSet.has(fieldName)
+    && !(protectedTargetChanged && targetCredentialFields.includes(fieldName))
+  );
+
+  const normalizeTargetValue = (value: any) => String(value || '').trim().replace(/\/+$/, '');
 
   useEffect(() => {
-    if (config) {
-      form.setFieldsValue(config);
-      setJsonValue(JSON.stringify(config, null, 2));
+    const nextConfigKey = `${actionType}:${configKey || ''}`;
+    if (loadedConfigKey.current === nextConfigKey) return;
+    loadedConfigKey.current = nextConfigKey;
+    initialTargets.current = {
+      provider: String(config?.provider || 'generic').toLowerCase(),
+      api_url: normalizeTargetValue(config?.api_url),
+      url: normalizeTargetValue(config?.url),
+      alias_name: String(config?.alias_name || 'ARGUS_BLOCKLIST').trim(),
+    };
+    setProtectedTargetChanged(false);
+    setAliasChanged(false);
+
+    const safeConfig = Object.fromEntries(
+      Object.entries(config || {}).filter(([name, value]) => (
+        !configuredSecretFields.includes(name)
+        && !(typeof value === 'string' && value.startsWith('enc:v1:'))
+      )),
+    );
+    form.resetFields();
+    form.setFieldsValue(safeConfig);
+    setJsonValue(JSON.stringify(safeConfig, null, 2));
+  }, [actionType, config, configKey, configuredSecretFields, form]);
+
+  const applyTargetProtection = (inputValues: Record<string, any>) => {
+    const values = { ...inputValues };
+    const initial = initialTargets.current;
+    const apiUrlChanged = normalizeTargetValue(values.api_url) !== initial.api_url;
+    const webhookUrlChanged = normalizeTargetValue(values.url) !== initial.url;
+    const providerChanged = (
+      String(values.provider || 'generic').toLowerCase() !== initial.provider
+    );
+    const isOPNsenseAction = actionType === 'block_ip' || actionType === 'release_ip';
+    const protectedChanged = configuredSecretFields.length > 0 && (
+      actionType === 'send_webhook'
+        ? webhookUrlChanged
+        : apiUrlChanged || (isOPNsenseAction && providerChanged)
+    );
+    const nextAliasChanged = (
+      isOPNsenseAction
+      && configuredSecretFields.some((field) => field === 'api_key' || field === 'api_secret')
+      && String(values.alias_name || 'ARGUS_BLOCKLIST').trim() !== initial.alias_name
+    );
+    setProtectedTargetChanged(protectedChanged);
+    setAliasChanged(nextAliasChanged);
+
+    if (actionType === 'send_webhook' && protectedChanged && !values.headers) {
+      values.headers = null;
     }
-  }, [config, form]);
+    if (isOPNsenseAction && values.provider === 'generic') {
+      values.api_secret = null;
+    }
+    return values;
+  };
 
   const handleFormChange = () => {
-    const values = form.getFieldsValue();
+    const values = applyTargetProtection(form.getFieldsValue(true));
     onChange(values);
     setJsonValue(JSON.stringify(values, null, 2));
   };
@@ -609,9 +357,16 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
     setJsonValue(value);
     try {
       const parsed = JSON.parse(value);
+      if (Object.values(parsed).some((item) => (
+        typeof item === 'string' && item.startsWith('enc:v1:')
+      ))) {
+        setJsonError('Encrypted values cannot be viewed or edited here');
+        return;
+      }
+      const protectedValues = applyTargetProtection(parsed);
       setJsonError(null);
-      onChange(parsed);
-      form.setFieldsValue(parsed);
+      onChange(protectedValues);
+      form.setFieldsValue(protectedValues);
     } catch {
       setJsonError('Invalid JSON format');
     }
@@ -619,34 +374,46 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
 
   const renderField = (field: FieldDef) => {
     switch (field.type) {
-      case 'string':
-        return <Input placeholder={field.placeholder} />;
       case 'password':
-        return <Input.Password placeholder={field.placeholder} />;
+        return (
+          <Input.Password
+            autoComplete="new-password"
+            placeholder={
+              isConfiguredForCurrentTarget(field.name)
+                ? 'Configured — leave blank to keep it'
+                : `Enter ${field.label}`
+            }
+          />
+        );
       case 'number':
-        return <InputNumber style={{ width: '100%' }} min={0} />;
+        return (
+          <InputNumber
+            style={{ width: '100%' }}
+            min={field.minimum}
+            max={field.maximum}
+          />
+        );
       case 'boolean':
         return <Switch />;
       case 'select':
         return <Select options={field.options} placeholder="Select…" allowClear />;
       case 'textarea':
-        return <TextArea rows={4} placeholder={field.placeholder} style={{ fontFamily: 'monospace', fontSize: 12 }} />;
+        return <TextArea rows={4} style={{ fontFamily: 'monospace', fontSize: 12 }} />;
       case 'array':
-        return <ArrayInput placeholder={field.placeholder} />;
+        return <ArrayInput />;
       case 'keyvalue':
         return <KeyValueInput />;
       default:
-        return <Input placeholder={field.placeholder} />;
+        return <Input />;
     }
   };
 
-  // If no schema is defined, fall back to raw JSON
-  if (!schema) {
+  if (!schema?.properties) {
     return (
       <div>
         <Alert
           message="Custom Action"
-          description="No visual editor available for this action type. Configure using JSON below."
+          description="No configuration schema is available for this action type. Configure it as JSON below."
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
@@ -655,7 +422,7 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
           rows={10}
           style={{ fontFamily: 'monospace' }}
           value={jsonValue}
-          onChange={(e) => handleJsonChange(e.target.value)}
+          onChange={(event) => handleJsonChange(event.target.value)}
         />
         {jsonError && <Text type="danger">{jsonError}</Text>}
       </div>
@@ -682,37 +449,78 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
           initialValues={config}
         >
           <Card size="small" style={{ marginBottom: 16, background: '#f5f5f5' }}>
-            <Text strong>{schema.name}</Text>
+            <Text strong>{actionInfo?.name || formatLabel(actionType)}</Text>
             <br />
-            <Text type="secondary" style={{ fontSize: 12 }}>{schema.description}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{actionInfo?.description}</Text>
           </Card>
 
-          {schema.fields.map((field) => (
-            <Form.Item
-              key={field.name}
-              name={field.name}
-              label={
-                <Space>
-                  {field.label}
-                  {field.required && <Text type="danger">*</Text>}
-                  {field.description && (
-                    <Tooltip title={field.description}>
-                      <InfoCircleOutlined style={{ color: '#999' }} />
-                    </Tooltip>
-                  )}
-                </Space>
+          {protectedTargetChanged && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="Credential re-entry required"
+              description={
+                actionType === 'send_webhook'
+                  ? 'The webhook URL changed. Existing headers will not be reused; enter replacement headers or leave them empty to clear them.'
+                  : 'The Provider or API URL changed. Re-enter the API Key and, for OPNsense, the API Secret before saving.'
               }
-              rules={
-                field.required
-                  ? [{ required: true, message: `${field.label} is required` }]
-                  : []
-              }
-              valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
-              initialValue={field.default}
-            >
-              {renderField(field)}
-            </Form.Item>
-          ))}
+            />
+          )}
+
+          {aliasChanged && !protectedTargetChanged && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="Existing OPNsense credentials will be reused"
+              description="Only the Alias Name changed. The saved API Key and API Secret will be securely rebound to the new alias."
+            />
+          )}
+
+          {fields
+            .filter((field) => isFieldVisible(actionType, field.name, provider))
+            .map((field) => {
+              const required = field.required || (
+                (actionType === 'block_ip' || actionType === 'release_ip')
+                && String(provider).toLowerCase() === 'opnsense'
+                && field.name === 'api_secret'
+              );
+              return (
+                <Form.Item
+                  key={field.name}
+                  name={field.name}
+                  label={
+                    <Space>
+                      {field.label}
+                      {required && <Text type="danger">*</Text>}
+                      {isConfiguredForCurrentTarget(field.name) && (
+                        <Tag color="green">Configured</Tag>
+                      )}
+                      {field.description && (
+                        <Tooltip title={field.description}>
+                          <InfoCircleOutlined style={{ color: '#999' }} />
+                        </Tooltip>
+                      )}
+                    </Space>
+                  }
+                  rules={
+                    required && !isConfiguredForCurrentTarget(field.name)
+                      ? [{ required: true, message: `${field.label} is required` }]
+                      : []
+                  }
+                  valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
+                  initialValue={field.default}
+                  help={
+                    isConfiguredForCurrentTarget(field.name)
+                      ? 'Already configured. Leave empty to keep the existing value.'
+                      : undefined
+                  }
+                >
+                  {renderField(field)}
+                </Form.Item>
+              );
+            })}
 
           <Divider />
           <Alert
@@ -746,7 +554,7 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
             rows={15}
             style={{ fontFamily: 'monospace' }}
             value={jsonValue}
-            onChange={(e) => handleJsonChange(e.target.value)}
+            onChange={(event) => handleJsonChange(event.target.value)}
           />
           {jsonError && (
             <Text type="danger" style={{ display: 'block', marginTop: 8 }}>
@@ -760,4 +568,3 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
 };
 
 export default ActionConfigBuilder;
-

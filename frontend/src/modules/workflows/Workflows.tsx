@@ -29,6 +29,7 @@ import {
   HistoryOutlined,
   CloudUploadOutlined,
   ImportOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -39,8 +40,11 @@ import {
   getWorkflowStats,
   publishWorkflow,
   cancelWorkflowExecution,
-  listPublishedManifests,
-  importWorkflowFromManifest,
+  exportWorkflow,
+  // Server-manifest recovery is intentionally disabled; see the commented
+  // handler and toolbar button below for the retained rationale/source.
+  // listPublishedManifests,
+  // importWorkflowFromManifest,
   importWorkflowFromFile,
   listTicketWorkflowBindings,
   Workflow,
@@ -72,11 +76,11 @@ const statusColors: Record<string, string> = {
 
 // Compute the run-status main label/color for the merged Status column.
 // Rules:
-//   manual    : draft -> gray 'Manual Run'; active -> blue 'Manual Run';
+//   manual    : unpublished -> gray 'Manual Run'; active -> blue 'Manual Run';
 //               inactive -> gray 'Manual Run · Inactive'
-//   scheduled : draft -> gray 'Schedule Disabled'; active -> green 'Scheduled · Enabled';
+//   scheduled : unpublished -> gray 'Schedule Disabled'; active -> green 'Scheduled · Enabled';
 //               inactive -> red 'Scheduled · Disabled'; cron shown as hint when present
-//   event     : draft -> gray 'Event Trigger'; active -> green 'Listening · Enabled';
+//   event     : unpublished -> gray 'Event Trigger'; active -> green 'Listening · Enabled';
 //               inactive -> red 'Listening · Disabled'
 interface RunStatusInfo {
   color: string;
@@ -85,23 +89,24 @@ interface RunStatusInfo {
 }
 
 const getRunStatusInfo = (workflow: Workflow): RunStatusInfo => {
-  const { trigger_type, is_active, is_draft, schedule_cron } = workflow;
+  const { trigger_type, is_active, published_version, schedule_cron } = workflow;
+  const isPublished = Boolean(published_version);
 
   if (trigger_type === 'manual') {
-    if (is_draft) return { color: 'default', label: 'Manual Run' };
+    if (!isPublished) return { color: 'default', label: 'Manual Run' };
     if (is_active) return { color: 'blue', label: 'Manual Run' };
     return { color: 'default', label: 'Manual Run · Inactive' };
   }
 
   if (trigger_type === 'scheduled') {
     const hint = schedule_cron || undefined;
-    if (is_draft) return { color: 'default', label: 'Schedule Disabled', hint };
+    if (!isPublished) return { color: 'default', label: 'Schedule Disabled', hint };
     if (is_active) return { color: 'green', label: 'Scheduled · Enabled', hint };
     return { color: 'red', label: 'Scheduled · Disabled', hint };
   }
 
   // alert / ticket_created / ticket_status / webhook -> event-driven
-  if (is_draft) return { color: 'default', label: 'Event Trigger' };
+  if (!isPublished) return { color: 'default', label: 'Event Trigger' };
   if (is_active) return { color: 'green', label: 'Listening · Enabled' };
   return { color: 'red', label: 'Listening · Disabled' };
 };
@@ -122,6 +127,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   const [modal, modalContextHolder] = Modal.useModal();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exportingWorkflowId, setExportingWorkflowId] = useState<string | null>(null);
   const [stats, setStats] = useState<WorkflowStats | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -273,6 +279,27 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     }
   };
 
+  const handleExport = async (workflow: Workflow) => {
+    setExportingWorkflowId(workflow.id);
+    try {
+      const { blob, filename } = await exportWorkflow(workflow.id);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      message.success(`Published workflow "${workflow.name}" exported`);
+    } catch (err: any) {
+      const detail = err?.response?.data?.error || 'Failed to export published workflow';
+      message.error(detail);
+    } finally {
+      setExportingWorkflowId(null);
+    }
+  };
+
   // Import workflow from uploaded JSON file
   const handleImport = async () => {
     const input = document.createElement('input');
@@ -283,7 +310,16 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       if (!file) return;
       try {
         const result = await importWorkflowFromFile(file);
-        message.success(`Workflow "${result.workflow_name}" imported successfully`);
+        message.success(`Workflow "${result.workflow_name}" imported as an inactive draft; review it before publishing`);
+        const removedSecrets = Array.isArray(result.removed_secret_fields)
+          ? result.removed_secret_fields
+          : [];
+        if (removedSecrets.length > 0) {
+          const details = removedSecrets
+            .map((item) => `${item.step_name}: ${item.fields.join(', ')}`)
+            .join('; ');
+          message.warning(`Some encrypted credentials could not be validated and were removed. Re-enter them before publishing. ${details}`);
+        }
         fetchWorkflows();
         fetchStats();
       } catch (err: any) {
@@ -294,7 +330,12 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     input.click();
   };
 
-  // Import workflow from a published manifest already stored on the server
+  /*
+   * Intentionally disabled rather than deleted. This was a server-manifest
+   * disaster-recovery path. Recovery is out of scope, and recreating a DB row
+   * can assign a UUID that no longer matches the server manifest pointer.
+   * Portable workflow transfer now uses Export JSON / Import JSON.
+   *
   const handleImportPublished = async () => {
     try {
       const result = await listPublishedManifests();
@@ -347,6 +388,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       message.error(detail);
     }
   };
+  */
 
   const columns: ColumnsType<Workflow> = [
     {
@@ -468,9 +510,18 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     {
       title: 'Actions',
       key: 'actions',
-      width: 180,
+      width: 230,
       render: (_: any, record: Workflow) => {
         const running = isWorkflowRunning(record);
+        const hasPublishedManifest = Boolean(record.published_version);
+        const canExecute = record.is_active && hasPublishedManifest;
+        const executeTooltip = !record.is_active
+          ? 'Activate this workflow before execution'
+          : !hasPublishedManifest
+            ? 'Publish this workflow before execution'
+            : record.has_unpublished_changes
+              ? `Execute the last published version (v${record.published_version})`
+              : `Execute published version v${record.published_version}`;
         return (
           <Space size="small" wrap>
             {running ? (
@@ -485,16 +536,17 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
                 />
               </Tooltip>
             ) : (
-              record.is_active && !record.is_draft && (
-                <Tooltip title="Execute">
+              <Tooltip title={executeTooltip}>
+                <span>
                   <Button
                     type="primary"
                     size="small"
                     icon={<PlayCircleOutlined />}
                     onClick={() => handleExecute(record.id)}
+                    disabled={!canExecute}
                   />
-                </Tooltip>
-              )
+                </span>
+              </Tooltip>
             )}
             <Tooltip title="Visual Editor">
               <Button
@@ -509,6 +561,17 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
                 icon={<CopyOutlined />}
                 onClick={() => handleClone(record.id)}
               />
+            </Tooltip>
+            <Tooltip title={hasPublishedManifest ? `Export published v${record.published_version} as JSON` : 'Publish this workflow before exporting'}>
+              <span>
+                <Button
+                  size="small"
+                  icon={<DownloadOutlined />}
+                  onClick={() => handleExport(record)}
+                  disabled={!hasPublishedManifest}
+                  loading={exportingWorkflowId === record.id}
+                />
+              </span>
             </Tooltip>
             <Tooltip
               title={
@@ -636,14 +699,19 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
                 icon={<ImportOutlined />}
                 onClick={handleImport}
               >
-                Import Workflow
+                Import JSON
               </Button>
+              {/*
+                Intentionally disabled rather than deleted. Import Published was
+                a server-local disaster-recovery path; recovery is out of scope,
+                and restored database UUIDs may not match manifest pointers.
               <Button
                 icon={<CloudUploadOutlined />}
                 onClick={handleImportPublished}
               >
                 Import Published
               </Button>
+              */}
               <Button
                 icon={<HistoryOutlined />}
                 onClick={() => onNavigate?.('/settings/workflows/executions')}

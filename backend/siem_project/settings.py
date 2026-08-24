@@ -63,6 +63,24 @@ ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 if not DEBUG and '*' in ALLOWED_HOSTS:
     raise ImproperlyConfigured('ALLOWED_HOSTS must not contain "*" when DEBUG=False.')
 
+# Workflow action credentials use a dedicated key ring. The first key is used
+# for encryption; the rest are decryption-only fallbacks during key rotation.
+WORKFLOW_ENCRYPTION_KEYS = _env_list('WORKFLOW_ENCRYPTION_KEYS')
+if not DEBUG:
+    if not WORKFLOW_ENCRYPTION_KEYS:
+        raise ImproperlyConfigured(
+            'WORKFLOW_ENCRYPTION_KEYS must contain at least one Fernet key when DEBUG=False.'
+        )
+    try:
+        from cryptography.fernet import Fernet
+
+        for workflow_encryption_key in WORKFLOW_ENCRYPTION_KEYS:
+            Fernet(workflow_encryption_key.encode('ascii'))
+    except (ImportError, TypeError, ValueError) as exc:
+        raise ImproperlyConfigured(
+            'WORKFLOW_ENCRYPTION_KEYS contains an invalid Fernet key or cryptography is unavailable.'
+        ) from exc
+
 CSRF_TRUSTED_ORIGINS = _env_list('CSRF_TRUSTED_ORIGINS')
 
 # Production security hardening. Keep redirect/HSTS configurable because some
