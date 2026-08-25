@@ -1,6 +1,6 @@
 <div align="center">
 
-### Open Source Agentic SOC Platform
+### Argus - An Open Source Agentic SOC Platform
 
 [🚀Live Demo](https://siem.seclink.info) · [📖 Documentation](https://sec-link.github.io/Argus-Agentic-SOC-Platform/) · [⭐ GitHub](https://github.com/Sec-Link/Argus-Agentic-SOC-Platform)
 </div>
