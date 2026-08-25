@@ -1,4 +1,4 @@
-"""Notification tasks (email and webhook)."""
+"""Notification tasks (email, webhook, Feishu, and WeCom)."""
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -19,3 +19,8 @@ def send_webhook_task(action_config: Dict[str, Any], context: Dict[str, Any]) ->
     """Send an HTTP webhook request."""
     return execute_action("send_webhook", action_config, context)
 
+
+@task(name="send_notification")
+def send_notification_task(action_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """Send a Feishu or WeCom notification."""
+    return execute_action("send_notification", action_config, context)

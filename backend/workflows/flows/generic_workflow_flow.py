@@ -36,6 +36,7 @@ from workflows.tasks import (
     log_task,
     release_ip_task,
     send_email_task,
+    send_notification_task,
     send_webhook_task,
     update_ticket_task,
 )
@@ -55,6 +56,7 @@ ACTION_TASKS = {
     'delay': delay_task,
     'send_email': send_email_task,
     'send_webhook': send_webhook_task,
+    'send_notification': send_notification_task,
     'create_ticket': create_ticket_task,
     'update_ticket': update_ticket_task,
     'ip_lookup': ip_lookup_task,

@@ -8,6 +8,7 @@ import {
   SettingOutlined,
   EditOutlined,
   MailOutlined,
+  NotificationOutlined,
   ApiOutlined,
   SearchOutlined,
   LockOutlined,
@@ -46,6 +47,7 @@ const toCategoryLabel = (value: string): string => {
 
 const actionIcons: Record<string, React.ReactNode> = {
   send_email: <MailOutlined />,
+  send_notification: <NotificationOutlined />,
   send_webhook: <ApiOutlined />,
   ip_lookup: <SearchOutlined />,
   hash_lookup: <SearchOutlined />,

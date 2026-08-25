@@ -100,6 +100,12 @@ class ActionTemplateViewSet(viewsets.ModelViewSet):
                 'description': 'Send a security notification webhook',
                 'category': 'notification',
             },
+            {
+                'action_type': 'send_notification',
+                'name': 'Feishu / WeCom Notification',
+                'description': 'Send a security notification to Feishu or WeCom',
+                'category': 'notification',
+            },
         ]
 
         info = {item['action_type']: item for item in ActionRegistry.get_action_info()}

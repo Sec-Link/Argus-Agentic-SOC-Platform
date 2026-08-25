@@ -17,6 +17,7 @@ import {
   BranchesOutlined,
   SettingOutlined,
   MailOutlined,
+  NotificationOutlined,
   ApiOutlined,
   SearchOutlined,
   LockOutlined,
@@ -45,6 +46,7 @@ const nodeColors: Record<string, { bg: string; border: string; icon: string }> =
 // Icon mapping for known action types
 const actionIcons: Record<string, React.ReactNode> = {
   send_email:   <MailOutlined />,
+  send_notification: <NotificationOutlined />,
   send_webhook: <ApiOutlined />,
   ip_lookup:    <SearchOutlined />,
   hash_lookup:  <SearchOutlined />,

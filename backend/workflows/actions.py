@@ -9,7 +9,7 @@ Action categories:
   - enrichment   : IP Lookup, Hash Lookup   (call external threat-intel platforms)
   - containment  : Block IP, Disable User
   - release      : Release IP, Enable User  (reverse of containment)
-  - notification : Send Email, Send Webhook
+  - notification : Send Email, Send Webhook, Send Notification
   - integration  : Update Ticket (ticket number can be dynamic)
   - utility      : Log, Delay
 """
@@ -385,6 +385,184 @@ class SendWebhookAction(BaseAction):
                 success=False,
                 error=str(e),
                 logs=f"Webhook failed: {e}",
+            )
+
+
+class SendNotificationAction(BaseAction):
+    """Send a Feishu or WeCom notification via an incoming webhook."""
+
+    name = "Send Notification"
+    description = "Send a formatted notification to Feishu or WeCom via webhook"
+    category = "notification"
+    config_schema = {
+        "type": "object",
+        "properties": {
+            "provider": {
+                "type": "string",
+                "enum": ["feishu", "wechat_work"],
+                "default": "feishu",
+                "description": "Notification provider",
+            },
+            "webhook_url": {
+                "type": "string",
+                "description": "Feishu custom bot webhook URL or WeCom bot webhook URL",
+            },
+            "title": {
+                "type": "string",
+                "description": "Notification title. Supports {{variable.path}} placeholders.",
+            },
+            "message": {
+                "type": "string",
+                "description": "Notification message. Supports {{variable.path}} placeholders.",
+            },
+            "format": {
+                "type": "string",
+                "enum": ["text", "markdown"],
+                "default": "text",
+            },
+            "mention_all": {
+                "type": "boolean",
+                "default": False,
+                "description": "Mention the whole channel/chat when supported by the provider",
+            },
+            "timeout": {"type": "integer", "default": 15},
+        },
+        "required": ["provider", "webhook_url", "message"],
+    }
+
+    def _compose_message(self, title: str, message: str) -> str:
+        title = title.strip()
+        message = message.strip()
+        if title and message:
+            return f"{title}\n{message}"
+        return title or message
+
+    def _as_bool(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+    def _feishu_payload(self, title: str, message: str, fmt: str, mention_all: bool) -> Dict[str, Any]:
+        mention = '<at user_id="all">所有人</at>\n' if mention_all else ""
+        if fmt == "markdown":
+            content = mention + self._compose_message(title, message)
+            card_title = title.strip() or "Workflow Notification"
+            return {
+                "msg_type": "interactive",
+                "card": {
+                    "config": {"wide_screen_mode": True},
+                    "header": {
+                        "template": "blue",
+                        "title": {"tag": "plain_text", "content": card_title},
+                    },
+                    "elements": [
+                        {
+                            "tag": "div",
+                            "text": {"tag": "lark_md", "content": content},
+                        }
+                    ],
+                },
+            }
+        return {
+            "msg_type": "text",
+            "content": {"text": mention + self._compose_message(title, message)},
+        }
+
+    def _wechat_work_payload(self, title: str, message: str, fmt: str, mention_all: bool) -> Dict[str, Any]:
+        content = self._compose_message(title, message)
+        if fmt == "markdown":
+            mention = "<@all>\n" if mention_all else ""
+            return {
+                "msgtype": "markdown",
+                "markdown": {"content": mention + content},
+            }
+        payload = {
+            "msgtype": "text",
+            "text": {"content": content},
+        }
+        if mention_all:
+            payload["text"]["mentioned_list"] = ["@all"]
+        return payload
+
+    def execute(self, config: Dict, context: Dict) -> ActionResult:
+        provider = str(config.get("provider", "feishu")).strip().lower()
+        if provider in ("wechat", "wecom", "enterprise_wechat"):
+            provider = "wechat_work"
+        webhook_url = str(self.resolve_variables(config.get("webhook_url", ""), context) or "").strip()
+        title = self.resolve_variables(config.get("title", ""), context)
+        message = self.resolve_variables(config.get("message", ""), context)
+        fmt = str(config.get("format", "text")).strip().lower()
+        mention_all = self._as_bool(config.get("mention_all", False))
+        timeout = int(config.get("timeout", 15))
+
+        if provider not in ("feishu", "wechat_work"):
+            return ActionResult(
+                success=False,
+                error=f"Unsupported notification provider: {provider}",
+                logs=f"Notification aborted: unsupported provider '{provider}'",
+            )
+        if not webhook_url:
+            return ActionResult(
+                success=False,
+                error="webhook_url is empty after variable resolution",
+                logs="Notification aborted: no webhook URL provided",
+            )
+        if not str(message).strip() and not str(title).strip():
+            return ActionResult(
+                success=False,
+                error="message/title is empty after variable resolution",
+                logs="Notification aborted: no message content provided",
+            )
+        if fmt not in ("text", "markdown"):
+            fmt = "text"
+
+        if provider == "feishu":
+            payload = self._feishu_payload(str(title), str(message), fmt, mention_all)
+        else:
+            payload = self._wechat_work_payload(str(title), str(message), fmt, mention_all)
+
+        try:
+            response = requests.post(
+                webhook_url,
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=timeout,
+            )
+            success = response.ok
+            provider_error = ""
+            if provider == "feishu" and response.content:
+                try:
+                    response_payload = response.json()
+                    if isinstance(response_payload, dict) and int(response_payload.get("code", 0) or 0) != 0:
+                        success = False
+                        provider_error = str(response_payload.get("msg") or response_payload.get("message") or "")
+                except (TypeError, ValueError):
+                    pass
+            elif provider == "wechat_work" and response.content:
+                try:
+                    response_payload = response.json()
+                    if isinstance(response_payload, dict) and int(response_payload.get("errcode", 0) or 0) != 0:
+                        success = False
+                        provider_error = str(response_payload.get("errmsg") or response_payload.get("message") or "")
+                except (TypeError, ValueError):
+                    pass
+            return ActionResult(
+                success=success,
+                data={
+                    "provider": provider,
+                    "status_code": response.status_code,
+                    "response_body": response.text[:2000],
+                    "format": fmt,
+                    "mention_all": mention_all,
+                },
+                error=provider_error,
+                logs=f"Notification request to {provider} -> {response.status_code}",
+            )
+        except Exception as exc:
+            return ActionResult(
+                success=False,
+                error=str(exc),
+                logs=f"Notification to {provider} failed: {exc}",
             )
 
 
@@ -1713,6 +1891,7 @@ ActionRegistry.register('delay', DelayAction)
 # conditional branching is handled by the Condition node type in the visual editor.
 ActionRegistry.register('send_email', SendEmailAction)
 ActionRegistry.register('send_webhook', SendWebhookAction)
+ActionRegistry.register('send_notification', SendNotificationAction)
 ActionRegistry.register('create_ticket', CreateTicketAction)
 ActionRegistry.register('update_ticket', UpdateTicketAction)
 ActionRegistry.register('ip_lookup', IPLookupAction)
@@ -1721,4 +1900,3 @@ ActionRegistry.register('block_ip', BlockIPAction)
 ActionRegistry.register('disable_user', DisableUserAction)
 ActionRegistry.register('release_ip', ReleaseIPAction)
 ActionRegistry.register('enable_user', EnableUserAction)
-
