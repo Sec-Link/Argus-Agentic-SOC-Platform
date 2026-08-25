@@ -668,6 +668,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             )
             try:
                 assistant = result.get("assistant") if isinstance(result, dict) else None
+                assistant_raw = result.get("assistant_raw") if isinstance(result, dict) else None
                 if assistant:
                     completed = assistant.get("completed_tasks") if isinstance(assistant, dict) else None
                     next_tasks = assistant.get("next_tasks") if isinstance(assistant, dict) else None
@@ -713,6 +714,12 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                     TicketWorkLog.objects.create(
                         ticket=ticket,
                         log_entry="\n".join([l for l in log_lines if l]),
+                        created_by=request.user,
+                    )
+                elif isinstance(assistant_raw, str) and assistant_raw.strip():
+                    TicketWorkLog.objects.create(
+                        ticket=ticket,
+                        log_entry=f"AI Raw Response:\n{assistant_raw.strip()}",
                         created_by=request.user,
                     )
             except Exception:

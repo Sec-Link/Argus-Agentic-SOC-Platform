@@ -47,13 +47,6 @@ def _apply_soc_ticket_triage(
     if not isinstance(assistant.get("next_tasks"), list):
         assistant["next_tasks"] = []
 
-    if not assistant["next_tasks"]:
-        assistant["next_tasks"] = [
-            {"title": "Validate affected scope", "detail": "Confirm impacted hosts/users from ticket context."},
-            {"title": "Correlate recent logs", "detail": "Review recent timeline and related alerts for recurrence."},
-            {"title": "Prepare containment plan", "detail": "Draft immediate containment actions for approval."},
-        ]
-
     if not isinstance(assistant.get("alert_explanation"), str):
         assistant["alert_explanation"] = "Initial triage completed using ticket context, timeline, and similar cases."
 
