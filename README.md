@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="./README.md"><img alt="English" src="https://img.shields.io/badge/English-d9d9d9"></a>
-  <a href="./README_ZH.md"><img alt="Chinese" src="https://img.shields.io/badge/中文-d9d9d9"></a>
+  <a href="./README_ZH.md"><img alt="Chinese" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
 </p>
 
 
@@ -42,9 +42,9 @@ At the same time, Argus is built with a **loosely coupled and API-first architec
 ---
 ## 1. Product Components
 
-The platform consolidates core SOC objects into one product with open-source solutions:
 <img width="1677" height="1677" alt="Argus Framework" src="https://github.com/user-attachments/assets/c355fbd7-f2a4-496b-9724-7c61b2826c3c" />
 
+The platform consolidates core SOC objects into one product with open-source solutions:
 
 - **Alerts**: alert ingestion, caching, search, and display
 - **Tickets**: incident/ticket management and collaboration
