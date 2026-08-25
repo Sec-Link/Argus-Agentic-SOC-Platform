@@ -2,20 +2,16 @@
 
 ### Open Source AI-Native SOC Platform
 
-**Deploy as a Complete SOC Platform OR Integrate with Existing Security Ecosystems**
-
-[🚀 Quick Start](#-quick-start) · [📖 Documentation](https://sec-link.github.io/Argus-Agentic-SOC-Platform/) · [⭐ GitHub](https://github.com/Sec-Link/Argus-Agentic-SOC-Platform)
+[🚀Live Demo](https://siem.seclink.info) · [📖 Documentation](https://sec-link.github.io/Argus-Agentic-SOC-Platform/) · [⭐ GitHub](https://github.com/Sec-Link/Argus-Agentic-SOC-Platform)
+</div>
 
 <p align="center">
     <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/releases" target="_blank">
-        <img alt="Release" src="https://img.shields.io/github/v/release/Sec-Link/Argus-Agentic-SOC-Platform
-"></a>
+        <img alt="Release" src="https://img.shields.io/github/v/release/Sec-Link/Argus-Agentic-SOC-Platform"></a>
     <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/graphs/commit-activity" target="_blank">
-        <img alt="commit activity " src="https://img.shields.io/github/commit-activity/m/Sec-Link/Argus-Agentic-SOC-Platform?style=flat-square
-"></a>
+        <img alt="commit activity " src="https://img.shields.io/github/commit-activity/m/Sec-Link/Argus-Agentic-SOC-Platform?style=flat-square"></a>
     <a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/" target="_blank">
-        <img alt="Issues closed" src="https://img.shields.io/github/issues-closed/Sec-Link/Argus-Agentic-SOC-Platform
-"></a>
+        <img alt="Issues closed" src="https://img.shields.io/github/issues-closed/Sec-Link/Argus-Agentic-SOC-Platform"></a>
 </p>
 
 <p align="center">
@@ -23,11 +19,12 @@
   <a href="./README_ZH.md"><img alt="Chinese" src="https://img.shields.io/badge/中文-d9d9d9"></a>
 </p>
 
-</div>
+
 
 ##  Overview
 
 **Argus** is an open-source **AI-native Agentic SOC platform** designed for modern security operations.
+You can deploy it as a complete SOC platform or integrate with your existing security ecosystems.
 
 It provides a complete security operations foundation with:
 
@@ -206,5 +203,14 @@ In production we recommend:
 ## 10. Contribution
 We welcome contributions! Please refer to our [CONTRIBUTING.md](https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/CONTRIBUTING.md) for more information.
 
+Join our community and help us make the project more powerful, reliable, and accessible. If Argus has been helpful to you, please consider giving us a ⭐ on GitHub and sharing it with others. Together, we can build a safer and more secure digital world.
+
+
+**Contributors**
+
+
+<a href="https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Sec-Link/Argus-Agentic-SOC-Platform" />
+</a>
 
 ---
