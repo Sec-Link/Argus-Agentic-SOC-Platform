@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="./README.md"><img alt="English" src="https://img.shields.io/badge/English-d9d9d9"></a>
-  <a href="./README_ZH.MD"><img alt="Chinese" src="https://img.shields.io/badge/中文-d9d9d9"></a>
+  <a href="./README_ZH.MD"><img alt="Chinese" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
 </p>
 
 
@@ -42,9 +42,8 @@
 ---
 ## 1. 产品组件
 
-该平台将 SOC 核心对象整合到一个产品中，并结合开源方案：
 <img width="1677" height="1677" alt="Argus Framework" src="https://github.com/user-attachments/assets/c355fbd7-f2a4-496b-9724-7c61b2826c3c" />
-
+该平台将 SOC 核心对象整合到一个产品中，并结合开源方案：
 
 - **Alerts**：告警接入、缓存、检索与展示
 - **Tickets**：事件/工单管理与协作
@@ -59,7 +58,7 @@
 ## 2. 核心能力
 
 ### 安全运营
-- 统一告警接入与分页列表
+- 统一告警接入与汇总
 - 工单全生命周期与活动历史
 - 基于看板的运营视图
 <img width="1898" height="906" alt="Tickets" src="https://github.com/user-attachments/assets/459b590c-48b4-4217-b6f7-bbe865677378" />
@@ -68,7 +67,7 @@
 ### 检测
 - 开箱即用的检测用例与关联规则
 - Detection-as-code 与规则版本化
-- 基于 Sigma 规则的一次编写、处处运行检测
+- 基于 Sigma 规则的一次编写、跨平台运行的检测用例
 <img width="1880" height="866" alt="detection" src="https://github.com/user-attachments/assets/aec94f40-24ff-4b4e-9c2f-e4e9889555b2" />
 
 ### 自动化
@@ -200,8 +199,8 @@ https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/docs/api-overvi
 - 为数据库、对象存储与日志添加备份和监控
 - 为 AI/MCP 功能配置访问边界、审计与最小权限
 
-## 10. 贡献
-欢迎贡献！请参考我们的 [CONTRIBUTING.md](https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/CONTRIBUTING.md) 获取更多信息。
+## 10. 加入与贡献
+欢迎加入我们！请参考我们的 [CONTRIBUTING.md](https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/CONTRIBUTING.md) 获取更多信息。
 
 欢迎加入社区，共同让项目更强大、更可靠、更易用。如果 Argus 对你有帮助，欢迎在 GitHub 给我们点个 ⭐ 并分享给更多人。让我们一起构建更安全的数字世界。
 
