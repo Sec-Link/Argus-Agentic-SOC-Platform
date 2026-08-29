@@ -4,9 +4,12 @@ from .views import (
     GlobalRiskConfigView,
     NotableEventListView,
     NotableEventResolveView,
+    RiskFunnelView,
     RiskProfileDetailView,
     RiskProfileListView,
     RiskRuleConfigView,
+    RiskSankeyView,
+    RiskTopEntitiesView,
 )
 
 urlpatterns = [
@@ -17,4 +20,8 @@ urlpatterns = [
     path('profiles/<int:pk>/', RiskProfileDetailView.as_view()),
     path('notable/', NotableEventListView.as_view()),
     path('notable/<int:pk>/resolve/', NotableEventResolveView.as_view()),
+    # Dashboard aggregations
+    path('funnel/', RiskFunnelView.as_view()),
+    path('sankey/', RiskSankeyView.as_view()),
+    path('top-entities/', RiskTopEntitiesView.as_view()),
 ]

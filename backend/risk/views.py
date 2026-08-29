@@ -13,7 +13,12 @@ from .serializers import (
     RiskObjectProfileSerializer,
     RiskRuleConfigSerializer,
 )
-from .services import get_ecs_preset_fields
+from .services import (
+    get_ecs_preset_fields,
+    get_risk_funnel,
+    get_risk_sankey,
+    get_top_risk_entities,
+)
 
 
 class EcsPresetFieldsView(APIView):
@@ -21,6 +26,38 @@ class EcsPresetFieldsView(APIView):
 
     def get(self, request):
         return Response(get_ecs_preset_fields())
+
+
+class RiskFunnelView(APIView):
+    permission_classes = [IsAuthenticated, HasDjangoPermissions]
+    required_permissions = {'GET': 'integrations.view_integration'}
+
+    def get(self, request):
+        return Response(get_risk_funnel())
+
+
+class RiskSankeyView(APIView):
+    permission_classes = [IsAuthenticated, HasDjangoPermissions]
+    required_permissions = {'GET': 'integrations.view_integration'}
+
+    def get(self, request):
+        try:
+            limit = int(request.query_params.get('limit', 12))
+        except (TypeError, ValueError):
+            limit = 12
+        return Response(get_risk_sankey(limit=max(1, min(limit, 50))))
+
+
+class RiskTopEntitiesView(APIView):
+    permission_classes = [IsAuthenticated, HasDjangoPermissions]
+    required_permissions = {'GET': 'integrations.view_integration'}
+
+    def get(self, request):
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            limit = 10
+        return Response(get_top_risk_entities(limit=max(1, min(limit, 100))))
 
 
 class GlobalRiskConfigView(APIView):

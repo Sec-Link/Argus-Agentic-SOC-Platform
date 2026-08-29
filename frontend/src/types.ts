@@ -7,6 +7,10 @@ export interface Alert {
   source_index: string;
   rule_id?: string | null;
   rule_name?: string | null;
+  // Risk objects extracted by the RBA pipeline, or a raw JSON string / array
+  // injected by the ELK alert action. Parsed defensively via utils/riskObjects.
+  risk_objects?: unknown;
+  risk_object?: unknown;
 }
 
 export interface DashboardData {

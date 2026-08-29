@@ -6,6 +6,7 @@ import { Resizable } from 'react-resizable';
 import type { ResizeCallbackData } from 'react-resizable';
 import { fetchAlerts } from 'services/alerts';
 import type { Alert } from 'types';
+import { getRiskObjects, riskTagColor } from 'utils/riskObjects';
 
 const { Text } = Typography;
 
@@ -100,6 +101,7 @@ const DEFAULT_WIDTHS: Record<string, number> = {
   rule_name: 200,
   host_name: 160,
   source_ip: 150,
+  risk_objects: 220,
 };
 
 const AlertList: React.FC = () => {
@@ -280,6 +282,32 @@ const AlertList: React.FC = () => {
         );
       },
     },
+    {
+      title: 'Risk Objects',
+      key: 'risk_objects',
+      width: widths.risk_objects,
+      ellipsis: true,
+      render: (_: any, row: any) => {
+        const entities = getRiskObjects(row);
+        if (!entities.length) return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
+        const shown = entities.slice(0, 2);
+        const rest = entities.length - shown.length;
+        return (
+          <Space size={4} wrap>
+            {shown.map((e, i) => (
+              <Tag key={i} color={riskTagColor(e.type)} style={{ margin: 0, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+                {e.value}
+              </Tag>
+            ))}
+            {rest > 0 && (
+              <Tooltip title={entities.slice(2).map((e) => `${e.type}: ${e.value}`).join('\n')}>
+                <Tag style={{ margin: 0 }}>+{rest}</Tag>
+              </Tooltip>
+            )}
+          </Space>
+        );
+      },
+    },
   ];
 
   const columns = baseColumns.map((col) => ({
@@ -329,7 +357,7 @@ const AlertList: React.FC = () => {
           dataSource={filtered}
           loading={loading}
           size="middle"
-          scroll={{ x: 1080 }}
+          scroll={{ x: 1300 }}
           components={{ header: { cell: ResizableTitle } }}
           columns={columns as any}
           pagination={{
@@ -399,6 +427,35 @@ const AlertList: React.FC = () => {
                 <div style={{ marginTop: 6 }}>{getSourceIp(selectedAlert)}</div>
               </div>
             </Space>
+
+            {(() => {
+              const entities = getRiskObjects(selectedAlert);
+              if (!entities.length) return null;
+              return (
+                <div>
+                  <Text strong>Risk Objects</Text>
+                  <div style={{ marginTop: 6 }}>
+                    <Space size={6} wrap style={{ width: '100%' }}>
+                      {entities.map((e, i) => (
+                        <Tag
+                          key={i}
+                          color={riskTagColor(e.type)}
+                          style={{
+                            fontFamily: 'ui-monospace, monospace',
+                            maxWidth: '100%',
+                            whiteSpace: 'normal',
+                            wordBreak: 'break-all',
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          <span style={{ opacity: 0.7 }}>{e.field || e.type}:</span> {e.value}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
+                </div>
+              );
+            })()}
 
             <div>
               <Text strong>Detection Rule</Text>

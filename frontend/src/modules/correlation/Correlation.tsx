@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react'
 import { Card, Form, InputNumber, Select, Switch, Button, Space, message, Table, Tag, Divider, Typography, Input, Tabs } from 'antd'
 import { Line } from '@ant-design/plots'
-import { getCorrelationPolicy, saveCorrelationPolicy, getCorrelationEvents } from 'services/correlation'
+import { getCorrelationPolicy, saveCorrelationPolicy, getCorrelationEvents, getCorrelationRiskEntities } from 'services/correlation'
 import { listIntegrations, integrationsPreviewEsMapping } from 'services/integrations'
 
 const { Title, Text } = Typography
@@ -54,6 +54,9 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
   const [integrations, setIntegrations] = useState<any[]>([])
   const [esFields, setEsFields] = useState<string[]>([])
   const [loadingFields, setLoadingFields] = useState(false)
+  const [entities, setEntities] = useState<any[]>([])
+  const [entitiesLoading, setEntitiesLoading] = useState(false)
+  const [minAlerts, setMinAlerts] = useState<number>(2)
 
   useEffect(() => {
     setLoadingPolicy(true)
@@ -146,8 +149,25 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
     }
   }
 
+  const refreshEntities = async () => {
+    setEntitiesLoading(true)
+    const opt = RANGE_OPTIONS.find(o => o.key === rangeKey) || RANGE_OPTIONS[1]
+    const to = new Date()
+    const from = new Date(to.getTime() - opt.minutes * 60 * 1000)
+    try {
+      const res = await getCorrelationRiskEntities({ from: from.toISOString(), to: to.toISOString(), min_alerts: minAlerts })
+      setEntities(res.entities || [])
+    } catch {
+      message.error('Failed to load risk entity correlation')
+      setEntities([])
+    } finally {
+      setEntitiesLoading(false)
+    }
+  }
+
   useEffect(() => {
     refreshEvents().catch(() => {})
+    refreshEntities().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rangeKey])
 
@@ -197,7 +217,12 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
     ) },
     { title: 'Alerts', dataIndex: 'alert_count', key: 'alert_count' },
     { title: 'Last Alert', dataIndex: 'last_alert_time', key: 'last_alert_time', render: (v: string) => <Text>{v}</Text> },
-    { title: 'Risk Object', dataIndex: 'top_threat_object', key: 'top_threat_object' },
+    { title: 'Risk Objects', dataIndex: 'risk_objects', key: 'risk_objects', render: (arr: any[], row: any) => {
+      const list = Array.isArray(arr) ? arr : []
+      if (!list.length) return <Text>{row.top_threat_object || '-'}</Text>
+      const color = (t: string) => ({ ip: 'blue', user: 'purple', host: 'cyan', hash: 'orange' } as Record<string,string>)[t] || 'default'
+      return <Space size={4} wrap>{list.map((e, i) => <Tag key={i} color={color(e.type)}>{e.value}</Tag>)}</Space>
+    } },
     { title: 'Rule', dataIndex: 'top_rule', key: 'top_rule' },
     { title: 'Alert IDs', dataIndex: 'alert_ids', key: 'alert_ids', render: (arr: string[]) => (arr || []).map(id => <Tag key={id}>{id}</Tag>) },
   ]
@@ -280,6 +305,50 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
                   dataSource={tableData}
                   columns={columns}
                   rowKey={(r) => r.ticket_id + (r.last_alert_time || '')}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: 'risk_entities',
+            label: 'Risk Entities',
+            children: (
+              <Card
+                title="Entity-Centric Correlation"
+                extra={
+                  <Space>
+                    <Text type="secondary">Min alerts</Text>
+                    <Select value={minAlerts} style={{ width: 90 }} onChange={setMinAlerts} options={[1,2,3,5].map(v => ({ label: `≥ ${v}`, value: v }))} />
+                    <Select value={rangeKey} style={{ width: 140 }} onChange={setRangeKey} options={RANGE_OPTIONS.map(r => ({ label: r.label, value: r.key }))} />
+                    <Button onClick={() => refreshEntities()} loading={entitiesLoading}>Refresh</Button>
+                  </Space>
+                }
+              >
+                <Text type="secondary">
+                  Risk objects (IP / user / host) that link multiple alerts or detection rules within the window — the core RBA correlation signal.
+                </Text>
+                <Divider style={{ margin: '12px 0' }} />
+                <Table
+                  size="small"
+                  loading={entitiesLoading}
+                  dataSource={entities}
+                  rowKey={(r) => `${r.entity_type}:${r.entity}`}
+                  columns={[
+                    { title: 'Risk Entity', dataIndex: 'entity', key: 'entity', render: (v: string, r: any) => {
+                      const color = ({ ip: 'blue', user: 'purple', host: 'cyan', hash: 'orange' } as Record<string,string>)[r.entity_type] || 'default'
+                      return <Tag color={color} style={{ fontFamily: 'monospace' }}>{v}</Tag>
+                    } },
+                    { title: 'Type', dataIndex: 'entity_type', key: 'entity_type' },
+                    { title: 'Alerts', dataIndex: 'alert_count', key: 'alert_count', sorter: (a: any, b: any) => a.alert_count - b.alert_count, defaultSortOrder: 'descend' as const },
+                    { title: 'Rules', dataIndex: 'rule_count', key: 'rule_count' },
+                    { title: 'Tickets', dataIndex: 'ticket_count', key: 'ticket_count', render: (n: number, r: any) => (
+                      r.tickets?.length ? <Space size={4} wrap>{r.tickets.map((t: string) => (
+                        <Button key={t} size="small" type="link" style={{ padding: 0 }} onClick={() => onNavigate && onNavigate(`/tickets/${encodeURIComponent(t)}`)}>{t}</Button>
+                      ))}</Space> : n
+                    ) },
+                    { title: 'Severities', dataIndex: 'severities', key: 'severities', render: (arr: string[]) => (arr || []).map(s => <Tag key={s}>{s}</Tag>) },
+                    { title: 'Last Seen', dataIndex: 'last_seen', key: 'last_seen' },
+                  ]}
                 />
               </Card>
             ),

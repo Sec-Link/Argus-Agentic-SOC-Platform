@@ -67,29 +67,80 @@ ECS_PRESET_FIELDS: list[dict] = [
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _get_nested(doc: dict, field: str) -> Any:
-    """Resolve a dot-notation field path from a dict. Returns None if missing."""
-    parts = field.split('.')
-    cur: Any = doc
-    for part in parts:
+def _iter_roots(doc: dict):
+    """Yield the doc roots to search, in priority order.
+
+    ELK alert actions frequently wrap the real fields under a ``body`` object
+    (see the Kibana action template), so we search both the top level and
+    ``body``. This keeps extraction working whether the ingest pipeline
+    flattens fields at the top level or nests them under ``body``.
+    """
+    if isinstance(doc, dict):
+        yield doc
+        body = doc.get('body')
+        if isinstance(body, dict):
+            yield body
+
+
+def _lookup_one(root: dict, field: str) -> Any:
+    """Resolve one field within a single root, trying both forms:
+
+      1. a flat literal key           root["source_ip"] / root["source.ip"]
+      2. a nested dot-notation walk    root["source"]["ip"]
+    """
+    if not isinstance(root, dict):
+        return None
+    # 1. flat literal key (covers renamed/underscored keys like "source_ip")
+    if field in root and root[field] not in (None, ''):
+        return root[field]
+    # 2. nested dot-walk
+    cur: Any = root
+    for part in field.split('.'):
         if not isinstance(cur, dict):
             return None
         cur = cur.get(part)
     return cur
 
 
+def _field_variants(field: str) -> list[str]:
+    """Candidate key spellings for one ECS field, most-specific first.
+
+    ELK alert actions commonly flatten + underscore ECS paths
+    (``source.ip`` -> ``source_ip``, ``host.name`` -> ``host_name``), so we try
+    the dotted form first, then the fully-underscored form, then the last
+    segment underscored (``file.hash.sha256`` -> ``file_hash_sha256``).
+    """
+    variants = [field]
+    under = field.replace('.', '_')
+    if under != field:
+        variants.append(under)
+    return variants
+
+
+def _get_nested(doc: dict, field: str) -> Any:
+    """Resolve a field path across all roots (top level + ``body``), both
+    flat/nested forms, and dot/underscore spelling variants. This makes
+    extraction work with zero config against ELK actions that flatten ECS
+    fields into underscored keys. Returns None if missing everywhere."""
+    for root in _iter_roots(doc):
+        for variant in _field_variants(field):
+            val = _lookup_one(root, variant)
+            if val not in (None, ''):
+                return val
+    return None
+
+
 def _coerce_list(value: Any) -> list[str]:
     """Normalise a field value into a list of non-empty strings."""
     if value is None:
         return []
+    # A genuine multi-value field (e.g. a list of IPs/IOCs) keeps each element;
+    # a plain string is treated as ONE value — never split on commas, or free
+    # text like a command line gets shredded into fragments.
     if isinstance(value, list):
         return [str(v).strip() for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
     text = str(value).strip()
-    if not text:
-        return []
-    if ',' in text:
-        return [p.strip() for p in text.split(',') if p.strip()]
-    return [text]
+    return [text] if text else []
 
 
 def _build_alias_map(aliases: list) -> dict[str, str]:
@@ -317,3 +368,119 @@ def apply_score_decay() -> dict:
 
     logger.info('RBA decay run: profiles=%d zeroed=%d', decayed, zeroed)
     return {'decayed': decayed, 'zeroed': zeroed}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard aggregations (funnel / sankey / top entities)
+# ---------------------------------------------------------------------------
+
+# Risk tier thresholds on RiskObjectProfile.current_score. Ordered high→low.
+RISK_TIERS: list[tuple[str, float]] = [
+    ('critical', 100.0),
+    ('high', 50.0),
+    ('medium', 20.0),
+    ('low', 0.01),
+]
+
+
+def _tier_for_score(score: float) -> str:
+    for name, threshold in RISK_TIERS:
+        if score >= threshold:
+            return name
+    return 'none'
+
+
+def get_risk_funnel() -> dict:
+    """Entity-risk exposure funnel — each stage is a strict subset of the one
+    above it, so the shape always narrows:
+
+        Total entities  →  Scored (>0)  →  Medium+  →  High+  →  Critical
+    """
+    from django.db.models import Count, Q
+
+    agg = RiskObjectProfile.objects.aggregate(
+        total=Count('id'),
+        scored=Count('id', filter=Q(current_score__gte=RISK_TIERS[3][1])),
+        medium=Count('id', filter=Q(current_score__gte=RISK_TIERS[2][1])),
+        high=Count('id', filter=Q(current_score__gte=RISK_TIERS[1][1])),
+        critical=Count('id', filter=Q(current_score__gte=RISK_TIERS[0][1])),
+    )
+    return {
+        'stages': [
+            {'stage': 'Tracked Entities', 'value': agg['total'] or 0},
+            {'stage': 'Scored (>0)', 'value': agg['scored'] or 0},
+            {'stage': 'Medium+', 'value': agg['medium'] or 0},
+            {'stage': 'High+', 'value': agg['high'] or 0},
+            {'stage': 'Critical', 'value': agg['critical'] or 0},
+        ],
+    }
+
+
+def get_risk_sankey(limit: int = 12) -> dict:
+    """Sankey flow of risk contribution:
+
+        risk_object_type  →  detection rule  →  top risk entities
+
+    Values are summed RiskEvent.score_contribution. Node names are namespaced
+    with a prefix so identical labels in different columns never collide.
+    Returns { nodes: [{name}], links: [{source, target, value}] }.
+    """
+    from django.db.models import Sum
+
+    # Column 1→2: entity type → rule
+    type_rule = (
+        RiskEvent.objects.values('profile__risk_object_type', 'rule_name')
+        .annotate(v=Sum('score_contribution'))
+        .order_by('-v')[:limit]
+    )
+    # Column 2→3: rule → entity (top scoring entities)
+    rule_entity = (
+        RiskEvent.objects.values('rule_name', 'profile__risk_object')
+        .annotate(v=Sum('score_contribution'))
+        .order_by('-v')[:limit]
+    )
+
+    node_set: set[str] = set()
+    links: list[dict] = []
+
+    def _node(prefix: str, label: str) -> str:
+        name = f'{prefix}:{label or "unknown"}'
+        node_set.add(name)
+        return name
+
+    for row in type_rule:
+        s = _node('type', row['profile__risk_object_type'])
+        t = _node('rule', row['rule_name'])
+        links.append({'source': s, 'target': t, 'value': round(row['v'] or 0, 2)})
+
+    for row in rule_entity:
+        s = _node('rule', row['rule_name'])
+        t = _node('entity', row['profile__risk_object'])
+        links.append({'source': s, 'target': t, 'value': round(row['v'] or 0, 2)})
+
+    # echarts sankey rejects zero-value links; drop them.
+    links = [ln for ln in links if ln['value'] > 0]
+    return {
+        'nodes': [{'name': n} for n in sorted(node_set)],
+        'links': links,
+    }
+
+
+def get_top_risk_entities(limit: int = 10) -> list[dict]:
+    """Top entities by current risk score, for a leaderboard widget."""
+    rows = (
+        RiskObjectProfile.objects.filter(current_score__gt=0)
+        .order_by('-current_score')[:limit]
+    )
+    return [
+        {
+            'id': r.id,
+            'risk_object': r.risk_object,
+            'risk_object_type': r.risk_object_type,
+            'current_score': round(r.current_score, 2),
+            'tier': _tier_for_score(r.current_score),
+            'total_events': r.total_events,
+            'last_seen': r.last_seen.isoformat().replace('+00:00', 'Z') if r.last_seen else None,
+        }
+        for r in rows
+    ]

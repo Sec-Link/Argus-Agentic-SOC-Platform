@@ -868,6 +868,23 @@ export async function getCorrelationEvents(params?: { from?: string; to?: string
   return r.data
 }
 
+export async function getCorrelationRiskEntities(params?: { from?: string; to?: string; min_alerts?: number }){
+  const query = new URLSearchParams()
+  if(params?.from) query.set('from', params.from)
+  if(params?.to) query.set('to', params.to)
+  if(params?.min_alerts != null) query.set('min_alerts', String(params.min_alerts))
+  const qs = query.toString()
+  const r = await client.get(`/correlation/risk-entities/${qs ? `?${qs}` : ''}`)
+  return r.data as {
+    from: string; to: string;
+    entities: Array<{
+      entity: string; entity_type: string; alert_count: number; rule_count: number;
+      ticket_count: number; alert_ids: string[]; rules: string[]; tickets: string[];
+      severities: string[]; last_seen: string | null;
+    }>;
+  }
+}
+
 // Integrations CRUD
 export async function listIntegrations(){
   const r = await client.get('/integrations/')
@@ -909,6 +926,24 @@ export async function fetchDashboardSankeyStats(params?: { start_time?: string; 
   const suffix = qp.toString() ? `?${qp.toString()}` : '';
   const r = await client.get(`/dashboards/sankey-stats/${suffix}`);
   return r.data;
+}
+
+export async function fetchRiskFunnel() {
+  const r = await client.get('/risk/funnel/');
+  return r.data as { stages: { stage: string; value: number }[] };
+}
+
+export async function fetchRiskSankey(limit = 12) {
+  const r = await client.get(`/risk/sankey/?limit=${limit}`);
+  return r.data as { nodes: { name: string }[]; links: { source: string; target: string; value: number }[] };
+}
+
+export async function fetchRiskTopEntities(limit = 10) {
+  const r = await client.get(`/risk/top-entities/?limit=${limit}`);
+  return r.data as {
+    id: number; risk_object: string; risk_object_type: string;
+    current_score: number; tier: string; total_events: number; last_seen: string | null;
+  }[];
 }
 
 export async function getRbacMe(){
