@@ -16,7 +16,9 @@ Field config resolution order:
 import logging
 from typing import Any
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.db.models import F, Value
+from django.db.models.functions import Greatest
 from django.utils import timezone
 
 from detections.models import LocalDetectionRule
@@ -162,11 +164,13 @@ def _resolve_field_config(rule_uuid: str) -> tuple[list[dict] | None, dict[str, 
       2. GlobalRiskConfig (singleton)
       3. Neither → (None, {})
     """
-    rule_cfg = None
-    try:
-        rule_cfg = RiskRuleConfig.objects.get(rule_uuid=rule_uuid, enabled=True)
-    except RiskRuleConfig.DoesNotExist:
-        pass
+    # Query without the enabled filter so we can distinguish "no rule config"
+    # (fall back to global) from "config exists but explicitly disabled"
+    # (skip entirely — never fall back to global).
+    rule_cfg = RiskRuleConfig.objects.filter(rule_uuid=rule_uuid).first()
+
+    if rule_cfg is not None and not rule_cfg.enabled:
+        return None, {}
 
     global_cfg = GlobalRiskConfig.objects.order_by('id').first()
 
@@ -179,6 +183,7 @@ def _resolve_field_config(rule_uuid: str) -> tuple[list[dict] | None, dict[str, 
     if rule_cfg and rule_cfg.risk_object_fields:
         return rule_cfg.risk_object_fields, merged_aliases
 
+    # Only fall back to global when the rule has no config of its own.
     if global_cfg and global_cfg.risk_object_fields:
         return global_cfg.risk_object_fields, merged_aliases
 
@@ -287,7 +292,8 @@ def process_alert_for_risk(alert_doc: dict) -> list[RiskEvent]:
     except Exception as exc:
         logger.warning('RBA: failed to write risk_objects to alert %s: %s', alert_id, exc)
 
-    # Skip scoring if we already processed this alert (idempotent for RiskEvent).
+    # Fast path only — real idempotency is enforced by the DB unique constraint
+    # on (alert_id, profile), checked per-event below.
     if RiskEvent.objects.filter(alert_id=alert_id).exists():
         return []
 
@@ -310,28 +316,41 @@ def process_alert_for_risk(alert_doc: dict) -> list[RiskEvent]:
             risk_object_type=field_type,
             defaults={'current_score': 0.0},
         )
-        profile.current_score = round(profile.current_score + score, 2)
-        profile.peak_score_24h = max(profile.peak_score_24h, profile.current_score)
-        profile.total_events += 1
-        profile.last_seen = timezone.now()
-        profile.save(update_fields=['current_score', 'peak_score_24h', 'total_events', 'last_seen', 'updated_at'])
 
-        event = RiskEvent.objects.create(
-            profile=profile,
-            alert_id=alert_id,
-            rule_uuid=rule_uuid,
-            rule_name=rule.name,
-            severity=severity,
-            score_contribution=score,
-            raw_alert=alert_doc,
+        # Idempotent insert: the unique (alert_id, profile) constraint rejects a
+        # duplicate created by a concurrent worker; a savepoint keeps the outer
+        # transaction alive so we can skip that event and continue.
+        try:
+            with transaction.atomic():
+                event = RiskEvent.objects.create(
+                    profile=profile,
+                    alert_id=alert_id,
+                    rule_uuid=rule_uuid,
+                    rule_name=rule.name,
+                    severity=severity,
+                    score_contribution=score,
+                    raw_alert=alert_doc,
+                )
+        except IntegrityError:
+            continue
+
+        # Row-level lock + atomic F()/Greatest update — no read-modify-write race,
+        # so concurrent events cannot lose an increment.
+        RiskObjectProfile.objects.select_for_update().filter(pk=profile.pk).update(
+            current_score=F('current_score') + score,
+            peak_score_24h=Greatest('peak_score_24h', F('current_score') + Value(score)),
+            total_events=F('total_events') + 1,
+            last_seen=timezone.now(),
         )
+        profile.refresh_from_db(fields=['current_score'])
+
         created_events.append(event)
 
         RiskScoreEntry.objects.create(
             profile=profile,
             entry_type='alert',
             delta=score,
-            score_after=profile.current_score,
+            score_after=round(profile.current_score, 2),
             note=f'alert_id={alert_id} rule={rule_uuid}',
         )
 

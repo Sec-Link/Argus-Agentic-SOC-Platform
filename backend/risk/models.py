@@ -103,6 +103,11 @@ class RiskEvent(models.Model):
             models.Index(fields=['profile', '-occurred_at']),
             models.Index(fields=['alert_id']),
         ]
+        constraints = [
+            # One contribution per (alert, entity): blocks duplicate scoring from
+            # concurrent workers or multiple ingestion paths.
+            models.UniqueConstraint(fields=['alert_id', 'profile'], name='uniq_riskevent_alert_profile'),
+        ]
 
 
 class RiskScoreEntry(models.Model):

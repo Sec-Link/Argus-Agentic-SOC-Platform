@@ -64,7 +64,7 @@ class GlobalRiskConfigView(APIView):
     permission_classes = [IsAuthenticated, HasDjangoPermissions]
     required_permissions = {
         'GET': 'integrations.view_integration',
-        'POST': 'integrations.view_integration',
+        'POST': 'risk.change_globalriskconfig',
     }
 
     def get(self, request):
@@ -95,8 +95,8 @@ class RiskRuleConfigView(APIView):
     permission_classes = [IsAuthenticated, HasDjangoPermissions]
     required_permissions = {
         'GET': 'integrations.view_integration',
-        'POST': 'integrations.view_integration',
-        'DELETE': 'integrations.view_integration',
+        'POST': 'risk.change_riskruleconfig',
+        'DELETE': 'risk.change_riskruleconfig',
     }
 
     def get(self, request):
@@ -180,7 +180,7 @@ class NotableEventListView(APIView):
 
 class NotableEventResolveView(APIView):
     permission_classes = [IsAuthenticated, HasDjangoPermissions]
-    required_permissions = {'POST': 'integrations.view_integration'}
+    required_permissions = {'POST': 'risk.change_notableevent'}
 
     def post(self, request, pk):
         try:
