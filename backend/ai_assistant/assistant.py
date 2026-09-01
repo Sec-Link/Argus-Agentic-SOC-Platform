@@ -17,6 +17,7 @@ from ai_assistant.mcp_gateway import (
     record_mcp_monitor_event,
 )
 from ai_assistant.skills import apply_local_skills
+from ai_assistant.skill_library import read_skill
 from tickets.models import EventTicket, TicketWorkLog
 
 logger = logging.getLogger(__name__)
@@ -770,6 +771,28 @@ def generate_ai_assistant_output(
         mcp_context=mcp_context,
         user_prompt=user_prompt,
     )
+    enabled_skills = (overrides or {}).get("skills") if isinstance((overrides or {}).get("skills"), list) else []
+    ticket_hint = " ".join([
+        str(getattr(ticket, "event_category", "") or ""),
+        str(getattr(ticket, "ticket_category", "") or ""),
+        str(getattr(ticket, "title", "") or ""),
+    ]).lower()
+    skill_items = []
+    for item in enabled_skills:
+        skill_name = str(item.get("name") or item.get("route") or "").strip() if isinstance(item, dict) else str(item).strip()
+        if skill_name and skill_name.lower() in ticket_hint:
+            skill_items.append(item)
+    selected_skills = skill_items or enabled_skills
+    skill_instructions = []
+    selected_skill_names = []
+    for item in selected_skills:
+        skill_name = str(item.get("name") or item.get("route") or "").strip() if isinstance(item, dict) else str(item).strip()
+        skill_doc = read_skill(skill_name)
+        if skill_doc and skill_doc.content:
+            selected_skill_names.append(skill_name)
+            skill_instructions.append(f"SKILL: {skill_doc.name}\n{skill_doc.content[:12000]}")
+    if skill_instructions:
+        prompt += "\n\nEnabled skill instructions (follow only when supported by ticket evidence):\n" + "\n\n".join(skill_instructions)
     raw_failures: List[str] = []
     if user_prompt:
         response = _call_openai(prompt, overrides=overrides)
@@ -805,6 +828,7 @@ def generate_ai_assistant_output(
             "observables": observables_payload,
         },
         "assistant": normalized_assistant,
+        "skills_used": selected_skill_names,
         "field_sources": field_sources,
         "raw_response": text if text else None,
         "assistant_raw": text if text else None,
