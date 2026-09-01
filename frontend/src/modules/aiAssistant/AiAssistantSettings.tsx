@@ -959,19 +959,6 @@ export default function AiAssistantSettings() {
                           return <Tag>Not Added</Tag>;
                         },
                       },
-                      {
-                        title: 'Action',
-                        key: 'action',
-                        width: 140,
-                        render: (_: any, row: any) => {
-                          const cfg = skillConfigMap.get(row?.name);
-                          const label = cfg ? (cfg.enabled ? 'Enabled' : 'Enable') : 'Add';
-                          return (
-                            <Button size="small" disabled={isReadonly || cfg?.enabled} onClick={() => onEnableCatalogSkill(row)}>
-                              {label}
-                            </Button>
-                          );
-                        },
                       },
                     ]}
                   />
