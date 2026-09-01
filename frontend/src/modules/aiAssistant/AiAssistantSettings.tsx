@@ -959,7 +959,6 @@ export default function AiAssistantSettings() {
                           return <Tag>Not Added</Tag>;
                         },
                       },
-                      },
                     ]}
                   />
                 </Card>
