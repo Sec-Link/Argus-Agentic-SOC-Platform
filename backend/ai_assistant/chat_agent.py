@@ -420,6 +420,11 @@ def run_chat_agent(
 
     internal_tools, internal_handlers = _internal_tools()
     external_tools, external_mapping = _external_tools(overrides=overrides)
+    if preloaded_names:
+        internal_tools = [
+            tool for tool in internal_tools
+            if ((tool.get("function") or {}).get("name") != "read_skill")
+        ]
     tools = internal_tools + external_tools
 
     max_iter_value = None
