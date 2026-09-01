@@ -329,16 +329,27 @@ def _preload_chat_skills(user_input: str, recommended_skills: List[str], overrid
     if not recommended_skills:
         return [], [], []
     names = [str(name).strip() for name in recommended_skills if str(name).strip()]
-    catalog = list_skills()
+    list_exec_id = start_mcp_execution("list_skills", {}, source="internal")
+    try:
+        catalog = list_skills()
+        list_success = True
+        list_content = "\n".join(catalog)
+    except Exception as exc:
+        catalog = []
+        list_success = False
+        list_content = f"Skill listing failed: {exc}"
+    finish_mcp_execution(list_exec_id, list_success, error="" if list_success else list_content)
+    update_mcp_stats("list_skills", list_success)
+    available = [name for name in names if name in catalog] if catalog else names
     trace = [
         {"type": "model_call", "iteration": 0, "purpose": "skill_selection"},
         {"type": "tool_calls_detected", "iteration": 0, "count": 1},
-        {"type": "tool_call", "iteration": 0, "tool": "list_skills", "source": "internal", "arguments": {}, "automatic": True},
-        {"type": "tool_result", "iteration": 0, "tool": "list_skills", "source": "internal", "success": True, "content": "\n".join(catalog or names), "automatic": True},
+        {"type": "tool_call", "iteration": 0, "tool": "list_skills", "source": "internal", "arguments": {}, "automatic": True, "execution_id": list_exec_id},
+        {"type": "tool_result", "iteration": 0, "tool": "list_skills", "source": "internal", "success": list_success, "content": list_content, "automatic": True, "execution_id": list_exec_id},
     ]
     router_prompt = ('You are a SOC skill router. Select only relevant skills from this list based on the user request. '
         'Return JSON only: {"skills":["exact skill name"]}. Return {"skills":[]} if none apply. Never invent names.\n'
-        + 'Available skills: ' + json.dumps(names, ensure_ascii=False) + '\nUser request: ' + user_input)
+        + 'Available skills: ' + json.dumps(available, ensure_ascii=False) + '\nUser request: ' + user_input)
     selected_names = []
     try:
         response = _call_openai_chat([{"role":"system","content":router_prompt},{"role":"user","content":user_input}], [], overrides=overrides)
@@ -346,26 +357,30 @@ def _preload_chat_skills(user_input: str, recommended_skills: List[str], overrid
         match = re.search(r'\{.*\}', text, flags=re.DOTALL)
         payload = json.loads(match.group(0) if match else text)
         values = payload.get("skills") if isinstance(payload, dict) else []
-        allowed = {name.lower(): name for name in names}
         if isinstance(values, list):
-            selected_names = [allowed[str(value).strip().lower()] for value in values if str(value).strip().lower() in allowed]
+            selected_names = [str(value).strip() for value in values if str(value).strip() in available]
     except Exception:
         logger.exception("Chat skill preselection failed")
     instructions = []
     for name in selected_names:
+        read_exec_id = start_mcp_execution("read_skill", {"skill_name": name}, source="internal")
         doc = read_skill(name)
         if doc and doc.content:
+            finish_mcp_execution(read_exec_id, True)
+            update_mcp_stats("read_skill", True)
             record_skill_call(name, True)
             instructions.append(f"SKILL: {doc.name}\n{doc.content[:12000]}")
             trace.extend([
-                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True},
-                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": True, "content": doc.content[:2000], "automatic": True},
+                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True, "execution_id": read_exec_id},
+                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": True, "content": doc.content[:2000], "automatic": True, "execution_id": read_exec_id},
             ])
         else:
+            finish_mcp_execution(read_exec_id, False, error=f"Skill not found: {name}")
+            update_mcp_stats("read_skill", False)
             record_skill_call(name, False)
             trace.extend([
-                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True},
-                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": False, "content": f"Skill not found: {name}", "automatic": True},
+                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True, "execution_id": read_exec_id},
+                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": False, "content": f"Skill not found: {name}", "automatic": True, "execution_id": read_exec_id},
             ])
     return selected_names, instructions, trace
 
