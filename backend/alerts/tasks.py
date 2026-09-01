@@ -605,6 +605,18 @@ def sync_es_alerts_to_db(
                             Alert.objects.create(alert_id=alert_id, **defaults)
                             created = True
 
+                # RBA: extract risk_objects for newly ingested alerts. Surface
+                # rule_id/severity to the top level first (raw ES doc nests them
+                # under `body`), then run the pipeline best-effort.
+                if created:
+                    try:
+                        from risk.services import process_alert_for_risk
+                        doc['rule_id'] = defaults.get('rule_id')
+                        doc['severity'] = defaults.get('severity')
+                        process_alert_for_risk(doc)
+                    except Exception:
+                        logger.exception('RBA processing failed for alert_id=%s (non-fatal)', alert_id)
+
                 inserted += 1 if created else 0
                 updated += 0 if created else 1
             except (IntegrityError, DatabaseError) as db_err:

@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Input, Modal, Space, Tabs } from "antd";
+import { App, Badge, Button, Card, Checkbox, Collapse, Input, Modal, Space, Statistic, Switch, Table, Tag, Tabs, Tooltip, Typography } from "antd";
+import type { ColumnsType } from "antd/es/table";
 
 import {
   createDetectionDeployment,
@@ -13,6 +14,7 @@ import {
   deletePublishedDetectionRule,
   exportDetectionMappings,
   exportDetectionRules,
+  compileDetectionRule,
   getDetectionRule,
   getPublishedDetectionRule,
   getPublishedRuleVersions,
@@ -21,6 +23,7 @@ import {
   listPublishedConnectors,
   listDetectionRules,
   patchPublishedDetectionRule,
+  previewPublishedDetectionRule,
   rollbackPublishedRuleVersion,
   saveDetectionRule,
   updatePublishedDetectionRule,
@@ -72,6 +75,107 @@ type MappingDraft = {
   event_category: string;
 };
 
+const ECS_PRESETS_GLOBAL = [
+  { field: 'host.name', type: 'host' }, { field: 'host.id', type: 'host' },
+  { field: 'user.name', type: 'user' }, { field: 'user.id', type: 'user' },
+  { field: 'source.ip', type: 'ip' }, { field: 'source.port', type: 'other' },
+  { field: 'destination.ip', type: 'ip' }, { field: 'destination.port', type: 'other' },
+  { field: 'process.name', type: 'other' }, { field: 'process.pid', type: 'other' },
+  { field: 'process.command_line', type: 'other' }, { field: 'process.parent.name', type: 'other' },
+  { field: 'file.name', type: 'other' }, { field: 'file.hash.sha256', type: 'hash' },
+];
+const PRESET_FIELD_NAMES = ECS_PRESETS_GLOBAL.map((p) => p.field);
+
+type RiskFieldConfig = { field: string; type: string };
+
+function GlobalRiskConfigPanel({
+  globalRiskFields,
+  saving,
+  onSave,
+}: {
+  globalRiskFields: RiskFieldConfig[];
+  saving: boolean;
+  onSave: (fields: RiskFieldConfig[]) => Promise<void>;
+}) {
+  const [draft, setDraft] = React.useState<RiskFieldConfig[]>(globalRiskFields);
+  React.useEffect(() => { setDraft(globalRiskFields); }, [globalRiskFields]);
+
+  const checkedFields = draft.map((f) => f.field);
+  const customFields = draft.filter((f) => !PRESET_FIELD_NAMES.includes(f.field));
+  const customText = customFields.map((f) => f.field).join('\n');
+
+  const toggle = (preset: RiskFieldConfig, checked: boolean) => {
+    if (checked) setDraft((prev) => [...prev.filter((f) => f.field !== preset.field), preset]);
+    else setDraft((prev) => prev.filter((f) => f.field !== preset.field));
+  };
+
+  const groups = [
+    { label: 'Host',    items: ECS_PRESETS_GLOBAL.filter((p) => p.type === 'host') },
+    { label: 'User',    items: ECS_PRESETS_GLOBAL.filter((p) => p.type === 'user') },
+    { label: 'Network', items: ECS_PRESETS_GLOBAL.filter((p) => p.field.startsWith('source.') || p.field.startsWith('destination.')) },
+    { label: 'Process', items: ECS_PRESETS_GLOBAL.filter((p) => p.field.startsWith('process.')) },
+    { label: 'File',    items: ECS_PRESETS_GLOBAL.filter((p) => p.field.startsWith('file.')) },
+  ];
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+      <Typography.Paragraph type="secondary">
+        Global default risk object fields applied to all detection rules unless a rule has its own override.
+        Fields must exist in the ELK alert payload written by the Kibana action.
+      </Typography.Paragraph>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px 24px', marginBottom: 16 }}>
+        {groups.map((g) => (
+          <div key={g.label}>
+            <Typography.Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{g.label}</Typography.Text>
+            {g.items.map((preset) => (
+              <div key={preset.field}>
+                <Checkbox
+                  checked={checkedFields.includes(preset.field)}
+                  onChange={(e) => toggle(preset, e.target.checked)}
+                  style={{ fontSize: 12 }}
+                >
+                  {preset.field}
+                </Checkbox>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <Typography.Text strong style={{ fontSize: 12 }}>Custom fields</Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>one per line</Typography.Text>
+        <Input.TextArea
+          rows={3}
+          value={customText}
+          placeholder="event.action"
+          style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 12 }}
+          onChange={(e) => {
+            const newCustom: RiskFieldConfig[] = e.target.value
+              .split('\n').map((l) => l.trim()).filter((l) => l && !PRESET_FIELD_NAMES.includes(l))
+              .map((l) => ({ field: l, type: 'other' }));
+            setDraft([...draft.filter((f) => PRESET_FIELD_NAMES.includes(f.field)), ...newCustom]);
+          }}
+        />
+      </div>
+      {draft.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Selected ({draft.length}):{' '}
+            {draft.map((f) => (
+              <Tag key={f.field} color={f.type === 'ip' ? 'blue' : f.type === 'user' ? 'purple' : f.type === 'host' ? 'cyan' : 'default'} style={{ fontSize: 11 }}>
+                {f.field}
+              </Tag>
+            ))}
+          </Typography.Text>
+        </div>
+      )}
+      <Button type="primary" size="small" loading={saving} onClick={() => onSave(draft)}>
+        Save Global Config
+      </Button>
+    </div>
+  );
+}
+
 export default function Detections({ initialRuleId }: { initialRuleId?: string } = {}) {
   const { message } = App.useApp();
   const router = useRouter();
@@ -94,13 +198,20 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorId, setEditorId] = useState("");
   const [editorYaml, setEditorYaml] = useState("");
-  const [elasticActionsText, setElasticActionsText] = useState("[]");
   const [elasticIndexPatternsText, setElasticIndexPatternsText] = useState("");
-  const [connectors, setConnectors] = useState<ConnectorRow[]>([]);
-  const [connectorDraftId, setConnectorDraftId] = useState<string>("");
-  const [selectedActionIndex, setSelectedActionIndex] = useState<number>(0);
+  const [esqlText, setEsqlText] = useState("");
+  const [esqlSource, setEsqlSource] = useState<"autogenerated" | "manual">("autogenerated");
+  const [elasticActionsText, setElasticActionsText] = useState("[]");
+  const [connectorDraftId, setConnectorDraftId] = useState("");
+  const [selectedActionIndex, setSelectedActionIndex] = useState(0);
   const [selectedActionParamsText, setSelectedActionParamsText] = useState("{}");
+  const [scheduleInterval, setScheduleInterval] = useState("1m");
+  const [scheduleFrom, setScheduleFrom] = useState("now-16m");
+  const [connectors, setConnectors] = useState<ConnectorRow[]>([]);
   const [kibanaMetadata, setKibanaMetadata] = useState<KibanaMetadata>({});
+  const [rulePreviewOpen, setRulePreviewOpen] = useState(false);
+  const [rulePreviewLoading, setRulePreviewLoading] = useState(false);
+  const [rulePreviewResult, setRulePreviewResult] = useState<any>(null);
 
   const [maps, setMaps] = useState<LocalMapRow[]>([]);
   const [selectedMappingIds, setSelectedMappingIds] = useState<React.Key[]>([]);
@@ -121,6 +232,31 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
   const [githubUrl, setGithubUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [mappingUploading, setMappingUploading] = useState(false);
+
+  // --- Risk Object Config ---
+  type RiskFieldConfig = { field: string; type: string };
+  type RiskAliasConfig = { source: string; ecs: string };
+  const [riskFields, setRiskFields] = useState<RiskFieldConfig[]>([]);
+  const [riskAliases, setRiskAliases] = useState<RiskAliasConfig[]>([]);
+  const [riskEnabled, setRiskEnabled] = useState(true);
+  const [globalRiskFields, setGlobalRiskFields] = useState<RiskFieldConfig[]>([]);
+  const [globalRiskSaving, setGlobalRiskSaving] = useState(false);
+
+  // --- Notable Events ---
+  type NotableEvent = {
+    id: number;
+    risk_object: string;
+    risk_object_type: string;
+    score_at_trigger: number;
+    threshold_used: number;
+    contributing_event_count: number;
+    status: string;
+    triggered_at: string;
+    resolved_at: string | null;
+    resolved_by: string;
+  };
+  const [notableEvents, setNotableEvents] = useState<NotableEvent[]>([]);
+  const [notableLoading, setNotableLoading] = useState(false);
 
   const downloadJson = (fileName: string, data: any) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
@@ -204,7 +340,6 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
 
   const loadDetail = async (id: string) => {
     const nextDetail = await getDetectionRule(id);
-    const actions = Array.isArray(nextDetail?.payload?.elastic_actions) ? nextDetail.payload?.elastic_actions : [];
     const indexPatterns =
       Array.isArray(nextDetail?.compiled?.elastic_index_patterns) && nextDetail.compiled.elastic_index_patterns.length
         ? nextDetail.compiled.elastic_index_patterns
@@ -214,15 +349,22 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
 
     setSelectedId(id);
     setDetail(nextDetail);
-    setElasticActionsText(formatJson(actions));
+    loadRiskConfig(id);
     setElasticIndexPatternsText(indexPatterns.join("\n"));
+    setEsqlText(String(nextDetail?.compiled?.esql || nextDetail?.payload?.esql || "*"));
+    setEsqlSource(nextDetail?.compiled?.esql_source === "manual" || nextDetail?.payload?.esql_source === "manual" ? "manual" : "autogenerated");
+    const rulePayload = nextDetail?.payload || {};
+    const actions = Array.isArray(rulePayload.elastic_actions) ? rulePayload.elastic_actions : [];
+    setElasticActionsText(formatJson(actions));
+    setSelectedActionIndex(0);
+    setSelectedActionParamsText(formatJson(actions[0]?.params || {}));
+    setScheduleInterval(String(rulePayload.schedule_interval || rulePayload.interval || "1m"));
+    setScheduleFrom(String(rulePayload.schedule_from || rulePayload.from || "now-16m"));
     setKibanaMetadata(
       nextDetail?.payload?.kibana_metadata && typeof nextDetail.payload.kibana_metadata === "object"
         ? nextDetail.payload.kibana_metadata
         : {},
     );
-    setSelectedActionIndex(0);
-    setSelectedActionParamsText(formatJson(actions[0]?.params || {}));
     try {
       const publishedVersions = await getPublishedRuleVersions(id);
       setVersions(Array.isArray(publishedVersions?.data) ? publishedVersions.data : []);
@@ -231,11 +373,103 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     }
   };
 
+  const loadGlobalRiskConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/risk/global-config/', {
+        headers: { Authorization: `Token ${localStorage.getItem('siem_access_token') || ''}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGlobalRiskFields(Array.isArray(data.risk_object_fields) ? data.risk_object_fields : []);
+      }
+    } catch { /* non-fatal */ }
+  }, []);
+
+  const saveGlobalRiskConfig = async (fields: RiskFieldConfig[]) => {
+    setGlobalRiskSaving(true);
+    try {
+      const res = await fetch('/api/v1/risk/global-config/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Token ${localStorage.getItem('siem_access_token') || ''}`,
+        },
+        body: JSON.stringify({ risk_object_fields: fields }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGlobalRiskFields(Array.isArray(data.risk_object_fields) ? data.risk_object_fields : []);
+        message.success('Global risk config saved');
+      }
+    } catch { message.error('Failed to save global risk config'); }
+    finally { setGlobalRiskSaving(false); }
+  };
+
+  const loadRiskConfig = useCallback(async (ruleUuid: string) => {
+    try {
+      const res = await fetch(`/api/v1/risk/rule-config/?rule_uuid=${encodeURIComponent(ruleUuid)}`, {
+        headers: { Authorization: `Token ${localStorage.getItem('siem_access_token') || ''}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRiskFields(Array.isArray(data.risk_object_fields) ? data.risk_object_fields : []);
+        setRiskAliases(Array.isArray(data.field_aliases) ? data.field_aliases : []);
+        setRiskEnabled(data.enabled !== false);
+      }
+    } catch {
+      setRiskFields([]);
+    }
+  }, []);
+
+  const saveRiskConfig = async (ruleUuid: string) => {
+    try {
+      await fetch('/api/v1/risk/rule-config/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Token ${localStorage.getItem('siem_access_token') || ''}`,
+        },
+        body: JSON.stringify({ rule_uuid: ruleUuid, risk_object_fields: riskFields, field_aliases: riskAliases, enabled: riskEnabled }),
+      });
+      message.success('Risk object configuration saved');
+    } catch {
+      message.error('Failed to save risk configuration');
+    }
+  };
+
+  const loadNotableEvents = useCallback(async () => {
+    setNotableLoading(true);
+    try {
+      const res = await fetch('/api/v1/risk/notable/', {
+        headers: { Authorization: `Token ${localStorage.getItem('siem_access_token') || ''}` },
+      });
+      if (res.ok) setNotableEvents(await res.json());
+    } catch {
+      setNotableEvents([]);
+    } finally {
+      setNotableLoading(false);
+    }
+  }, []);
+
+  const resolveNotableEvent = async (id: number) => {
+    try {
+      await fetch(`/api/v1/risk/notable/${id}/resolve/`, {
+        method: 'POST',
+        headers: { Authorization: `Token ${localStorage.getItem('siem_access_token') || ''}` },
+      });
+      message.success('Notable event resolved');
+      loadNotableEvents();
+    } catch {
+      message.error('Failed to resolve notable event');
+    }
+  };
+
   useEffect(() => {
     loadRules();
     loadMappings();
     loadDeployments();
     loadConnectors();
+    loadGlobalRiskConfig();
   }, []);
 
   // Deep link from other modules (e.g. the Alerts "Detection Rule" quick link).
@@ -304,7 +538,27 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     }
   };
 
-  const publish = async () => {
+  const scheduleConfigurationPayload = () => ({
+    schedule_interval: scheduleInterval,
+    schedule_from: scheduleFrom,
+  });
+
+  const esqlConfigurationPayload = (source: "autogenerated" | "manual" = esqlSource) => (
+    source === "manual"
+      ? { esql: esqlText, esql_source: "manual" }
+      : { esql_source: "autogenerated" }
+  );
+
+  const validateSchedule = () => {
+    if (!/^[1-9]\d*[smhd]$/.test(scheduleInterval)) {
+      throw new Error("Run every must use a value such as 1m, 5m, or 1h");
+    }
+    if (!/^now-[1-9]\d*[smhd]$/.test(scheduleFrom)) {
+      throw new Error("Lookback must use a value such as now-16m or now-1h");
+    }
+  };
+
+  const buildKibanaRulePayload = () => {
     if (!selectedId || !detail) return;
 
     const meta = detail.meta || {};
@@ -314,27 +568,86 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     const query =
       compiledLanguage === "lucene"
         ? String(compiled.lucene || "*")
-        : applyIndexPatternsToEsql(compiled.esql || "*", indexPatterns);
+        : applyIndexPatternsToEsql(esqlText || compiled.esql || "*", indexPatterns);
     const ruleType = compiledLanguage === "lucene" ? "query" : "esql";
     const ruleLanguage = compiledLanguage === "lucene" ? "lucene" : "esql";
 
+    validateSchedule();
+    const riskScore = Number(detail?.payload?.risk_score ?? 50);
+    const actions = enrichElasticActions(dedupeElasticActions(parseElasticActions(elasticActionsText)), connectors);
+    const sigmaTags = Array.isArray(meta.tags) ? meta.tags.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    return {
+      name: meta.title || selectedId,
+      type: ruleType,
+      rule_id: selectedId,
+      enabled: false,
+      severity: meta.level || "low",
+      risk_score: Number.isFinite(riskScore) ? Math.max(0, Math.min(100, riskScore)) : 50,
+      description: meta.description || meta.title || selectedId,
+      index: indexPatterns,
+      query,
+      language: ruleLanguage,
+      tags: Array.from(new Set([
+        "sigma",
+        ruleLanguage,
+        ...(compiled.risk_incident?.enabled ? ["argus-risk-incident"] : []),
+        ...sigmaTags,
+      ])),
+      actions,
+      interval: scheduleInterval,
+      from: scheduleFrom,
+      to: "now",
+    };
+  };
+
+  const buildKibanaPreviewPayload = () => {
+    const payload = buildKibanaRulePayload();
+    if (!payload) return;
+    return {
+      ...payload,
+      required_fields: [],
+      author: [],
+      exceptions_list: [],
+      false_positives: [],
+      references: [],
+      risk_score_mapping: [],
+      severity_mapping: [],
+      max_signals: 100,
+      setup: "",
+      license: "",
+      response_actions: [],
+      enabled: true,
+      meta: { kibana_siem_app_url: "" },
+      invocationCount: 60,
+      timeframeEnd: new Date().toISOString(),
+    };
+  };
+
+  const previewRule = async () => {
+    if (!selectedId || !detail) return;
+    setRulePreviewLoading(true);
     try {
-      const normalizedActions = dedupeElasticActions(parseElasticActions(elasticActionsText));
-      const actions = enrichElasticActions(normalizedActions, connectors);
-      const sigmaTags = Array.isArray(meta.tags) ? meta.tags.map((item) => String(item || "").trim()).filter(Boolean) : [];
-      const payload = {
-        name: meta.title || selectedId,
-        type: ruleType,
-        rule_id: selectedId,
-        enabled: false,
-        severity: meta.level || "low",
-        description: meta.description || meta.title || selectedId,
-        index: indexPatterns,
-        query,
-        language: ruleLanguage,
-        tags: Array.from(new Set(["sigma", ruleLanguage, ...sigmaTags])),
-        actions,
-      };
+      const payload = buildKibanaPreviewPayload();
+      if (!payload) return;
+      const result = await previewPublishedDetectionRule(payload);
+      setRulePreviewResult(result);
+      setRulePreviewOpen(true);
+      message.success("Kibana rule preview completed");
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || "Kibana rule preview failed");
+    } finally {
+      setRulePreviewLoading(false);
+    }
+  };
+
+  const publish = async () => {
+    if (!selectedId || !detail) return;
+
+    try {
+      const payload = buildKibanaRulePayload();
+      if (!payload) return;
+      const actions = Array.isArray(payload.actions) ? payload.actions : [];
+      const indexPatterns = Array.isArray(payload.index) ? payload.index : [];
 
       let publishedRule: any;
       try {
@@ -358,11 +671,12 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
         updated_at: new Date().toISOString(),
       };
       await saveDetectionRule(selectedId, detail.yaml || "", {
-        elastic_actions: normalizedActions,
+        ...scheduleConfigurationPayload(),
+        ...esqlConfigurationPayload(),
+        elastic_actions: actions,
         elastic_index_patterns: indexPatterns,
         kibana_metadata: nextMetadata,
       });
-      setElasticActionsText(formatJson(normalizedActions));
       setKibanaMetadata(nextMetadata);
 
       await recordDeployment({
@@ -443,6 +757,8 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     try {
       const normalizedActions = dedupeElasticActions(parseElasticActions(elasticActionsText));
       await saveDetectionRule(editorId.trim(), editorYaml, {
+        ...scheduleConfigurationPayload(),
+        esql_source: "autogenerated",
         elastic_actions: normalizedActions,
         elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
         kibana_metadata: kibanaMetadata,
@@ -451,6 +767,10 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
       setEditorOpen(false);
       await loadRules();
       await loadDetail(editorId.trim());
+      setEsqlSource("autogenerated");
+      if (riskFields.some((f) => f.field.trim())) {
+        await saveRiskConfig(editorId.trim());
+      }
     } catch (e: any) {
       message.error(e?.response?.data?.detail || e?.message || "Failed to save rule");
     }
@@ -461,6 +781,8 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     try {
       const normalizedActions = dedupeElasticActions(parseElasticActions(elasticActionsText));
       await saveDetectionRule(selectedId, detail.yaml || "", {
+        ...scheduleConfigurationPayload(),
+        ...esqlConfigurationPayload(),
         elastic_actions: normalizedActions,
         elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
         kibana_metadata: kibanaMetadata,
@@ -470,6 +792,72 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
       message.success("Elastic action configuration saved");
     } catch (e: any) {
       message.error(e?.response?.data?.detail || e?.message || "Failed to save Elastic action configuration");
+    }
+  };
+
+  const saveSchedule = async () => {
+    if (!selectedId || !detail) return;
+    try {
+      validateSchedule();
+      await saveDetectionRule(selectedId, detail.yaml || "", {
+        ...scheduleConfigurationPayload(),
+        ...esqlConfigurationPayload(),
+        elastic_actions: dedupeElasticActions(parseElasticActions(elasticActionsText)),
+        elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
+        kibana_metadata: kibanaMetadata,
+      });
+      await loadDetail(selectedId);
+      message.success("Detection schedule saved; publish to sync it to Kibana");
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || "Failed to save detection schedule");
+    }
+  };
+
+  const saveEsql = async () => {
+    if (!selectedId || !detail) return;
+    if (!esqlText.trim()) {
+      message.error("ES|QL query is required");
+      return;
+    }
+    try {
+      await saveDetectionRule(selectedId, detail.yaml || "", {
+        ...scheduleConfigurationPayload(),
+        esql: esqlText,
+        esql_source: "manual",
+        elastic_actions: dedupeElasticActions(parseElasticActions(elasticActionsText)),
+        elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
+        kibana_metadata: kibanaMetadata,
+      });
+      setEsqlSource("manual");
+      await loadDetail(selectedId);
+      message.success("ES|QL saved as manual");
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || "Failed to save ES|QL");
+    }
+  };
+
+  const regenerateEsqlFromSigma = async () => {
+    if (!selectedId || !detail) return;
+    try {
+      const compiled = await compileDetectionRule(detail.yaml || "");
+      const nextEsql = String(compiled?.esql || "").trim();
+      if (!nextEsql) {
+        throw new Error(compiled?.error || "Sigma did not compile to ES|QL");
+      }
+      await saveDetectionRule(selectedId, detail.yaml || "", {
+        ...scheduleConfigurationPayload(),
+        esql: nextEsql,
+        esql_source: "autogenerated",
+        elastic_actions: dedupeElasticActions(parseElasticActions(elasticActionsText)),
+        elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
+        kibana_metadata: kibanaMetadata,
+      });
+      setEsqlText(nextEsql);
+      setEsqlSource("autogenerated");
+      await loadDetail(selectedId);
+      message.success("ES|QL regenerated from Sigma");
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || "Failed to regenerate ES|QL from Sigma");
     }
   };
 
@@ -494,6 +882,8 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
         updated_at: new Date().toISOString(),
       };
       await saveDetectionRule(selectedId, detail.yaml || "", {
+        ...scheduleConfigurationPayload(),
+        ...esqlConfigurationPayload(),
         elastic_actions: dedupeElasticActions(parseElasticActions(elasticActionsText)),
         elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
         kibana_metadata: nextMetadata,
@@ -540,6 +930,8 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
         updated_at: new Date().toISOString(),
       };
       await saveDetectionRule(selectedId, detail.yaml || "", {
+        ...scheduleConfigurationPayload(),
+        ...esqlConfigurationPayload(),
         elastic_actions: dedupeElasticActions(parseElasticActions(elasticActionsText)),
         elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
         kibana_metadata: nextMetadata,
@@ -728,7 +1120,7 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     <>
       <Tabs
         activeKey={topTab}
-        onChange={setTopTab}
+        onChange={(key) => { setTopTab(key); if (key === 'notable') loadNotableEvents(); }}
         items={[
           {
             key: "rules",
@@ -744,13 +1136,19 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
                 selectedActionParamsText={selectedActionParamsText}
                 elasticActionsText={elasticActionsText}
                 elasticIndexPatternsText={elasticIndexPatternsText}
+                esqlText={esqlText}
+                esqlSource={esqlSource}
+                scheduleInterval={scheduleInterval}
+                scheduleFrom={scheduleFrom}
                 kibanaMetadata={kibanaMetadata}
+                rulePreviewLoading={rulePreviewLoading}
                 onBack={() => router.push(DETECTION_BASE)}
                 onEdit={() => {
                   setEditorId(selectedId);
                   setEditorYaml(detail.yaml || "");
                   setEditorOpen(true);
                 }}
+                onPreview={previewRule}
                 onPublish={publish}
                 onSetDetailTab={setDetailTab}
                 onRollbackVersion={async (version) => {
@@ -758,7 +1156,31 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
                   await loadDetail(selectedId);
                   message.success(`Rolled back to v${version}`);
                 }}
+                riskFields={riskFields}
+                riskAliases={riskAliases}
+                riskEnabled={riskEnabled}
+                globalRiskFields={globalRiskFields}
+                onSetRiskFields={setRiskFields}
+                onSetRiskAliases={(aliases) => {
+                  setRiskAliases(aliases);
+                  // Auto-add ECS target fields to riskFields so the user doesn't need two steps
+                  const ecsTargets = aliases.map((a) => a.ecs).filter(Boolean);
+                  if (ecsTargets.length > 0) {
+                    setRiskFields((prev) => {
+                      const existing = new Set(prev.map((f) => f.field));
+                      const toAdd = ecsTargets.filter((e) => !existing.has(e));
+                      if (toAdd.length === 0) return prev;
+                      const typeMap: Record<string, string> = { 'host.name': 'host', 'host.id': 'host', 'user.name': 'user', 'user.id': 'user', 'source.ip': 'ip', 'destination.ip': 'ip', 'file.hash.sha256': 'hash' };
+                      return [...prev, ...toAdd.map((f) => ({ field: f, type: typeMap[f] || 'other' }))];
+                    });
+                  }
+                }}
+                onSetRiskEnabled={setRiskEnabled}
+                onSaveRiskConfig={() => saveRiskConfig(selectedId)}
                 onSaveElasticActions={saveElasticActions}
+                onSaveSchedule={saveSchedule}
+                onSaveEsql={saveEsql}
+                onRegenerateEsqlFromSigma={regenerateEsqlFromSigma}
                 onSyncKibanaEnabled={syncKibanaEnabled}
                 onDeleteKibanaRule={deleteKibanaRule}
                 onSetConnectorDraftId={setConnectorDraftId}
@@ -769,6 +1191,12 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
                 onSetSelectedActionParamsText={setSelectedActionParamsText}
                 onElasticActionsTextChange={handleElasticActionsTextChange}
                 onSetElasticIndexPatternsText={setElasticIndexPatternsText}
+                onSetEsqlText={(value) => {
+                  setEsqlText(value);
+                  setEsqlSource("manual");
+                }}
+                onSetScheduleInterval={setScheduleInterval}
+                onSetScheduleFrom={setScheduleFrom}
               />
             ) : (
               <DetectionRuleList
@@ -870,12 +1298,209 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
             label: "Publish History",
             children: <DetectionDeployments rows={deployments} onRefresh={loadDeployments} />,
           },
+          {
+            key: "notable",
+            label: (
+              <span>
+                Notable Events
+                {notableEvents.filter((e) => e.status === 'open').length > 0 && (
+                  <Badge
+                    count={notableEvents.filter((e) => e.status === 'open').length}
+                    size="small"
+                    style={{ marginLeft: 6 }}
+                  />
+                )}
+              </span>
+            ),
+            children: (
+              <div>
+                <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+                  <Button onClick={loadNotableEvents} loading={notableLoading} size="small">
+                    Refresh
+                  </Button>
+                  <Typography.Text type="secondary" style={{ lineHeight: '24px', fontSize: 12 }}>
+                    Entities whose 24h risk score exceeded 100 points
+                  </Typography.Text>
+                </div>
+                <Table<NotableEvent>
+                  size="small"
+                  loading={notableLoading}
+                  dataSource={notableEvents}
+                  rowKey="id"
+                  pagination={{ pageSize: 20, size: 'small' }}
+                  columns={[
+                    {
+                      title: 'Entity',
+                      key: 'entity',
+                      render: (_, r) => (
+                        <Space size={4}>
+                          <Tag color={r.risk_object_type === 'ip' ? 'blue' : r.risk_object_type === 'user' ? 'purple' : 'default'}>
+                            {r.risk_object_type}
+                          </Tag>
+                          <Typography.Text copyable style={{ fontSize: 13 }}>{r.risk_object}</Typography.Text>
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: 'Score',
+                      dataIndex: 'score_at_trigger',
+                      render: (v) => <span style={{ color: '#f5222d', fontWeight: 600 }}>{v.toFixed(1)}</span>,
+                      sorter: (a, b) => a.score_at_trigger - b.score_at_trigger,
+                    },
+                    {
+                      title: 'Events',
+                      dataIndex: 'contributing_event_count',
+                      render: (v) => v,
+                    },
+                    {
+                      title: 'Status',
+                      dataIndex: 'status',
+                      render: (v) => (
+                        <Tag color={v === 'open' ? 'red' : v === 'in_review' ? 'orange' : 'green'}>{v}</Tag>
+                      ),
+                    },
+                    {
+                      title: 'Triggered',
+                      dataIndex: 'triggered_at',
+                      render: (v) => new Date(v).toLocaleString(),
+                      sorter: (a, b) => new Date(a.triggered_at).getTime() - new Date(b.triggered_at).getTime(),
+                    },
+                    {
+                      title: 'Action',
+                      key: 'action',
+                      render: (_, r) =>
+                        r.status !== 'resolved' ? (
+                          <Button size="small" onClick={() => resolveNotableEvent(r.id)}>
+                            Resolve
+                          </Button>
+                        ) : (
+                          <Tooltip title={`Resolved by ${r.resolved_by}`}>
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              {r.resolved_at ? new Date(r.resolved_at).toLocaleDateString() : '—'}
+                            </Typography.Text>
+                          </Tooltip>
+                        ),
+                    },
+                  ] as ColumnsType<NotableEvent>}
+                />
+              </div>
+            ),
+          },
+          {
+            key: 'risk-config',
+            label: 'Risk Config',
+            children: (
+              <GlobalRiskConfigPanel
+                globalRiskFields={globalRiskFields}
+                saving={globalRiskSaving}
+                onSave={saveGlobalRiskConfig}
+              />
+            ),
+          },
         ]}
       />
       <Modal title={editorId ? `Edit Rule ${editorId}` : "New Rule"} open={editorOpen} onCancel={() => setEditorOpen(false)} onOk={saveRule} width={980}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Input placeholder="Rule ID" value={editorId} onChange={(e) => setEditorId(e.target.value)} />
           <Input.TextArea rows={18} value={editorYaml} onChange={(e) => setEditorYaml(e.target.value)} placeholder="Paste Sigma YAML" />
+        </Space>
+      </Modal>
+      <Modal
+        title="Kibana Rule Preview"
+        open={rulePreviewOpen}
+        onCancel={() => setRulePreviewOpen(false)}
+        footer={<Button onClick={() => setRulePreviewOpen(false)}>Close</Button>}
+        width={980}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Card size="small">
+            <Space wrap size={24}>
+              <Statistic
+                title="Matched events"
+                value={rulePreviewResult?.alert_summary?.count ?? "Unknown"}
+              />
+              <Statistic
+                title="Executions"
+                value={Array.isArray(rulePreviewResult?.logs) ? rulePreviewResult.logs.length : 0}
+              />
+              <Statistic
+                title="Preview ID"
+                value={rulePreviewResult?.previewId || "-"}
+                valueStyle={{ fontSize: 14 }}
+              />
+            </Space>
+            {rulePreviewResult?.alert_summary?.ok === false ? (
+              <Typography.Paragraph type="warning" style={{ marginTop: 12, marginBottom: 0 }}>
+                Preview ran, but match count could not be loaded from Elasticsearch: {String(rulePreviewResult?.alert_summary?.error || "unknown error")}
+              </Typography.Paragraph>
+            ) : null}
+            {rulePreviewResult?.alert_summary?.ok === true && rulePreviewResult?.alert_summary?.count === 0 ? (
+              <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+                No preview alerts matched the current preview id yet. Check the JSON below for queried indices and sample alerts.
+              </Typography.Paragraph>
+            ) : null}
+          </Card>
+          <Table
+            size="small"
+            rowKey={(row: any) => String(row.id || row.source?.["kibana.alert.uuid"] || row.source?.["@timestamp"] || Math.random())}
+            dataSource={Array.isArray(rulePreviewResult?.alert_summary?.alerts) ? rulePreviewResult.alert_summary.alerts : []}
+            pagination={false}
+            scroll={{ x: 900 }}
+            columns={[
+              {
+                title: "Time",
+                dataIndex: ["source", "@timestamp"],
+                width: 210,
+                render: (value: any, row: any) => String(value || row.source?.["kibana.alert.start"] || "-"),
+              },
+              {
+                title: "Index",
+                dataIndex: "index",
+                width: 280,
+                render: (value: any) => String(value || "-"),
+              },
+              {
+                title: "Host",
+                dataIndex: ["source", "host.name"],
+                width: 220,
+                render: (value: any, row: any) => String(value || row.source?.host?.name || row.source?.host?.hostname || "-"),
+              },
+              {
+                title: "User",
+                dataIndex: ["source", "user.name"],
+                width: 160,
+                render: (value: any, row: any) => String(value || row.source?.user?.name || row.source?.user?.id || "-"),
+              },
+              {
+                title: "Process",
+                dataIndex: ["source", "process.executable"],
+                width: 260,
+                render: (value: any, row: any) => String(value || row.source?.process?.executable || row.source?.process?.name || "-"),
+              },
+              {
+                title: "Reason",
+                dataIndex: ["source", "kibana.alert.reason"],
+                render: (value: any) => String(value || "-"),
+              },
+            ]}
+          />
+          <Collapse
+            size="small"
+            items={[
+              {
+                key: "raw",
+                label: "Raw preview response",
+                children: (
+                  <Input.TextArea
+                    value={formatJson(rulePreviewResult)}
+                    readOnly
+                    rows={14}
+                    style={{ fontFamily: "Consolas, 'Courier New', monospace" }}
+                  />
+                ),
+              },
+            ]}
+          />
         </Space>
       </Modal>
     </>

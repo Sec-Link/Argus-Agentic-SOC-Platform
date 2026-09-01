@@ -121,6 +121,7 @@ INSTALLED_APPS = [
     'workflows.apps.WorkflowsConfig',
     'workflow_interfaces',
     'detections',
+    'risk',
     'django_scheduled_tasks',
 ]
 

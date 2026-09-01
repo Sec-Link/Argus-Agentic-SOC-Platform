@@ -419,6 +419,12 @@ def _serialize_alert_row(row: Alert) -> Dict:
             'status': row.status if row.status is not None else fallback_status,
             'description': row.description or fallback_description,
             'category': row.category or fallback_category,
+            # Structured risk objects extracted by the RBA pipeline. Prefer the
+            # DB column; fall back to any raw `risk_object(s)` carried in the
+            # source payload (e.g. injected by the ELK alert action as a string).
+            'risk_objects': row.risk_objects
+            if row.risk_objects
+            else _get_alert_field(payload, 'risk_objects', 'body.risk_objects', 'risk_object', 'body.risk_object'),
         }
     )
     return payload
@@ -458,8 +464,21 @@ def _upsert_docs_to_db(docs: List[Dict]) -> None:
                         for k, v in defaults.items():
                             setattr(existing, k, v)
                         existing.save(update_fields=list(defaults.keys()))
+                        created = False
                     else:
                         Alert.objects.create(alert_id=alert_id, **defaults)
+                        created = True
+                    # RBA: extract risk_objects for newly ingested alerts. The raw
+                    # ES doc keeps rule_id/severity under `body`, so surface them at
+                    # the top level (mirrors orchestrator sync) before processing.
+                    if created:
+                        try:
+                            from risk.services import process_alert_for_risk
+                            doc['rule_id'] = defaults.get('rule_id')
+                            doc['severity'] = defaults.get('severity')
+                            process_alert_for_risk(doc)
+                        except Exception:
+                            logger.exception('RBA processing failed for alert_id=%s (non-fatal)', alert_id)
         except (IntegrityError, DatabaseError):
             logger.exception('DB upsert failed for alert_id=%s', doc.get('alert_id'))
         except Exception:
