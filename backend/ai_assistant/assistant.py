@@ -773,10 +773,12 @@ def generate_ai_assistant_output(
         user_prompt=user_prompt,
     )
     enabled_skills = (overrides or {}).get("skills") if isinstance((overrides or {}).get("skills"), list) else []
+    alert_hint = json.dumps(alert_json, ensure_ascii=False) if isinstance(alert_json, (dict, list)) else str(alert_json or "")
     ticket_hint = " ".join([
         str(getattr(ticket, "event_category", "") or ""),
         str(getattr(ticket, "ticket_category", "") or ""),
         str(getattr(ticket, "title", "") or ""),
+        alert_hint,
     ]).lower()
     skill_items = []
     for item in enabled_skills:
