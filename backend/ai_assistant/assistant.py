@@ -621,6 +621,59 @@ def _decide_mcp_tool_and_args_by_ai(
         return None
 
 
+def _select_skills_by_ai(ticket, alert_json, enabled_skills, overrides=None):
+    """Use the model to select relevant enabled skills from alert evidence."""
+    if not enabled_skills:
+        return []
+    allowed = []
+    lookup = {}
+    for item in enabled_skills:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("route") or "").strip()
+            description = str(item.get("description") or item.get("summary") or "").strip()
+        else:
+            name, description = str(item).strip(), ""
+        if name:
+            allowed.append({"name": name, "description": description[:500]})
+            lookup[name.lower()] = item
+            if isinstance(item, dict) and item.get("route"):
+                lookup[str(item["route"]).strip().lower()] = item
+    if not allowed:
+        return []
+    evidence = {
+        "title": str(getattr(ticket, "title", "") or ""),
+        "description": str(getattr(ticket, "description", "") or ""),
+        "raw_message": getattr(ticket, "alert_message", "") or "",
+        "alert_json": alert_json,
+    }
+    selector_prompt = (
+        'You are a SOC skill router. Select only enabled skills materially relevant to the alert. '
+        'Return JSON only: {"skills":[{"name":"exact enabled name","reason":"short"}]}. '
+        'Return {"skills":[]} when none apply. Never invent names.\n'
+        + 'Enabled skills:\n' + json.dumps(allowed, ensure_ascii=False)
+        + '\nAlert evidence:\n' + json.dumps(evidence, ensure_ascii=False, default=str)
+    )
+    try:
+        response = _call_openai(selector_prompt, overrides=overrides)
+        selected = _parse_structured_json(_extract_response_text(response))
+        values = selected.get("skills") if isinstance(selected, dict) else []
+        if isinstance(values, list):
+            result = []
+            for value in values:
+                name = str(value.get("name") if isinstance(value, dict) else value).strip().lower()
+                if name in lookup and lookup[name] not in result:
+                    result.append(lookup[name])
+            return result
+    except Exception:
+        logger.exception("AI skill selection failed; using text fallback")
+    text = json.dumps(evidence, ensure_ascii=False, default=str).lower()
+    result = []
+    for item in allowed:
+        tokens = [x for x in re.split(r"[-_\s]+", item["name"].lower()) if len(x) > 3]
+        if tokens and sum(x in text for x in tokens) >= max(1, len(tokens) // 2):
+            result.append(lookup[item["name"].lower()])
+    return result
+
 def generate_ai_assistant_output(
     ticket: EventTicket,
     alert_json: Any,
@@ -773,19 +826,12 @@ def generate_ai_assistant_output(
         user_prompt=user_prompt,
     )
     enabled_skills = (overrides or {}).get("skills") if isinstance((overrides or {}).get("skills"), list) else []
-    alert_hint = json.dumps(alert_json, ensure_ascii=False) if isinstance(alert_json, (dict, list)) else str(alert_json or "")
-    ticket_hint = " ".join([
-        str(getattr(ticket, "event_category", "") or ""),
-        str(getattr(ticket, "ticket_category", "") or ""),
-        str(getattr(ticket, "title", "") or ""),
-        alert_hint,
-    ]).lower()
-    skill_items = []
-    for item in enabled_skills:
-        skill_name = str(item.get("name") or item.get("route") or "").strip() if isinstance(item, dict) else str(item).strip()
-        if skill_name and skill_name.lower() in ticket_hint:
-            skill_items.append(item)
-    selected_skills = skill_items or enabled_skills
+    selected_skills = _select_skills_by_ai(
+        ticket=ticket,
+        alert_json=alert_json,
+        enabled_skills=enabled_skills,
+        overrides=overrides,
+    )
     skill_instructions = []
     selected_skill_names = []
     for item in selected_skills:
