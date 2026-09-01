@@ -325,10 +325,17 @@ def _chat_content(response: Dict[str, Any]) -> str:
     return str(message.get("content") or "").strip()
 
 
-def _preload_chat_skills(user_input: str, recommended_skills: List[str], overrides: Optional[Dict[str, Any]] = None) -> Tuple[List[str], List[str]]:
+def _preload_chat_skills(user_input: str, recommended_skills: List[str], overrides: Optional[Dict[str, Any]] = None) -> Tuple[List[str], List[str], List[Dict[str, Any]]]:
     if not recommended_skills:
-        return [], []
+        return [], [], []
     names = [str(name).strip() for name in recommended_skills if str(name).strip()]
+    catalog = list_skills()
+    trace = [
+        {"type": "model_call", "iteration": 0, "purpose": "skill_selection"},
+        {"type": "tool_calls_detected", "iteration": 0, "count": 1},
+        {"type": "tool_call", "iteration": 0, "tool": "list_skills", "source": "internal", "arguments": {}, "automatic": True},
+        {"type": "tool_result", "iteration": 0, "tool": "list_skills", "source": "internal", "success": True, "content": "\n".join(catalog or names), "automatic": True},
+    ]
     router_prompt = ('You are a SOC skill router. Select only relevant skills from this list based on the user request. '
         'Return JSON only: {"skills":["exact skill name"]}. Return {"skills":[]} if none apply. Never invent names.\n'
         + 'Available skills: ' + json.dumps(names, ensure_ascii=False) + '\nUser request: ' + user_input)
@@ -350,9 +357,17 @@ def _preload_chat_skills(user_input: str, recommended_skills: List[str], overrid
         if doc and doc.content:
             record_skill_call(name, True)
             instructions.append(f"SKILL: {doc.name}\n{doc.content[:12000]}")
+            trace.extend([
+                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True},
+                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": True, "content": doc.content[:2000], "automatic": True},
+            ])
         else:
             record_skill_call(name, False)
-    return selected_names, instructions
+            trace.extend([
+                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True},
+                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": False, "content": f"Skill not found: {name}", "automatic": True},
+            ])
+    return selected_names, instructions, trace
 
 def run_chat_agent(
     user_input: str,
@@ -402,7 +417,7 @@ def run_chat_agent(
     except Exception:
         max_iterations = 6
 
-    trace: List[Dict[str, Any]] = []
+    trace: List[Dict[str, Any]] = list(preload_trace)
     iteration = 0
     for _ in range(max_iterations):
         iteration += 1
