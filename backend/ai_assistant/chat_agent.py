@@ -387,7 +387,7 @@ def run_chat_agent(
         "When responding to the user, include a short analysis summary in a second paragraph starting with "
         "\"AI thinking:\" (max 80 words)."
     )
-    preloaded_names, preloaded_instructions = _preload_chat_skills(user_input, recommended_skills, overrides=overrides)
+    preloaded_names, preloaded_instructions, preload_trace = _preload_chat_skills(user_input, recommended_skills, overrides=overrides)
     if recommended_skills:
         skills_hint = ", ".join([f"`{s}`" for s in recommended_skills])
         system_prompt += f"\nAvailable skills: {skills_hint}. You may still call read_skill for additional details."
