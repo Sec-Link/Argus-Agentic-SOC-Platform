@@ -17,6 +17,7 @@ from ai_assistant.mcp_gateway import (
     record_mcp_monitor_event,
 )
 from ai_assistant.skills import apply_local_skills
+from ai_assistant.monitoring import record_skill_call
 from ai_assistant.skill_library import read_skill
 from tickets.models import EventTicket, TicketWorkLog
 
@@ -791,6 +792,9 @@ def generate_ai_assistant_output(
         if skill_doc and skill_doc.content:
             selected_skill_names.append(skill_name)
             skill_instructions.append(f"SKILL: {skill_doc.name}\n{skill_doc.content[:12000]}")
+            record_skill_call(skill_name, True)
+        elif skill_name:
+            record_skill_call(skill_name, False)
     if skill_instructions:
         prompt += "\n\nEnabled skill instructions (follow only when supported by ticket evidence):\n" + "\n\n".join(skill_instructions)
     raw_failures: List[str] = []
