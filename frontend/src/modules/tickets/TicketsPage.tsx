@@ -81,6 +81,11 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
     }
   };
 
+  const refreshSlaWorkLogs = async (ticketNumber: string) => {
+    const timelineResp = await fetchSlaTicketTimeline(ticketNumber);
+    setSlaWorkLogs(Array.isArray(timelineResp?.work_logs) ? timelineResp.work_logs : []);
+  };
+
   const submitSlaStatus = async (statusOverride?: string) => {
     if (!slaDetail?.ticket_number) return;
     const nextStatus = statusOverride || slaStatus;
@@ -180,6 +185,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
               onAddWorkLog={addWorkLog}
               onUploadWorkLogImage={uploadWorkLogImage}
               onRefresh={() => openSlaDetail(slaDetail.ticket_number)}
+              onRefreshWorkLogs={() => refreshSlaWorkLogs(slaDetail.ticket_number)}
               loading={slaLoading}
             />
           )}

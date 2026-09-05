@@ -12,6 +12,7 @@ try {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: ['192.168.31.66'],
   skipTrailingSlashRedirect: true,
   // Keep `next start` compatible in local/dev environments.
   // Set NEXT_OUTPUT_MODE=standalone only when you explicitly run standalone server.

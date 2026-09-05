@@ -17,6 +17,7 @@ type Props = {
   onAddWorkLog?: (logEntry: string) => void | Promise<void>;
   onUploadWorkLogImage?: (file: File) => Promise<SlaTicketAttachment>;
   onRefresh: () => void;
+  onRefreshWorkLogs?: () => void | Promise<void>;
   loading?: boolean;
 };
 
@@ -400,7 +401,7 @@ function WarRoomView({
 }
 
 export default function SlaTicketDetailView(props: Props) {
-  const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, loading } = props;
+  const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, onRefreshWorkLogs, loading } = props;
   const [showEmpty, setShowEmpty] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('incident');
   const [incidentTab, setIncidentTab] = useState<string>('timeline');
@@ -409,6 +410,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [handleLogs, setHandleLogs] = useState<SlaTicketHandleLog[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<any | null>(null);
+  const [aiRawResponse, setAiRawResponse] = useState('');
   const [aiError, setAiError] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
@@ -477,6 +479,9 @@ export default function SlaTicketDetailView(props: Props) {
   }, [ticket.ticket_number, ticket.labels]);
 
   useEffect(() => {
+    setAiResult(null);
+    setAiRawResponse('');
+    setAiError(null);
     setChatOpen(false);
     setChatMessages([]);
     setChatInput('');
@@ -643,7 +648,19 @@ export default function SlaTicketDetailView(props: Props) {
         related_logs: (workLogs || []).slice(0, 5).map((w) => w.log_entry),
       };
       const res = await generateSlaTicketAiAssistant(ticket.ticket_number, payload);
-      setAiResult(res?.assistant || res);
+      const assistant = res?.assistant;
+      // Keep the structured cards intact when the model returns plain text.
+      // The plain response is rendered separately below as a raw/collapsible view.
+      if (assistant && typeof assistant === 'object' && !Array.isArray(assistant)) {
+        setAiResult(assistant);
+      }
+      const rawResponse = typeof res?.raw_response === 'string' ? res.raw_response : res?.assistant_raw;
+      setAiRawResponse(typeof rawResponse === 'string' ? fixMojibake(rawResponse) : '');
+      try {
+        await onRefreshWorkLogs?.();
+      } catch {
+        // Keep the successful AI result visible even if the Worklog refresh fails.
+      }
       message.success('AI assistant updated');
     } catch (err: any) {
       const apiError = err?.response?.data?.error || err?.response?.data?.detail;
@@ -986,12 +1003,25 @@ export default function SlaTicketDetailView(props: Props) {
   const incidentTitle = ticket.title || 'Incident';
   const ownerName = ticket.current_assign_owner || ticket.assigned_user_username || 'Unassigned';
   const riskScore = ticket.event_risk_score ?? '-';
-  const summaryText = ticket.description
-    ? ticket.description
-    : [
-        ticket.event_category ? `Category: ${ticket.event_category}` : '',
-        ticket.event_result ? `Result: ${ticket.event_result}` : '',
-      ].filter(Boolean).join(' | ') || 'No summary available yet.';
+  const latestAiRawWorkLog = (workLogs || [])
+    .slice()
+    .reverse()
+    .map((w) => String(w?.log_entry || ''))
+    .find((entry) => entry.startsWith('AI Raw Response:\n'));
+  const persistedAiRaw = latestAiRawWorkLog
+    ? latestAiRawWorkLog.slice('AI Raw Response:\n'.length).trim()
+    : '';
+  const structuredSummary = [
+    aiResult?.case_summary?.incident_summary,
+    aiResult?.alert_explanation,
+    ticket.description,
+    [
+      ticket.event_category ? `Category: ${ticket.event_category}` : '',
+      ticket.event_result ? `Result: ${ticket.event_result}` : '',
+    ].filter(Boolean).join(' | '),
+  ].find((value) => typeof value === 'string' && value.trim());
+  const summaryText = String(structuredSummary || 'No summary available yet.');
+  const rawSummaryText = aiRawResponse.trim() || persistedAiRaw;
 
   const timelineItems = useMemo(() => {
     const base = (workLogs || []).slice();
@@ -1388,7 +1418,7 @@ export default function SlaTicketDetailView(props: Props) {
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, color: 'var(--text-primary)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span>Status:</span>
-                  {renderStatusTag(aiHeader?.status || ticket.status)}
+                  {renderStatusTag(ticket.status)}
                 </div>
                 <div>Owner: {ownerName}</div>
                 <div>Platform: {aiHeader?.platform || ticket.event_platform || '-'}</div>
@@ -1397,7 +1427,17 @@ export default function SlaTicketDetailView(props: Props) {
             </Card>
 
               <Card size="small" title="AI Summary">
-                <div style={{ whiteSpace: 'pre-wrap' }}>{summaryText}</div>
+                <div style={{ maxHeight: 140, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {summaryText}
+                </div>
+                {rawSummaryText ? (
+                  <details style={{ marginTop: 10 }}>
+                    <summary style={{ cursor: 'pointer', color: 'var(--access-secondary-text)' }}>Raw AI response</summary>
+                    <div style={{ maxHeight: 180, overflowY: 'auto', marginTop: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12 }}>
+                      {rawSummaryText}
+                    </div>
+                  </details>
+                ) : null}
               </Card>
 
               <Card size="small">
@@ -1666,7 +1706,7 @@ export default function SlaTicketDetailView(props: Props) {
                     );
                   })
                 ) : (
-                  <Checkbox disabled>No suggested tasks</Checkbox>
+                  <Checkbox disabled>No AI-suggested tasks</Checkbox>
                 )}
               </div>
             </Card>
