@@ -64,6 +64,8 @@ import {
   getWorkflow,
   createWorkflow,
   updateWorkflow,
+  listPrefectDeployments,
+  deleteWorkflowSchedule,
   getAvailableActions,
   executeWorkflow,
   listSavedWorkflowNodes,
@@ -79,6 +81,8 @@ import { fetchSlaTicketFieldChoices } from 'services/tickets';
 import { listInterfaceEndpoints } from 'services/interfaces';
 import type {
   Workflow,
+  PrefectDeployment,
+  WorkflowSchedule,
   WorkflowStep,
   ActionInfo,
   WorkflowEdge,
@@ -379,6 +383,9 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const [saving, setSaving] = useState(false);
   const [availableActions, setAvailableActions] = useState<ActionInfo[]>([]);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
+  const [deployments, setDeployments] = useState<PrefectDeployment[]>([]);
+  const [deploymentsLoading, setDeploymentsLoading] = useState(true);
+  const [deletingScheduleId, setDeletingScheduleId] = useState<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -408,6 +415,17 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const isNew = !workflowId;
   const variableDeclarations: VariableDeclaration[] = Form.useWatch('variableDeclarations', form) || [];
   const triggerType = Form.useWatch('trigger_type', form) || 'manual';
+  const deploymentId = Form.useWatch('prefect_deployment_id', form);
+  const selectedDeployment = deployments.find(item => item.id === deploymentId);
+  const schedules = workflow?.schedules || [];
+  const deploymentOptions = deployments.map(item => ({
+    value: item.id,
+    label: `${item.name}${item.work_pool_name || item.work_queue_name ? ` (${[item.work_pool_name, item.work_queue_name].filter(Boolean).join(' / ')})` : ''}${item.is_available ? '' : ' — unavailable'}`,
+    disabled: !item.is_available,
+  }));
+  if (deploymentId && !selectedDeployment) {
+    deploymentOptions.push({ value: deploymentId, label: `${deploymentId} — unavailable`, disabled: true });
+  }
   const variableOptions = getWorkflowVariableOptions(
     Object.fromEntries(variableDeclarations.filter(row => row.type !== 'secret').map(row => [row.name, row.value])),
     triggerType,
@@ -630,6 +648,37 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
     } as Record<string, Array<{ value: string; label: string }>>;
   }, [ticketFieldChoices]);
 
+  const loadDeployments = useCallback(async () => {
+    setDeploymentsLoading(true);
+    try {
+      setDeployments(await listPrefectDeployments());
+    } catch (err) {
+      message.error(getApiErrorMessage(err, 'Failed to load deployments'));
+    } finally {
+      setDeploymentsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadDeployments(); }, [loadDeployments]);
+
+  const handleDeleteSchedule = async (schedule: WorkflowSchedule) => {
+    setDeletingScheduleId(schedule.id);
+    try {
+      await deleteWorkflowSchedule(schedule.id);
+      setWorkflow(current => current ? {
+        ...current,
+        schedules: current.schedules?.filter(item => item.id !== schedule.id),
+        schedule_cron: schedule.name === 'default' ? null : current.schedule_cron,
+      } : current);
+      if (schedule.name === 'default') form.setFieldValue('schedule_cron', undefined);
+      message.success('Schedule deleted');
+    } catch (err) {
+      message.error(getApiErrorMessage(err, 'Failed to delete schedule'));
+    } finally {
+      setDeletingScheduleId(null);
+    }
+  };
+
   // Load available actions
   useEffect(() => {
     const loadActions = async () => {
@@ -689,6 +738,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         ticket_filter_logic: 'AND',
         is_active: false,
         is_draft: true,
+        prefect_deployment_id: undefined,
         tags: [],
         variableDeclarations: [],
       });
@@ -712,6 +762,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         form.setFieldsValue({
           name: data.name,
           description: data.description,
+          prefect_deployment_id: data.prefect_deployment_id || undefined,
           trigger_type: data.trigger_type,
           webhook_source_id: data.trigger_conditions?.webhook_source_id,
           alert_filters: Array.isArray(data.trigger_conditions?.alert_filters) ? data.trigger_conditions.alert_filters : [],
@@ -1117,6 +1168,11 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const handleSave = async (activate: boolean = false) => {
     try {
       const values = await form.validateFields();
+      if ((activate || (values.is_active && !values.is_draft)) && !values.prefect_deployment_id) {
+        form.setFields([{ name: 'prefect_deployment_id', errors: ['Select an execution deployment before activating this workflow.'] }]);
+        message.error('Select an execution deployment before activating this workflow');
+        return;
+      }
       setSaving(true);
 
       const tags = normalizeTags(values.tags);
@@ -1132,6 +1188,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       const payload = {
         name: values.name,
         description: values.description || '',
+        prefect_deployment_id: values.prefect_deployment_id || '',
         trigger_type: values.trigger_type,
         trigger_conditions: buildTriggerConditions(values),
         schedule_cron: values.schedule_cron || null,
@@ -1152,7 +1209,22 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         message.success('Workflow updated successfully');
       }
 
-      form.setFieldValue('variableDeclarations', variablesToDeclarations(savedWorkflow.variables, savedWorkflow.configured_secret_variables));
+      try {
+        savedWorkflow = await getWorkflow(savedWorkflow.id);
+      } catch {
+        message.warning('Workflow saved, but its schedules could not be refreshed. Reopen the editor before changing deployment.');
+        onSaved?.(savedWorkflow);
+        onBack();
+        return;
+      }
+      setWorkflow(savedWorkflow);
+      form.setFieldsValue({
+        prefect_deployment_id: savedWorkflow.prefect_deployment_id || undefined,
+        schedule_cron: savedWorkflow.schedule_cron || undefined,
+        is_active: savedWorkflow.is_active,
+        is_draft: savedWorkflow.is_draft,
+        variableDeclarations: variablesToDeclarations(savedWorkflow.variables, savedWorkflow.configured_secret_variables),
+      });
       onSaved?.(savedWorkflow);
       if (isNew) {
         onBack();
@@ -1161,7 +1233,21 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       if (err.errorFields) {
         message.error('Please fill in all required fields');
       } else {
+        const data = err?.response?.data;
+        if (data && typeof data === 'object') {
+          form.setFields(Object.entries(data)
+            .filter(([, errors]) => Array.isArray(errors) && errors.every(item => typeof item === 'string'))
+            .map(([name, errors]) => ({ name, errors: errors as string[] })));
+        }
         message.error(getApiErrorMessage(err, 'Failed to save workflow'));
+        if (workflowId) {
+          try {
+            const latest = await getWorkflow(workflowId);
+            setWorkflow(current => current ? { ...current, schedules: latest.schedules } : latest);
+          } catch {
+            message.warning('Could not refresh schedules. Reopen the editor before changing deployment.');
+          }
+        }
       }
     } finally {
       setSaving(false);
@@ -1387,10 +1473,10 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                   </span>
                 </Tooltip>
               )}
-              <Button icon={<SaveOutlined />} onClick={() => handleSave(false)} loading={saving}>
+              <Button icon={<SaveOutlined />} onClick={() => handleSave(false)} loading={saving} disabled={Boolean(deletingScheduleId)}>
                 Save Draft
               </Button>
-              <Button type="primary" icon={<CheckOutlined />} onClick={() => handleSave(true)} loading={saving}>
+              <Button type="primary" icon={<CheckOutlined />} onClick={() => handleSave(true)} loading={saving} disabled={Boolean(deletingScheduleId)}>
                 Save & Activate
               </Button>
             </Space>
@@ -1427,6 +1513,67 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
               <Form.Item name="description" label="Description">
                 <Input.TextArea rows={2} placeholder="Description..." />
               </Form.Item>
+              <Form.Item
+                name="prefect_deployment_id"
+                label="Execution deployment"
+                extra={schedules.length
+                  ? 'Delete all schedules, including paused schedules, before changing deployment.'
+                  : 'Choose where this workflow runs. Drafts may be saved without a deployment.'}
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Select deployment"
+                  options={deploymentOptions}
+                  loading={deploymentsLoading}
+                  disabled={schedules.length > 0 || saving || Boolean(deletingScheduleId)}
+                  notFoundContent="No registered deployments"
+                  onDropdownVisibleChange={open => { if (open) void loadDeployments(); }}
+                />
+              </Form.Item>
+              {deploymentId && !deploymentsLoading && !selectedDeployment?.is_available && (
+                <Text type="warning" style={{ display: 'block', marginBottom: 12 }}>
+                  The selected deployment is unavailable. Choose an available deployment before running this workflow.
+                </Text>
+              )}
+              {schedules.length > 0 && (
+                <List
+                  size="small"
+                  header="Schedules"
+                  dataSource={schedules}
+                  style={{ marginBottom: 12 }}
+                  renderItem={schedule => (
+                    <List.Item actions={[
+                      <Popconfirm
+                        key="delete"
+                        title={`Delete schedule "${schedule.name}"?`}
+                        description={schedule.name === 'default' ? 'This also clears the workflow Cron setting.' : undefined}
+                        onConfirm={() => handleDeleteSchedule(schedule)}
+                        okText="Delete"
+                        okButtonProps={{ danger: true }}
+                      >
+                        <Button
+                          danger
+                          type="text"
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          aria-label={`Delete schedule ${schedule.name}`}
+                          loading={deletingScheduleId === schedule.id}
+                          disabled={saving || Boolean(deletingScheduleId)}
+                        />
+                      </Popconfirm>,
+                    ]}>
+                      <List.Item.Meta
+                        title={<>{schedule.name} <Tag>{schedule.is_active ? 'Active' : 'Paused'}</Tag></>}
+                        description={schedule.schedule_type === 'cron'
+                          ? `${schedule.cron} (${schedule.timezone})`
+                          : `Every ${schedule.interval_seconds} seconds`}
+                      />
+                    </List.Item>
+                  )}
+                />
+              )}
               <Form.Item name="trigger_type" label="Trigger" rules={[{ required: true }]}>
                 <Select
                   options={triggerTypes}

@@ -123,6 +123,24 @@ class ActionTemplate(models.Model):
         return super().save(*args, **kwargs)
 
 
+class PrefectDeployment(models.Model):
+    """Compatible execution targets discovered from the configured Prefect server."""
+
+    id = models.UUIDField(primary_key=True, editable=False)
+    name = models.CharField(max_length=255)
+    work_pool_name = models.CharField(max_length=255, blank=True, default='')
+    work_queue_name = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=32, blank=True, default='')
+    is_available = models.BooleanField(default=True)
+    last_synced_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['name', 'id']
+
+    def __str__(self):
+        return self.name
+
+
 class Workflow(models.Model):
     """
     Main workflow/playbook definition.
@@ -156,7 +174,7 @@ class Workflow(models.Model):
         max_length=64,
         blank=True,
         default='',
-        help_text="Optional Prefect deployment id override for this workflow."
+        help_text="Registered Prefect deployment selected for this workflow. Required before execution."
     )
 
     # Trigger configuration

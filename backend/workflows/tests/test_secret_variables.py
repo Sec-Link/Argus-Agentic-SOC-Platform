@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from uuid import uuid4
 
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
@@ -11,7 +12,7 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from rest_framework.exceptions import ValidationError
 
-from workflows.models import Workflow
+from workflows.models import PrefectDeployment, Workflow
 from workflows.prefect.secrets import decrypt_secret_variable, encrypt_payload
 from workflows.publisher import build_published_export, import_workflow_from_json_payload, publish_workflow
 from workflows.secret_config import SecretConfigError, is_encrypted
@@ -26,9 +27,12 @@ class WorkflowSecretVariablesTests(TestCase):
         self.addCleanup(settings_override.disable)
         self.user = get_user_model().objects.create_user(username='secret-variables')
         self.value = 'private-workflow-token-42'
+        self.deployment_id = str(uuid4())
+        PrefectDeployment.objects.create(id=self.deployment_id, name='secret-variables', is_available=True)
 
     def create_workflow(self, **changes):
-        data = {'name': 'Secret variables', 'variables': {'site': 'SOC'}, 'secret_variables': {'token': self.value}}
+        data = {'name': 'Secret variables', 'variables': {'site': 'SOC'}, 'secret_variables': {'token': self.value},
+                'prefect_deployment_id': self.deployment_id}
         data.update(changes)
         serializer = WorkflowCreateSerializer(data=data)
         serializer.is_valid(raise_exception=True)

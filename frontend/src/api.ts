@@ -1101,6 +1101,26 @@ export interface WorkflowEdge {
   label?: string;
 }
 
+export interface PrefectDeployment {
+  id: string;
+  name: string;
+  work_pool_name: string | null;
+  work_queue_name: string | null;
+  status: string;
+  is_available: boolean;
+  last_synced_at: string;
+}
+
+export interface WorkflowSchedule {
+  id: string;
+  name: string;
+  schedule_type: 'cron' | 'interval';
+  cron: string | null;
+  interval_seconds: number | null;
+  timezone: string;
+  is_active: boolean;
+}
+
 export interface Workflow {
   id: string;
   name: string;
@@ -1108,8 +1128,10 @@ export interface Workflow {
   trigger_type: string;
   // New workflows use Prefect; 'local' is returned only for legacy records.
   execution_engine?: 'local' | 'prefect';
+  prefect_deployment_id?: string;
   trigger_conditions: Record<string, any>;
-  schedule_cron?: string;
+  schedule_cron?: string | null;
+  schedules?: WorkflowSchedule[];
   is_active: boolean;
   is_draft: boolean;
   version: number;
@@ -1279,6 +1301,15 @@ export async function listWorkflows(params?: {
   return r.data;
 }
 
+export async function listPrefectDeployments(): Promise<PrefectDeployment[]> {
+  const r = await client.get(`${WORKFLOWS_BASE}/prefect/deployments/`);
+  return r.data.deployments;
+}
+
+export async function deleteWorkflowSchedule(id: string): Promise<void> {
+  await client.delete(`${WORKFLOWS_BASE}/schedules/${id}/`);
+}
+
 // Get workflow detail
 export async function getWorkflow(id: string): Promise<Workflow> {
   const r = await client.get(`${WORKFLOWS_BASE}/workflows/${id}/`);
@@ -1439,8 +1470,8 @@ export async function deleteSavedWorkflowNode(id: string): Promise<void> {
   await client.delete(`${WORKFLOWS_BASE}/saved-nodes/${id}/`);
 }
 
-// Publish workflow to Prefect by persisting a JSON manifest for the shared deployment
-export async function publishWorkflow(id: string, options?: { register_deployment?: boolean }): Promise<{
+// Publish a workflow version for its selected deployment.
+export async function publishWorkflow(id: string): Promise<{
   status: string;
   workflow_id: string;
   workflow_name: string;
@@ -1451,12 +1482,10 @@ export async function publishWorkflow(id: string, options?: { register_deploymen
   manifest_filename: string;
   published_at: string;
   steps_count: number;
-  deployment_registered: boolean;
   deployment_id?: string;
+  schedule_errors?: string[];
 }> {
-  const r = await client.post(`${WORKFLOWS_BASE}/workflows/${id}/publish/`, {
-    register_deployment: options?.register_deployment ?? true,
-  });
+  const r = await client.post(`${WORKFLOWS_BASE}/workflows/${id}/publish/`);
   return r.data;
 }
 

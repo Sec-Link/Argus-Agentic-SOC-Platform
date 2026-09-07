@@ -13,6 +13,7 @@ node_modules/
 
 # Tooling
 .claude/
+.run/
 
 # Runtime-generated workflow manifests
 backend/workflows/flows/generated/
@@ -50,7 +51,9 @@ db.sqlite3
 /staticfiles/
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.iml
 *.swp

@@ -1,0 +1,158 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: Django",
+      "consoleName": "Django API",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\backend\\manage.py",
+      "args": [
+        "runserver",
+        "127.0.0.1:8000",
+        "--noreload"
+      ],
+      "django": true,
+      "cwd": "${workspaceFolder}\\backend",
+      "envFile": "${workspaceFolder}\\.env",
+      "env": {
+        "PREFECT_HOME": "${workspaceFolder}\\.run\\prefect",
+        "PREFECT_API_URL": "http://127.0.0.1:4200/api"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Internal: Prefect Event Consumer",
+      "consoleName": "Prefect Event Consumer",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\backend\\manage.py",
+      "args": ["consume_prefect_events"],
+      "django": true,
+      "cwd": "${workspaceFolder}\\backend",
+      "envFile": "${workspaceFolder}\\.env",
+      "env": {
+        "PREFECT_HOME": "${workspaceFolder}\\.run\\prefect",
+        "PREFECT_API_URL": "http://127.0.0.1:4200/api"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "presentation": {
+        "hidden": true
+      }
+    },
+    {
+      "name": "Internal: Prefect Worker + Flows",
+      "consoleName": "Prefect Worker 1 | argus-workflows",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\scripts\\debug-prefect-worker.py",
+      "args": [
+        "worker",
+        "start",
+        "--pool",
+        "argus-workflows",
+        "--name",
+        "argus-debug-worker",
+        "--install-policy",
+        "never",
+        "--limit",
+        "1"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}\\.env",
+      "env": {
+        "PREFECT_HOME": "${workspaceFolder}\\.run\\prefect",
+        "PREFECT_API_URL": "http://127.0.0.1:4200/api",
+        "BACKEND_ORIGIN": "http://127.0.0.1:8000",
+        "DEBUGPY_LOG_DIR": "${workspaceFolder}\\.run\\debugpy"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "subProcess": true,
+      "logToFile": true,
+      "presentation": {
+        "hidden": true
+      }
+    },
+    {
+      "name": "Internal: Prefect Worker 2 + Flows",
+      "consoleName": "Prefect Worker 2 | argus-workflows-debug-2",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\scripts\\debug-prefect-worker.py",
+      "args": [
+        "worker",
+        "start",
+        "--pool",
+        "argus-workflows-debug-2",
+        "--name",
+        "argus-debug-worker-2",
+        "--install-policy",
+        "never",
+        "--limit",
+        "1"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}\\.env",
+      "env": {
+        "PREFECT_HOME": "${workspaceFolder}\\.run\\prefect",
+        "PREFECT_API_URL": "http://127.0.0.1:4200/api",
+        "BACKEND_ORIGIN": "http://127.0.0.1:8000",
+        "DEBUGPY_LOG_DIR": "${workspaceFolder}\\.run\\debugpy\\worker-2"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "subProcess": true,
+      "logToFile": true,
+      "presentation": {
+        "hidden": true
+      }
+    },
+    {
+      "name": "Debug: Next.js",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}\\frontend"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug: Prefect Worker + Flows",
+      "preLaunchTask": "Prepare: Prefect Debug",
+      "configurations": [
+        "Internal: Prefect Event Consumer",
+        "Internal: Prefect Worker + Flows"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "Debug: Workflow",
+      "preLaunchTask": "Prepare: Prefect Debug",
+      "configurations": [
+        "Debug: Django",
+        "Internal: Prefect Event Consumer",
+        "Internal: Prefect Worker + Flows"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "Debug: Full Stack",
+      "preLaunchTask": "Prepare: Full Stack Debug",
+      "configurations": [
+        "Debug: Django",
+        "Internal: Prefect Event Consumer",
+        "Internal: Prefect Worker + Flows",
+        "Internal: Prefect Worker 2 + Flows",
+        "Debug: Next.js"
+      ],
+      "stopAll": true
+    }
+  ]
+}

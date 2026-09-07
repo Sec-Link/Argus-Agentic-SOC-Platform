@@ -9,6 +9,8 @@ export interface Workflow extends BaseWorkflow {
 export {
   // types
   type WorkflowStep,
+  type PrefectDeployment,
+  type WorkflowSchedule,
   type WorkflowEdge,
   type WorkflowExecution,
   type StepExecution,
@@ -19,6 +21,8 @@ export {
 
   listWorkflows,
   getWorkflow,
+  listPrefectDeployments,
+  deleteWorkflowSchedule,
   createWorkflow,
   updateWorkflow,
   deleteWorkflow,

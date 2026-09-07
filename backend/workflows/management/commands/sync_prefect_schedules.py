@@ -1,7 +1,8 @@
 from django.core.management.base import BaseCommand, CommandError
 
 from workflows import prefect_client
-from workflows.models import Workflow, WorkflowSchedule
+from workflows.deployment_registry import require_deployment
+from workflows.models import WorkflowSchedule
 from workflows.prefect_dispatcher import sync_schedule
 
 
@@ -15,18 +16,22 @@ class Command(BaseCommand):
                 workflow__execution_engine='prefect',
             ).select_related('workflow')
         )
-        try:
-            deployment_ids = {
-                prefect_client.resolve_deployment_id((workflow.prefect_deployment_id or '').strip() or None)
-                for workflow in Workflow.objects.filter(execution_engine='prefect')
-            }
-            for deployment_id in deployment_ids:
-                prefect_client.delete_deployment_schedule_by_slug(
-                    deployment_id=deployment_id,
-                    slug='argus-workflow-schedule',
-                )
-            for item in schedules:
+        synced = 0
+        cleaned_deployments = set()
+        errors = []
+        for item in schedules:
+            try:
+                deployment_id = require_deployment(item.workflow.prefect_deployment_id)
+                if deployment_id not in cleaned_deployments:
+                    prefect_client.delete_deployment_schedule_by_slug(
+                        deployment_id=deployment_id,
+                        slug='argus-workflow-schedule',
+                    )
+                    cleaned_deployments.add(deployment_id)
                 sync_schedule(item)
-        except (OSError, ValueError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:
-            raise CommandError(str(exc)) from exc
-        self.stdout.write(self.style.SUCCESS(f'Synced {len(schedules)} Prefect schedule(s).'))
+                synced += 1
+            except (OSError, ValueError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:
+                errors.append(f'Schedule {item.id} ({item.workflow.name}): {exc}')
+        self.stdout.write(f'Synced {synced} Prefect schedule(s).')
+        if errors:
+            raise CommandError('\n'.join(errors))

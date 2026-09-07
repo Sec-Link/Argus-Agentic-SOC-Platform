@@ -16,6 +16,7 @@ from .models import (
     TicketWorkflowBinding,
 )
 from .publisher import get_published_state
+from .deployment_registry import require_deployment
 from .secret_config import (
     SecretConfigError,
     prepare_config_for_storage,
@@ -239,6 +240,8 @@ class WorkflowScheduleSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
     def validate(self, attrs):
+        if self.instance and attrs.get('workflow', self.instance.workflow) != self.instance.workflow:
+            raise serializers.ValidationError({'workflow': 'A schedule cannot be moved to another workflow.'})
         schedule_type = attrs.get('schedule_type') or getattr(self.instance, 'schedule_type', None)
         cron_value = attrs.get('cron') if 'cron' in attrs else getattr(self.instance, 'cron', None)
         interval_value = attrs.get('interval_seconds') if 'interval_seconds' in attrs else getattr(self.instance, 'interval_seconds', None)
@@ -406,7 +409,31 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
         secrets = attrs.get('secret_variables', getattr(self.instance, 'secret_variables', {}))
         if set(variables).intersection(secrets):
             raise serializers.ValidationError({'secret_variables': 'Ordinary and secret variable names must be distinct.'})
+        self._validate_deployment(self.instance, attrs)
         return attrs
+
+    @staticmethod
+    def _validate_deployment(instance, attrs):
+        previous = getattr(instance, 'prefect_deployment_id', '')
+        deployment_id = attrs.get('prefect_deployment_id', previous).strip()
+        changed = deployment_id != previous
+        if changed and instance and instance.schedules.exists():
+            raise serializers.ValidationError({
+                'prefect_deployment_id': 'Delete all existing schedules, including paused schedules, before changing deployment.'
+            })
+        runnable = (
+            attrs.get('is_active', getattr(instance, 'is_active', True))
+            and not attrs.get('is_draft', getattr(instance, 'is_draft', True))
+            and attrs.get('execution_engine', getattr(instance, 'execution_engine', 'prefect')) == 'prefect'
+        )
+        was_runnable = instance and instance.is_active and not instance.is_draft and instance.execution_engine == 'prefect'
+        if (changed and deployment_id) or (runnable and (changed or not was_runnable)):
+            try:
+                deployment_id = require_deployment(deployment_id)
+            except ValueError as exc:
+                raise serializers.ValidationError({'prefect_deployment_id': str(exc)}) from exc
+        if 'prefect_deployment_id' in attrs:
+            attrs['prefect_deployment_id'] = deployment_id
 
     @staticmethod
     def _to_uuid_or_none(value):
@@ -487,6 +514,8 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        instance = Workflow.objects.select_for_update().get(pk=instance.pk)
+        self._validate_deployment(instance, validated_data)
         steps_data = validated_data.pop('steps', None)
 
         prepared_steps = None
