@@ -153,6 +153,8 @@ def persist_workflow_definition(
     payload = {
         'name': name,
         'description': workflow_definition.get('description') or '',
+        'variables': deepcopy(workflow_definition.get('variables', {})),
+        'secret_variables': deepcopy(workflow_definition.get('secret_variables', {})),
         'trigger_type': trigger_type,
         'trigger_conditions': deepcopy(trigger_conditions or {}),
         'schedule_cron': schedule_cron,

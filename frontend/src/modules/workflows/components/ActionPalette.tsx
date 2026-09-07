@@ -18,7 +18,6 @@ import {
 } from '@ant-design/icons';
 import type { ActionInfo, SavedWorkflowNode } from 'services/workflows';
 
-const { Panel } = Collapse;
 const { Text } = Typography;
 
 const categoryColors: Record<string, string> = {
@@ -108,8 +107,8 @@ const DraggableItem: React.FC<DraggableItemProps> = ({
         }}
       >
         <DragOutlined style={{ color: '#888' }} />
-        <span style={{ color, fontSize: 16 }}>{icon || actionIcons.default}</span>
-        <Text style={{ flex: 1, fontSize: 13 }}>{label}</Text>
+        <span style={{ color, fontSize: 'calc(var(--workflow-sidebar-font-size, 14px) + 2px)' }}>{icon || actionIcons.default}</span>
+        <Text style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', fontSize: 'calc(var(--workflow-sidebar-font-size, 14px) - 1px)' }}>{label}</Text>
       </div>
     </Tooltip>
   );
@@ -166,44 +165,43 @@ const ActionPalette: React.FC<ActionPaletteProps> = ({ actions, savedNodes = [],
       }
       styles={{ body: { padding: 0, maxHeight: 'calc(100vh - 280px)', overflow: 'auto' } }}
     >
-      <Collapse defaultActiveKey={['control', 'enrichment']} ghost>
-        <Panel
-          header={
+      <Collapse defaultActiveKey={['control', 'enrichment']} ghost items={[
+        {
+          key: 'control',
+          label: (
             <Space>
               <Tag color={categoryColors.control}>Control Flow</Tag>
               <Text type="secondary">({controlNodes.length + (savedNodesByCategory.control?.length || 0)})</Text>
             </Space>
-          }
-          key="control"
-        >
-          {controlNodes.map((node) => (
-            <DraggableItem key={node.type} type={node.type} label={node.label} category={node.category} description={node.description} icon={node.icon} />
-          ))}
-          {(savedNodesByCategory.control || []).map((node) => (
-            <DraggableItem
-              key={node.id}
-              type={`saved:${node.id}`}
-              label={node.name}
-              category={node.node_category}
-              description={`${node.node_type} saved node`}
-              icon={node.node_type === 'condition' ? <BranchesOutlined /> : actionIcons[node.action_type || ''] || actionIcons.default}
-              template={node}
-            />
-          ))}
-        </Panel>
-
-        {categoryOrder
+          ),
+          children: <>
+            {controlNodes.map((node) => (
+              <DraggableItem key={node.type} type={node.type} label={node.label} category={node.category} description={node.description} icon={node.icon} />
+            ))}
+            {(savedNodesByCategory.control || []).map((node) => (
+              <DraggableItem
+                key={node.id}
+                type={`saved:${node.id}`}
+                label={node.name}
+                category={node.node_category}
+                description={`${node.node_type} saved node`}
+                icon={node.node_type === 'condition' ? <BranchesOutlined /> : actionIcons[node.action_type || ''] || actionIcons.default}
+                template={node}
+              />
+            ))}
+          </>,
+        },
+        ...categoryOrder
           .filter((cat) => cat !== 'control')
-          .map((category) => (
-            <Panel
-              header={
-                <Space>
-                  <Tag color={categoryColors[category] || 'default'}>{toCategoryLabel(category)}</Tag>
-                  <Text type="secondary">({(actionsByCategory[category]?.length || 0) + (savedNodesByCategory[category]?.length || 0)})</Text>
-                </Space>
-              }
-              key={`action-${category}`}
-            >
+          .map((category) => ({
+            key: `action-${category}`,
+            label: (
+              <Space>
+                <Tag color={categoryColors[category] || 'default'}>{toCategoryLabel(category)}</Tag>
+                <Text type="secondary">({(actionsByCategory[category]?.length || 0) + (savedNodesByCategory[category]?.length || 0)})</Text>
+              </Space>
+            ),
+            children: <>
               {(actionsByCategory[category] || []).map((action) => (
                 <DraggableItem
                   key={action.action_type}
@@ -225,9 +223,9 @@ const ActionPalette: React.FC<ActionPaletteProps> = ({ actions, savedNodes = [],
                   template={node}
                 />
               ))}
-            </Panel>
-          ))}
-      </Collapse>
+            </>,
+          })),
+      ]} />
     </Card>
   );
 };

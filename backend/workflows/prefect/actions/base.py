@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict
 
 
+class ResolvedSecret(str):
+    """A credential already resolved at the execution boundary; never template it again."""
+
+
 @dataclass
 class ActionResult:
     success: bool
@@ -33,6 +37,8 @@ class BaseAction(ABC):
         raise NotImplementedError
 
     def resolve_variables(self, value: Any, context: Dict[str, Any]) -> Any:
+        if isinstance(value, ResolvedSecret):
+            return str(value)
         if isinstance(value, str):
             def replace(match: re.Match[str]) -> str:
                 result: Any = context

@@ -1,18 +1,21 @@
-"""Encrypt or rotate sensitive workflow action configuration."""
+"""Encrypt or rotate workflow secret variables and sensitive action configuration."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 
 from workflows.models import ActionTemplate, SavedWorkflowNode, StepExecution, Workflow, WorkflowStep
 from workflows.publisher import GENERATED_FLOWS_DIR, _atomic_write_json, publish_workflow
+from workflows.prefect.secrets import decrypt_secret_variable, encrypt_payload
 from workflows.secret_config import (
     SecretConfigError,
     prepare_config_for_storage,
+    prepare_secret_variables,
     rotate_config,
 )
 
@@ -45,8 +48,27 @@ class Command(BaseCommand):
         secured = prepare_config_for_storage(action_type or "", config or {})
         return rotate_config(action_type or "", secured) if rotate else secured
 
+    @staticmethod
+    def _secure_variables(variables, rotate):
+        secured = prepare_secret_variables(variables or {})
+        if not rotate:
+            return secured
+        keys = getattr(settings, "WORKFLOW_ENCRYPTION_KEYS", None) or []
+        return {
+            name: encrypt_payload({
+                "version": 1, "kind": "workflow_variable", "name": name,
+                "value": decrypt_secret_variable(name, value, keys),
+            }, keys)
+            for name, value in secured.items()
+        }
+
     def _collect_database_changes(self, rotate):
         changes = []
+        for item in Workflow.objects.all().iterator():
+            secured = self._secure_variables(item.secret_variables, rotate)
+            if secured != (item.secret_variables or {}):
+                changes.append((Workflow, item.pk, "secret_variables", secured))
+
         for item in ActionTemplate.objects.all().iterator():
             secured = self._secure(item.action_type, item.default_config, rotate)
             if secured != (item.default_config or {}):
@@ -90,7 +112,11 @@ class Command(BaseCommand):
 
             secured_payload = dict(payload)
             secured_steps = []
-            changed = False
+            variables = payload.get("secret_variables") or {}
+            secured_variables = self._secure_variables(variables, rotate)
+            changed = secured_variables != variables
+            if "secret_variables" in payload:
+                secured_payload["secret_variables"] = secured_variables
             for step in payload.get("steps") or []:
                 secured_step = dict(step)
                 config = step.get("action_config") or {}
@@ -137,6 +163,7 @@ class Command(BaseCommand):
         republished = 0
         if not options["skip_publish"]:
             for workflow in published_workflows:
+                workflow.refresh_from_db()
                 publish_workflow(workflow, register_deployment=False)
                 republished += 1
 

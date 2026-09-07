@@ -9,6 +9,7 @@ import {
   Modal,
   Form,
   Select,
+  AutoComplete,
   Input,
   Button,
   Space,
@@ -24,6 +25,8 @@ import {
   DeleteOutlined,
   QuestionCircleOutlined,
 } from '@ant-design/icons';
+import { getWorkflowVariableOptions } from '../variables';
+import type { VariableOption } from '../variables';
 const { Text } = Typography;
 const { Option } = Select;
 
@@ -44,22 +47,6 @@ const operators = [
   { value: 'is_empty', label: 'Is Empty', description: 'Value is null or empty string' },
   { value: 'is_not_empty', label: 'Is Not Empty', description: 'Value exists and is not empty' },
   { value: 'matches_regex', label: 'Matches Regex', description: 'Value matches regular expression' },
-];
-
-// Common context variables that can be used in conditions
-const contextVariables = [
-  { value: '{{trigger_data.severity}}', label: 'Alert Severity', category: 'trigger_data' },
-  { value: '{{trigger_data.source_ip}}', label: 'Source IP', category: 'trigger_data' },
-  { value: '{{trigger_data.dest_ip}}', label: 'Destination IP', category: 'trigger_data' },
-  { value: '{{trigger_data.event_type}}', label: 'Event Type', category: 'trigger_data' },
-  { value: '{{trigger_data.ticket_number}}', label: 'Ticket Number', category: 'trigger_data' },
-  { value: '{{ticket.status}}', label: 'Ticket Status', category: 'ticket' },
-  { value: '{{ticket.priority}}', label: 'Ticket Priority', category: 'ticket' },
-  { value: '{{ticket.current_assign_owner}}', label: 'Assigned User', category: 'ticket' },
-  { value: '{{previous_step.success}}', label: 'Previous Step Success', category: 'previous_step' },
-  { value: '{{previous_step.output.ticket_number}}', label: 'Previous Step Ticket Number', category: 'previous_step' },
-  { value: '{{variables.ticket_number}}', label: 'Workflow Variable Ticket Number', category: 'variables' },
-  { value: '{{variables.risk_score}}', label: 'Workflow Variable Risk Score', category: 'variables' },
 ];
 
 const valueOptionsByField: Record<string, { value: string; label: string }[]> = {
@@ -96,6 +83,11 @@ const valueOptionsByField: Record<string, { value: string; label: string }[]> = 
   ],
 };
 
+for (const field of ['status', 'priority']) {
+  valueOptionsByField[`{{trigger_data.${field}}}`] = valueOptionsByField[`{{ticket.${field}}}`];
+  valueOptionsByField[`{{trigger_data.ticket.${field}}}`] = valueOptionsByField[`{{ticket.${field}}}`];
+}
+
 // Logical operators for combining conditions
 const logicalOperators = [
   { value: 'AND', label: 'AND', description: 'All conditions must be true' },
@@ -118,6 +110,7 @@ interface ConditionGroup {
 interface ConditionBuilderProps {
   visible: boolean;
   condition?: Record<string, any>;
+  variableOptions?: VariableOption[];
   onSave: (condition: Record<string, any>) => void;
   onCancel: () => void;
 }
@@ -199,11 +192,16 @@ const buildCondition = (groups: ConditionGroup[]): Record<string, any> => {
 const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
   visible,
   condition,
+  variableOptions = getWorkflowVariableOptions({}, ''),
   onSave,
   onCancel,
 }) => {
   const [groups, setGroups] = useState<ConditionGroup[]>([]);
   const [conditionName, setConditionName] = useState('');
+  const referenceOptions = variableOptions.filter(option => option.category !== 'secrets').map(option => ({
+    value: option.value,
+    label: `${option.label} · ${option.value}`,
+  }));
 
   useEffect(() => {
     if (visible) {
@@ -364,30 +362,15 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
               {group.rules.map((rule, ruleIndex) => (
                 <Row key={rule.id} gutter={8} align="middle">
                   <Col span={8}>
-                    <Select
-                      placeholder="Select field"
+                    <AutoComplete
+                      placeholder="Field path or variable"
                       value={rule.field || undefined}
                       onChange={value => updateRule(group.id, rule.id, 'field', value)}
                       style={{ width: '100%' }}
-                      showSearch
                       allowClear
-                    >
-                      {Object.entries(
-                        contextVariables.reduce((acc, v) => {
-                          if (!acc[v.category]) acc[v.category] = [];
-                          acc[v.category].push(v);
-                          return acc;
-                        }, {} as Record<string, typeof contextVariables>)
-                      ).map(([category, vars]) => (
-                        <Select.OptGroup key={category} label={category.toUpperCase()}>
-                          {vars.map(v => (
-                            <Option key={v.value} value={v.value}>
-                              {v.label}
-                            </Option>
-                          ))}
-                        </Select.OptGroup>
-                      ))}
-                    </Select>
+                      options={referenceOptions}
+                      filterOption={(input, option) => String(option?.label).toLowerCase().includes(input.toLowerCase())}
+                    />
                   </Col>
                   <Col span={6}>
                     <Select
@@ -407,27 +390,15 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
                   </Col>
                   <Col span={8}>
                     {!['is_empty', 'is_not_empty'].includes(rule.operator) && (
-                      valueOptionsByField[rule.field] ? (
-                        <Select
-                          placeholder="Select value"
-                          value={rule.value || undefined}
-                          onChange={value => updateRule(group.id, rule.id, 'value', value)}
-                          style={{ width: '100%' }}
-                          allowClear
-                        >
-                          {valueOptionsByField[rule.field].map(option => (
-                            <Option key={option.value} value={option.value}>
-                              {option.label}
-                            </Option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <Input
-                          placeholder="Value"
-                          value={rule.value}
-                          onChange={e => updateRule(group.id, rule.id, 'value', e.target.value)}
-                        />
-                      )
+                      <AutoComplete
+                        placeholder="Value or variable"
+                        value={rule.value}
+                        onChange={value => updateRule(group.id, rule.id, 'value', value)}
+                        style={{ width: '100%' }}
+                        allowClear
+                        options={[...(valueOptionsByField[rule.field] || []), ...referenceOptions]}
+                        filterOption={(input, option) => String(option?.label).toLowerCase().includes(input.toLowerCase())}
+                      />
                     )}
                   </Col>
                   <Col span={2}>

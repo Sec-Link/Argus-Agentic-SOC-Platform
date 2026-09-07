@@ -19,7 +19,9 @@ from .publisher import get_published_state
 from .secret_config import (
     SecretConfigError,
     prepare_config_for_storage,
+    prepare_secret_variables,
     redact_config,
+    validate_workflow_secret_references,
 )
 
 
@@ -47,6 +49,23 @@ def _step_existing_config(instance, attrs):
     if instance and instance.action_config:
         existing.update(instance.action_config)
     return existing
+
+
+def _validate_secret_references(variables, secrets, steps, *, removed_names=()):
+    try:
+        validate_workflow_secret_references(variables, secrets, steps, removed_names=removed_names)
+    except SecretConfigError as exc:
+        raise serializers.ValidationError({'secret_variables': exc.messages}) from exc
+
+
+def _validate_step_secret_references(instance, attrs):
+    workflow = attrs.get('workflow') or getattr(instance, 'workflow', None)
+    if workflow is not None:
+        _validate_secret_references(workflow.variables, workflow.secret_variables, [{
+            'action_type': attrs.get('action_type', getattr(instance, 'action_type', '')),
+            'action_config': attrs.get('action_config', _step_existing_config(instance, attrs)),
+            'condition': attrs.get('condition', getattr(instance, 'condition', {})),
+        }])
 
 
 def _validate_step_timeout(action_type, config, timeout_seconds):
@@ -149,6 +168,7 @@ class WorkflowStepSerializer(SensitiveConfigRepresentationMixin, serializers.Mod
                 existing=existing,
                 require_sensitive=True,
             )
+        _validate_step_secret_references(self.instance, attrs)
         _validate_step_timeout(
             action_type,
             attrs.get('action_config') or getattr(self.instance, 'action_config', {}),
@@ -196,6 +216,7 @@ class WorkflowStepCreateSerializer(SensitiveConfigRepresentationMixin, serialize
                 existing=existing,
                 require_sensitive=True,
             )
+        _validate_step_secret_references(self.instance, attrs)
         _validate_step_timeout(
             action_type,
             attrs.get('action_config') or getattr(self.instance, 'action_config', {}),
@@ -264,6 +285,7 @@ class WorkflowListSerializer(WorkflowPublishedStateMixin, serializers.ModelSeria
     published_version = serializers.SerializerMethodField()
     published_at = serializers.SerializerMethodField()
     has_unpublished_changes = serializers.SerializerMethodField()
+    configured_secret_variables = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = Workflow
@@ -272,7 +294,7 @@ class WorkflowListSerializer(WorkflowPublishedStateMixin, serializers.ModelSeria
             'prefect_deployment_id', 'inputs_schema', 'is_callable_from_ticket',
             'allowed_invoker_roles',
             'is_active', 'is_draft', 'version', 'published_version', 'published_at', 'has_unpublished_changes',
-            'tags', 'created_by', 'created_by_username',
+            'tags', 'variables', 'configured_secret_variables', 'created_by', 'created_by_username',
             'step_count', 'execution_count', 'last_execution',
             'created_at', 'updated_at'
         ]
@@ -316,6 +338,7 @@ class WorkflowDetailSerializer(WorkflowPublishedStateMixin, serializers.ModelSer
     published_version = serializers.SerializerMethodField()
     published_at = serializers.SerializerMethodField()
     has_unpublished_changes = serializers.SerializerMethodField()
+    configured_secret_variables = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = Workflow
@@ -325,7 +348,7 @@ class WorkflowDetailSerializer(WorkflowPublishedStateMixin, serializers.ModelSer
             'allowed_invoker_roles',
             'trigger_conditions',
             'schedule_cron', 'is_active', 'is_draft', 'version', 'published_version', 'published_at', 'has_unpublished_changes', 'tags',
-            'edges', 'created_by', 'created_by_username', 'steps',
+            'edges', 'variables', 'configured_secret_variables', 'created_by', 'created_by_username', 'steps',
             'schedules',
             'created_at', 'updated_at'
         ]
@@ -344,6 +367,8 @@ class WorkflowDetailSerializer(WorkflowPublishedStateMixin, serializers.ModelSer
 class WorkflowCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating workflows."""
     steps = WorkflowStepCreateSerializer(many=True, required=False)
+    secret_variables = serializers.JSONField(write_only=True, required=False)
+    configured_secret_variables = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = Workflow
@@ -352,9 +377,36 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
             'prefect_deployment_id', 'inputs_schema', 'is_callable_from_ticket',
             'allowed_invoker_roles',
             'trigger_conditions',
-            'schedule_cron', 'is_active', 'is_draft', 'version', 'tags', 'edges', 'steps'
+            'schedule_cron', 'is_active', 'is_draft', 'version', 'tags', 'edges', 'variables',
+            'secret_variables', 'configured_secret_variables', 'steps'
         ]
         read_only_fields = ['id']
+
+    def validate_variables(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Variables must be an object.')
+        for name in value:
+            if not isinstance(name, str) or not name.isascii() or not name.isidentifier():
+                raise serializers.ValidationError(
+                    'Variable names must start with a letter or underscore and contain only ASCII letters, digits, and underscores.'
+                )
+        return value
+
+    def validate_secret_variables(self, value):
+        existing = getattr(self.instance, 'secret_variables', {})
+        if not self.context.get('preserve_existing_secrets', True):
+            existing = {}
+        try:
+            return prepare_secret_variables(value, existing=existing)
+        except SecretConfigError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+
+    def validate(self, attrs):
+        variables = attrs.get('variables', getattr(self.instance, 'variables', {}))
+        secrets = attrs.get('secret_variables', getattr(self.instance, 'secret_variables', {}))
+        if set(variables).intersection(secrets):
+            raise serializers.ValidationError({'secret_variables': 'Ordinary and secret variable names must be distinct.'})
+        return attrs
 
     @staticmethod
     def _to_uuid_or_none(value):
@@ -422,6 +474,10 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         steps_data = validated_data.pop('steps', [])
+        steps_data = [self._prepare_step_config(step.copy()) for step in steps_data]
+        _validate_secret_references(
+            validated_data.get('variables', {}), validated_data.get('secret_variables', {}), steps_data,
+        )
         workflow = Workflow.objects.create(**validated_data)
 
         for step_data in steps_data:
@@ -448,6 +504,16 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
                     existing_steps.get(str(original_id), {}),
                 )
                 prepared_steps.append(step_data)
+
+        secrets = validated_data.get('secret_variables', instance.secret_variables)
+        remaining_steps = prepared_steps if prepared_steps is not None else [
+            {'action_type': step.action_type, 'action_config': _step_existing_config(step, {}), 'condition': step.condition}
+            for step in instance.steps.select_related('action_template').all()
+        ]
+        _validate_secret_references(
+            validated_data.get('variables', instance.variables), secrets, remaining_steps,
+            removed_names=set(instance.secret_variables) - set(secrets),
+        )
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)

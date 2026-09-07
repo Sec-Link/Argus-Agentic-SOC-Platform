@@ -10,7 +10,6 @@ import {
   Alert,
   Button,
   Card,
-  Divider,
   Form,
   Input,
   InputNumber,
@@ -523,31 +522,6 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
               );
             })}
 
-          <Divider />
-          <Alert
-            message="Variable Syntax"
-            description={
-              <div>
-                <Text>
-                  Use <code>{'{{variable.path}}'}</code> to insert dynamic values from the
-                  triggering event:
-                </Text>
-                <ul style={{ marginBottom: 0, paddingLeft: 20, fontSize: 12 }}>
-                  <li><code>{'{{trigger_data.severity}}'}</code> – Alert / ticket severity</li>
-                  <li><code>{'{{trigger_data.source_ip}}'}</code> – Source IP address</li>
-                  <li><code>{'{{trigger_data.username}}'}</code> – Associated username</li>
-                  <li><code>{'{{trigger_data.file_hash}}'}</code> – File hash</li>
-                  <li><code>{'{{trigger_data.alert_name}}'}</code> – Alert name</li>
-                  <li><code>{'{{trigger_data.ticket_number}}'}</code> – Ticket number</li>
-                </ul>
-                <Text style={{ fontSize: 11 }}>
-                  See the <strong>Variable Reference Guide</strong> for the full list.
-                </Text>
-              </div>
-            }
-            type="info"
-            showIcon
-          />
         </Form>
       ) : (
         <div>

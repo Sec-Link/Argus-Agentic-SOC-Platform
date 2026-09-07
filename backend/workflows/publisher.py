@@ -20,7 +20,9 @@ from .secret_config import (
     decrypt_sensitive_value,
     is_encrypted,
     prepare_config_for_storage,
+    prepare_secret_variables,
     sensitive_fields,
+    validate_workflow_secret_references,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,8 @@ def serialize_workflow(workflow: Workflow) -> Dict[str, Any]:
         'name': workflow.name,
         'description': workflow.description,
         'trigger_type': workflow.trigger_type,
+        'variables': deepcopy(workflow.variables),
+        'secret_variables': deepcopy(workflow.secret_variables),
         'edges': workflow.edges or [],
         'steps': [_serialize_step(step) for step in steps],
     }
@@ -351,6 +355,11 @@ def _validate_published_manifest(
                 raise ValueError(
                     f'Published workflow step {step_id} references missing step {target_id}.'
                 )
+    try:
+        secrets = prepare_secret_variables(manifest.get('secret_variables', {}), encrypted_only=True)
+        validate_workflow_secret_references(manifest.get('variables', {}), secrets, steps)
+    except SecretConfigError as exc:
+        raise ValueError('Workflow secret variables or references are invalid: ' + '; '.join(exc.messages)) from exc
     return manifest
 
 

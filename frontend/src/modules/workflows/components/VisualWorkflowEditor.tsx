@@ -25,6 +25,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
+  ConfigProvider,
   Card,
   Form,
   Input,
@@ -89,6 +90,10 @@ import { nodeTypes } from './CustomNodes';
 import ActionPalette from './ActionPalette';
 import ConditionBuilder from './ConditionBuilder';
 import ActionConfigBuilder from './ActionConfigBuilder';
+import WorkflowVariablesPanel, { VariableReference } from './WorkflowVariablesPanel';
+import { declarationsToPayload, getWorkflowVariableOptions, variablesToDeclarations } from '../variables';
+import type { VariableDeclaration } from '../variables';
+import { clampSidebarWidth, getSidebarFontSize } from '../sidebar';
 
 const { Text } = Typography;
 
@@ -390,6 +395,10 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const [nodeForm] = Form.useForm();
   const [savedNodeForm] = Form.useForm();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const sidebarFontSize = getSidebarFontSize(sidebarWidth);
+  const [sidebarBounds, setSidebarBounds] = useState({ min: 240, max: 600 });
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [ticketBinding, setTicketBinding] = useState<TicketWorkflowBinding | null>(null);
@@ -397,6 +406,31 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const [bindingSaving, setBindingSaving] = useState(false);
 
   const isNew = !workflowId;
+  const variableDeclarations: VariableDeclaration[] = Form.useWatch('variableDeclarations', form) || [];
+  const triggerType = Form.useWatch('trigger_type', form) || 'manual';
+  const variableOptions = getWorkflowVariableOptions(
+    Object.fromEntries(variableDeclarations.filter(row => row.type !== 'secret').map(row => [row.name, row.value])),
+    triggerType,
+    variableDeclarations.filter(row => row.type === 'secret').map(row => row.name),
+  );
+
+  const resizeSidebar = (width: number) => {
+    const available = sidebarRef.current?.parentElement?.clientWidth || 0;
+    setSidebarWidth(clampSidebarWidth(width, available));
+  };
+
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+    const observer = new ResizeObserver(() => {
+      const available = sidebar.parentElement?.clientWidth || 0;
+      setSidebarWidth(sidebar.getBoundingClientRect().width);
+      setSidebarBounds({ min: clampSidebarWidth(0, available), max: clampSidebarWidth(Infinity, available) });
+    });
+    observer.observe(sidebar);
+    if (sidebar.parentElement) observer.observe(sidebar.parentElement);
+    return () => observer.disconnect();
+  }, []);
 
   const onNodesDelete = useCallback(
     (deleted: Node[]) => {
@@ -656,6 +690,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         is_active: false,
         is_draft: true,
         tags: [],
+        variableDeclarations: [],
       });
       // Add default start node
       setNodes([
@@ -672,7 +707,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
 
     const loadWorkflow = async () => {
       try {
-        const data = await getWorkflow(workflowId);
+        const data: Workflow = await getWorkflow(workflowId);
         setWorkflow(data);
         form.setFieldsValue({
           name: data.name,
@@ -687,6 +722,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
           is_active: data.is_active,
           is_draft: data.is_draft,
           tags: data.tags?.join(', ') || '',
+          variableDeclarations: variablesToDeclarations(data.variables, data.configured_secret_variables),
         });
 
         // Convert steps to nodes directly using backend IDs
@@ -1093,7 +1129,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       const steps = nodesToSteps(nodes, sanitizedEdges);
       const workflowEdges = flowEdgesToWorkflowEdges(sanitizedEdges);
 
-      const payload: Partial<Workflow> = {
+      const payload = {
         name: values.name,
         description: values.description || '',
         trigger_type: values.trigger_type,
@@ -1102,9 +1138,10 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         is_active: activate || values.is_active,
         is_draft: !activate && values.is_draft,
         tags,
+        ...declarationsToPayload(values.variableDeclarations),
         edges: workflowEdges,
         steps,
-      };
+      } satisfies Partial<Workflow>;
 
       let savedWorkflow: Workflow;
       if (isNew) {
@@ -1115,6 +1152,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         message.success('Workflow updated successfully');
       }
 
+      form.setFieldValue('variableDeclarations', variablesToDeclarations(savedWorkflow.variables, savedWorkflow.configured_secret_variables));
       onSaved?.(savedWorkflow);
       if (isNew) {
         onBack();
@@ -1361,17 +1399,26 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       </Card>
 
       {/* Main Content */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
         {/* Left Sidebar - Settings & Actions */}
         <div
+          ref={sidebarRef}
+          id="workflow-sidebar"
           style={{
-            width: 280,
+            width: sidebarWidth,
+            minWidth: 'min(240px, 40%)',
+            maxWidth: 'min(600px, 60%)',
+            flexShrink: 0,
+            boxSizing: 'border-box',
             background: 'var(--workflow-sidebar-bg, #fafafa)',
             borderRight: '1px solid var(--workflow-border, #f0f0f0)',
             overflow: 'auto',
             padding: 16,
-          }}
+            fontSize: sidebarFontSize,
+            '--workflow-sidebar-font-size': `${sidebarFontSize}px`,
+          } as React.CSSProperties}
         >
+          <ConfigProvider theme={{ token: { fontSize: sidebarFontSize, controlHeight: 32 * sidebarFontSize / 14 } }}>
           <Card title="Workflow Settings" size="small" style={{ marginBottom: 16 }}>
             <Form form={form} layout="vertical" size="small">
               <Form.Item name="name" label="Name" rules={[{ required: true }]}>
@@ -1426,6 +1473,15 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                   </Form.Item>
                 </Col>
               </Row>
+              <Form.Item
+                name="variableDeclarations"
+                label={<Text strong>Variables</Text>}
+                rules={[{
+                  validator: async (_, rows) => { declarationsToPayload(rows); },
+                }]}
+              >
+                <WorkflowVariablesPanel options={variableOptions} />
+              </Form.Item>
             </Form>
           </Card>
 
@@ -1468,14 +1524,13 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                           }}
                         >
                           <Form.Item
-                            {...field}
                             name={[field.name, 'label_name']}
                             rules={[{ required: true, message: 'Required' }]}
                             style={{ marginBottom: 8 }}
                           >
                             <Input placeholder="label_name" />
                           </Form.Item>
-                          <Form.Item {...field} name={[field.name, 'label_value']} style={{ marginBottom: 8 }}>
+                          <Form.Item name={[field.name, 'label_value']} style={{ marginBottom: 8 }}>
                             <Input placeholder="label_value" />
                           </Form.Item>
                           <Button danger size="small" block onClick={() => remove(field.name)}>
@@ -1515,10 +1570,45 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
             savedNodes={savedNodes}
             onManageSavedNodes={() => setSavedNodesManagerVisible(true)}
           />
+          </ConfigProvider>
         </div>
 
+        <div
+          role="separator"
+          aria-label="Resize workflow sidebar"
+          aria-controls="workflow-sidebar"
+          aria-orientation="vertical"
+          aria-valuenow={Math.round(sidebarWidth)}
+          aria-valuemin={Math.round(sidebarBounds.min)}
+          aria-valuemax={Math.round(sidebarBounds.max)}
+          aria-valuetext={`${Math.round(sidebarWidth)} pixels`}
+          tabIndex={0}
+          title="Drag to resize; use Left/Right arrow keys when focused"
+          style={{ flex: '0 0 8px', cursor: 'col-resize', touchAction: 'none', userSelect: 'none', background: 'var(--workflow-border, #f0f0f0)' }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.currentTarget.focus();
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId) && sidebarRef.current) {
+              resizeSidebar(event.clientX - sidebarRef.current.getBoundingClientRect().left);
+            }
+          }}
+          onPointerUp={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              resizeSidebar(sidebarWidth + (event.key === 'ArrowRight' ? 16 : -16));
+            }
+          }}
+        />
+
         {/* Canvas */}
-        <div ref={reactFlowWrapper} style={{ flex: 1 }}>
+        <div ref={reactFlowWrapper} style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -1777,6 +1867,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                   <Input value={selectedNode.data.actionType} disabled />
                 </Form.Item>
                 <Divider>Action Configuration</Divider>
+                <div style={{ marginBottom: 16 }}><VariableReference options={variableOptions} /></div>
                 <ActionConfigBuilder
                   actionType={selectedNode.data.actionType || ''}
                   actionInfo={availableActions.find(
@@ -1860,6 +1951,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       <ConditionBuilder
         visible={conditionModalVisible}
         condition={selectedNode?.data?.condition}
+        variableOptions={variableOptions}
         onSave={saveCondition}
         onCancel={() => setConditionModalVisible(false)}
       />

@@ -10,6 +10,7 @@ Defines the database models for SOAR workflow management:
 """
 import secrets
 import uuid
+from copy import deepcopy
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -209,6 +210,16 @@ class Workflow(models.Model):
 
     # Metadata
     tags = models.JSONField(default=list, blank=True, help_text="Tags for categorization")
+    variables = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Declared variables available as {{variables.name}} during execution.",
+    )
+    secret_variables = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Encrypted reusable workflow variables; plaintext is write-only.",
+    )
 
     # Visual workflow editor data - stores edges/connections between nodes
     edges = models.JSONField(
@@ -232,6 +243,24 @@ class Workflow(models.Model):
         """Get all steps in execution order."""
         return self.steps.all().order_by('order')
 
+    @property
+    def configured_secret_variables(self):
+        return sorted(self.secret_variables)
+
+    def save(self, *args, **kwargs):
+        from .secret_config import SecretConfigError, prepare_secret_variables
+
+        existing = {}
+        if self.pk and self.secret_variables:
+            existing = type(self).objects.filter(pk=self.pk).values_list('secret_variables', flat=True).first() or {}
+        secured = prepare_secret_variables(self.secret_variables, existing=existing)
+        if set(secured).intersection(self.variables):
+            raise SecretConfigError('Ordinary and secret variable names must be distinct.')
+        if secured != self.secret_variables:
+            _include_secured_field(kwargs, 'secret_variables')
+        self.secret_variables = secured
+        return super().save(*args, **kwargs)
+
     def clone(self, new_name=None, user=None):
         """Create a copy of this workflow."""
         new_workflow = Workflow.objects.create(
@@ -245,6 +274,8 @@ class Workflow(models.Model):
             version=1,
             created_by=user or self.created_by,
             tags=self.tags.copy() if self.tags else [],
+            variables=deepcopy(self.variables),
+            secret_variables=deepcopy(self.secret_variables),
         )
 
         # Clone all steps
@@ -772,13 +803,6 @@ class StepExecution(models.Model):
         return 0
 
 
-class WorkflowSchedule(models.Model):
-    """Execution schedules for workflows (cron/interval)."""
-
-    SCHEDULE_TYPES = [
-        ('cron', 'Cron'),
-        ('interval', 'Interval (seconds)'),
-    ]
 class WorkflowEventCheckpoint(models.Model):
     """Durable replay position for the Django Prefect event consumer."""
 
@@ -786,6 +810,13 @@ class WorkflowEventCheckpoint(models.Model):
     occurred = models.DateTimeField()
 
 
+class WorkflowSchedule(models.Model):
+    """Execution schedules for workflows (cron/interval)."""
+
+    SCHEDULE_TYPES = [
+        ('cron', 'Cron'),
+        ('interval', 'Interval (seconds)'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workflow = models.ForeignKey(

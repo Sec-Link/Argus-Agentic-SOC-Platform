@@ -1,6 +1,13 @@
+import type { Workflow as BaseWorkflow } from '../../api';
+
+export interface Workflow extends BaseWorkflow {
+  variables?: Record<string, unknown>;
+  secret_variables?: Record<string, string>;
+  configured_secret_variables?: string[];
+}
+
 export {
   // types
-  type Workflow,
   type WorkflowStep,
   type WorkflowEdge,
   type WorkflowExecution,
