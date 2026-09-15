@@ -39,10 +39,18 @@ class AuditService:
         user_agent: str | None = None,
         failure_reason: str | None = None,
         metadata: dict[str, Any] | None = None,
+        action_type: str = AuditLog.ActionType.AUTH,
+        path: str = "",
+        method: str = "",
+        details: dict[str, Any] | None = None,
     ) -> None:
         data = {
             "event_type": event_type,
             "status": status,
+            "action_type": action_type,
+            "path": (path or "")[:512],
+            "method": (method or "")[:8],
+            "details": details or {},
             "user_email": _normalize_email(user_email or "") or None,
             "admin_email": _normalize_email(admin_email or "") or None,
             "ip_address": (ip_address or "")[:64],
@@ -58,6 +66,20 @@ class AuditService:
             AuditService.log_event(**kwargs)
         except Exception:
             logger.exception("Failed to write audit log", extra={"audit_context": kwargs})
+
+    @staticmethod
+    def log_guest_action(user, action_type, path, method, details=None, request=None) -> None:
+        AuditService.log_safe(
+            event_type=AuditLog.EventType.ACTIVITY,
+            status=AuditLog.Status.SUCCESS,
+            action_type=action_type,
+            path=path,
+            method=method,
+            details=details or {},
+            user_email=getattr(user, "email", None),
+            ip_address=request_ip(request),
+            user_agent=request_user_agent(request),
+        )
 
     @staticmethod
     def log_from_request(

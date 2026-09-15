@@ -23,6 +23,7 @@ import {
   Bot,
   UserCheck,
   ScrollText,
+  FileText,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -44,6 +45,8 @@ function iconByKey(key: RouteKey): React.ReactNode {
       return Ic(LayoutDashboard); // Overview
     case 'alerts':
       return Ic(Bell);
+    case 'reports':
+      return Ic(FileText);
     case 'tickets':
       return Ic(Ticket);
     case 'assets':
@@ -106,6 +109,7 @@ export default function Sidebar({
   const routeLabel: Record<RouteKey, string> = {
     dashboard: 'Overview',
     alerts: 'Alerts',
+    reports: 'Reports',
     tickets: 'Tickets',
     assets: 'Assets',
     integrations: labelOverrides.integrations || 'Integrations',

@@ -153,6 +153,10 @@ class AuditLogListSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "event_type",
+            "action_type",
+            "path",
+            "method",
+            "details",
             "user_email",
             "admin_email",
             "ip_address",

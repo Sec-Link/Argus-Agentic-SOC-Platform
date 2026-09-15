@@ -1,6 +1,7 @@
 export type RouteKey =
   | 'dashboard'
   | 'alerts'
+  | 'reports'
   | 'tickets'
   | 'assets'
   | 'integrations'
@@ -18,7 +19,8 @@ export type RouteKey =
 
 export const permissionByKey: Record<RouteKey, string | undefined> = {
   dashboard: undefined,
-  alerts: 'es_integration.view_alert',
+  alerts: undefined,
+  reports: undefined,
   tickets: 'tickets.view_eventticket',
   assets: 'cmdb.view_asset',
   integrations: 'integrations.view_integration',
@@ -38,6 +40,7 @@ export const permissionByKey: Record<RouteKey, string | undefined> = {
 export const keyToPath: Record<RouteKey, string> = {
   dashboard: '/dashboard',
   alerts: '/alerts',
+  reports: '/reports',
   tickets: '/tickets',
   assets: '/cmdb/assets',
   integrations: '/settings/integrations',
@@ -64,6 +67,7 @@ export function resolveRouteKey(pathname: string): { key: RouteKey; ticketNumber
   const p = normalizePath(pathname);
   if (p === '/dashboard') return { key: 'dashboard' };
   if (p === '/alerts') return { key: 'alerts' };
+  if (p === '/reports') return { key: 'reports' };
   if (p === '/tickets') return { key: 'tickets' };
   if (p === '/cmdb/assets') return { key: 'assets' };
   if (p.startsWith('/tickets/')) {

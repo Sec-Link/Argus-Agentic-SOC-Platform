@@ -122,6 +122,7 @@ INSTALLED_APPS = [
     'workflow_interfaces',
     'detections',
     'risk',
+    'reports',
     'django_scheduled_tasks',
 ]
 
@@ -147,6 +148,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'siem_project.token_auth_middleware.DRFTokenAuthMiddleware',
     'accounts.middleware.ReadonlyWriteBlockMiddleware',
+    'accounts.middleware.GuestActivityAuditMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -287,7 +289,14 @@ REJECT_IP_LIMIT_WINDOW_SECONDS = int(os.getenv('REJECT_IP_LIMIT_WINDOW_SECONDS',
 AUDIT_LOG_RETENTION_DAYS = int(os.getenv('AUDIT_LOG_RETENTION_DAYS', '90'))
 
 # Email delivery settings
+# Skip TLS cert verification for SMTP relays with self-signed certs (dev/on-prem).
+EMAIL_SSL_NO_VERIFY = os.getenv('EMAIL_SSL_NO_VERIFY', 'false').lower() in ('true', '1', 'yes')
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+# When enabled, force the no-verify SMTP backend — this takes precedence over an
+# explicit EMAIL_BACKEND pointing at the stock SMTP backend (but never overrides
+# a non-SMTP backend such as the console backend used in tests).
+if EMAIL_SSL_NO_VERIFY and EMAIL_BACKEND.endswith('smtp.EmailBackend'):
+    EMAIL_BACKEND = 'accounts.email_backend.UnverifiedSMTPBackend'
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'your_domain')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'your_email_address@your_domain')

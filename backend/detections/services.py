@@ -6,7 +6,8 @@ import re
 import uuid
 from itertools import zip_longest
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.db.models import Max
 
 from .models import (
     LocalDetectionDeployment,
@@ -58,15 +59,44 @@ def append_rule_version(
     changed_by: str,
     change_type: str,
     change_summary=None,
-) -> None:
-    LocalDetectionRuleVersion.objects.create(
-        rule=rule,
-        version=version,
-        payload=payload,
-        change_summary=change_summary or [],
-        changed_by=changed_by,
-        change_type=change_type,
-    )
+) -> int:
+    """Append a version row, self-correcting the version number.
+
+    The caller's ``rule.version`` counter can drift out of sync with the
+    version table (e.g. a prior append failed after the counter was bumped),
+    which used to raise a unique-constraint (rule_id, version) collision.
+    We derive the real next version from the table's max, honour the caller's
+    value if it's already higher, and retry on the rare concurrent conflict.
+    ``rule.version`` is synced to the value actually used and returned.
+    """
+    for _ in range(20):
+        current_max = LocalDetectionRuleVersion.objects.filter(rule=rule).aggregate(
+            m=Max('version')
+        )['m'] or 0
+        next_version = max(current_max + 1, int(version or 0))
+        try:
+            with transaction.atomic():
+                LocalDetectionRuleVersion.objects.create(
+                    rule=rule,
+                    version=next_version,
+                    payload=payload,
+                    change_summary=change_summary or [],
+                    changed_by=changed_by,
+                    change_type=change_type,
+                )
+            break
+        except IntegrityError:
+            # Another writer took this version; recompute and retry.
+            version = next_version + 1
+    else:
+        raise IntegrityError(
+            f"could not allocate a free version for rule {rule.pk} after retries"
+        )
+
+    if rule.version != next_version:
+        rule.version = next_version
+        rule.save(update_fields=['version'])
+    return next_version
 
 
 def _truncate(value, limit: int = 140) -> str:
