@@ -69,13 +69,15 @@ class AuditService:
 
     @staticmethod
     def log_guest_action(user, action_type, path, method, details=None, request=None) -> None:
+        # Keep activity writes isolated and JSON-safe; audit failures must never
+        # interrupt the request being observed.
         AuditService.log_safe(
             event_type=AuditLog.EventType.ACTIVITY,
             status=AuditLog.Status.SUCCESS,
             action_type=action_type,
             path=path,
             method=method,
-            details=details or {},
+            details=dict(details or {}),
             user_email=getattr(user, "email", None),
             ip_address=request_ip(request),
             user_agent=request_user_agent(request),

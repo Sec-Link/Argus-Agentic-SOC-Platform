@@ -128,7 +128,7 @@ export default function Sidebar({
 
   // Group icons are distinct from their children (Monitoring ≠ Overview, etc.).
   const navGroups: Array<{ key: string; title: string; icon: React.ReactNode; items: RouteKey[] }> = [
-    { key: 'monitorGroup', title: 'Monitoring', icon: Ic(Gauge), items: ['dashboard', 'alerts'] },
+    { key: 'monitorGroup', title: 'Monitoring', icon: Ic(Gauge), items: ['dashboard', 'alerts', 'reports'] },
     { key: 'investigationGroup', title: 'Investigation', icon: Ic(Search), items: ['tickets', 'assets'] },
     {
       key: 'dataPipelineGroup',

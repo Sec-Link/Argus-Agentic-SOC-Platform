@@ -147,8 +147,11 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'siem_project.token_auth_middleware.DRFTokenAuthMiddleware',
-    'accounts.middleware.ReadonlyWriteBlockMiddleware',
+    # Must run after Django authentication and DRF token authentication so
+    # guest/read-only identity is available. It intentionally wraps the write
+    # blocker so denied guest feature attempts are audited as well.
     'accounts.middleware.GuestActivityAuditMiddleware',
+    'accounts.middleware.ReadonlyWriteBlockMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]

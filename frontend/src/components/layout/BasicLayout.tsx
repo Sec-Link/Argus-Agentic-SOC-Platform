@@ -165,7 +165,7 @@ export default function BasicLayout({
 
   // keep sensible parent open when a child is selected
   useEffect(() => {
-    if (['dashboard', 'alerts'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
+    if (['dashboard', 'alerts', 'reports'].includes(selectedKey)) setOpenKeys(['monitorGroup']);
     else if (['tickets', 'assets'].includes(selectedKey)) setOpenKeys(['investigationGroup']);
     else if (['detection','integrations', 'orchestrator', 'correlation'].includes(selectedKey)) setOpenKeys(['dataPipelineGroup']);
     else if (['interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
