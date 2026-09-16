@@ -1,6 +1,6 @@
 from django.utils.dateparse import parse_datetime
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -8,7 +8,8 @@ from .services import generate_soc_report_md
 
 
 class ReportGenerateView(APIView):
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    authentication_classes = []
+    permission_classes = [AllowAny]
     http_method_names = ["post", "options"]
 
     def post(self, request):

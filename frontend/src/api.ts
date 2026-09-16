@@ -82,8 +82,13 @@ const client = axios.create({
   xsrfHeaderName: 'X-CSRFToken',
 });
 
+const publicReportClient = axios.create({
+  baseURL: resolveApiBase(),
+  withCredentials: false,
+});
+
 export async function fetchReport(range: '24h' | '7d' | '30d' = '7d') {
-  const r = await client.post('/reports/generate/', { time_range: range });
+  const r = await publicReportClient.post('/reports/generate/', { time_range: range });
   return r.data as { markdown_content: string; raw_stats: Record<string, any> };
 }
 const addAuthHeader = (config: InternalAxiosRequestConfig) => {
