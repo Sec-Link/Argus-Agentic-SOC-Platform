@@ -4,6 +4,8 @@ export {
   updateIntegration,
   deleteIntegration,
   integrationsPreviewEsMapping,
+  fetchSplunkIntegrationData,
   previewEsIntegration,
+  testIntegrationConnection,
   testEsIntegration,
 } from '../../api';
