@@ -23,11 +23,8 @@ import {
   Bot,
   UserCheck,
   ScrollText,
-<<<<<<< HEAD
   FileText,
-=======
   SlidersHorizontal,
->>>>>>> origin/main
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';

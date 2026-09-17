@@ -1296,7 +1296,7 @@ export async function getWorkflow(id: string): Promise<Workflow> {
 }
 
 // Create workflow
-type WorkflowWritePayload = Omit<Partial<Workflow>, 'execution_engine'> & {
+export type WorkflowWritePayload = Omit<Partial<Workflow>, 'execution_engine'> & {
   execution_engine?: 'prefect';
 };
 

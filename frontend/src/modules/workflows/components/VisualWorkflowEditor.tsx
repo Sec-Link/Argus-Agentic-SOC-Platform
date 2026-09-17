@@ -63,6 +63,7 @@ import {
   getWorkflow,
   createWorkflow,
   updateWorkflow,
+  WorkflowWritePayload,
   getAvailableActions,
   executeWorkflow,
   listSavedWorkflowNodes,
@@ -1093,7 +1094,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       const steps = nodesToSteps(nodes, sanitizedEdges);
       const workflowEdges = flowEdgesToWorkflowEdges(sanitizedEdges);
 
-      const payload: Partial<Workflow> = {
+      const payload: WorkflowWritePayload = {
         name: values.name,
         description: values.description || '',
         trigger_type: values.trigger_type,
