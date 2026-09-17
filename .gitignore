@@ -78,3 +78,4 @@ frontend/tsconfig.tsbuildinfo
 
 # Local AI tool config — not shared to the repo
 CLAUDE.md
+frontend/next-env.d.ts

@@ -17,6 +17,8 @@ from ai_assistant.mcp_gateway import (
     record_mcp_monitor_event,
 )
 from ai_assistant.skills import apply_local_skills
+from ai_assistant.monitoring import record_skill_call
+from ai_assistant.skill_library import read_skill
 from tickets.models import EventTicket, TicketWorkLog
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,85 @@ def _json_dumps_safe(value: Any) -> str:
     except Exception:
         return str(value)
 
+
+def _normalize_ai_assistant(assistant: Any, ticket: EventTicket, raw_text: str = '') -> tuple[Dict[str, Any], Dict[str, str]]:
+    """Return the stable DTO consumed by the UI, regardless of model output quality."""
+    candidate = assistant if isinstance(assistant, dict) else {}
+    raw = str(raw_text or '')
+    sources: Dict[str, str] = {}
+
+    model_header = candidate.get('header') if isinstance(candidate.get('header'), dict) else {}
+    score = model_header.get('score')
+    if not isinstance(score, (int, float)) or score <= 0:
+        score_match = re.search(r'(?i)risk\s+score\s*[:=]\s*(\d+)', raw or str(getattr(ticket, 'alert_message', '') or ''))
+        score = int(score_match.group(1)) if score_match else getattr(ticket, 'event_risk_score', None)
+        sources['header.score'] = 'derived' if score_match else 'ticket'
+    else:
+        sources['header.score'] = 'model'
+
+    risk_level = str(model_header.get('risk_level') or getattr(ticket, 'priority', '') or 'medium').lower()
+    if risk_level not in {'critical', 'high', 'medium', 'low', 'info'}:
+        risk_level = 'medium'
+    sources['header.risk_level'] = 'model' if model_header.get('risk_level') else 'ticket'
+    confidence = model_header.get('ai_confidence')
+    if confidence in (None, ''):
+        confidence = None
+        sources['header.ai_confidence'] = 'unavailable'
+    else:
+        sources['header.ai_confidence'] = 'model'
+
+    header = {
+        **model_header,
+        'risk_level': risk_level,
+        'ai_confidence': confidence,
+        'score': score,
+        'summary_title': str(model_header.get('summary_title') or getattr(ticket, 'title', '') or 'SOC incident analysis'),
+        'status': str(getattr(ticket, 'status', '') or 'new'),
+        'platform': model_header.get('platform') or getattr(ticket, 'event_platform', '') or '',
+        'source': model_header.get('source') or getattr(ticket, 'event_sources', '') or '',
+    }
+    sources['header.status'] = 'ticket'
+
+    case_summary = candidate.get('case_summary') if isinstance(candidate.get('case_summary'), dict) else {}
+    summary = case_summary.get('incident_summary') or candidate.get('alert_explanation') or getattr(ticket, 'description', '') or getattr(ticket, 'title', '') or 'No summary available yet.'
+    sources['summary'] = 'model' if case_summary.get('incident_summary') or candidate.get('alert_explanation') else 'ticket'
+
+    def normalize_tasks(value: Any) -> List[Dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+        result = []
+        for item in value:
+            if isinstance(item, dict):
+                title = str(item.get('title') or '').strip()
+                detail = str(item.get('detail') or '').strip()
+            else:
+                title, detail = str(item).strip(), ''
+            if title or detail:
+                result.append({'title': title or detail, 'detail': detail})
+        return result
+
+    completed_tasks = normalize_tasks(candidate.get('completed_tasks'))
+    suggested_tasks = normalize_tasks(candidate.get('next_tasks'))
+    if not completed_tasks:
+        completed_tasks = [{'title': 'AI incident triage', 'detail': 'Generated an incident summary and extracted key indicators.'}]
+        sources['completed_tasks'] = 'system'
+    else:
+        sources['completed_tasks'] = 'model'
+    if suggested_tasks:
+        sources['suggested_tasks'] = 'model_or_extracted'
+    else:
+        sources['suggested_tasks'] = 'unavailable'
+
+    normalized = {
+        **candidate,
+        'header': header,
+        'alert_explanation': str(summary),
+        'risk_level_recommendation': candidate.get('risk_level_recommendation') if isinstance(candidate.get('risk_level_recommendation'), dict) else {'level': risk_level, 'rationale': 'Derived from available ticket and AI context.'},
+        'completed_tasks': completed_tasks,
+        'next_tasks': suggested_tasks,
+        'case_summary': {**case_summary, 'incident_summary': str(summary)},
+    }
+    return normalized, sources
 
 def _extract_iocs(text: str) -> Dict[str, List[str]]:
     if not text:
@@ -200,6 +281,148 @@ def _build_prompt(
         f"{_json_dumps_safe(payload)}"
     )
 
+
+def _parse_structured_json(text: str) -> Dict[str, Any]:
+    """Parse the small JSON object requested for one assistant section."""
+    value = str(text or '').strip()
+    if value.startswith('```'):
+        value = re.sub(r'^```(?:json)?\s*|\s*```$', '', value, flags=re.IGNORECASE | re.DOTALL).strip()
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _parse_section_markdown(section: str, text: str) -> Dict[str, Any]:
+    """Extract only the requested section when a provider ignores JSON-only instructions."""
+    body = str(text or '').strip()
+
+    def field(name: str) -> str:
+        match = re.search(rf'(?im)^\s*\**{re.escape(name)}\**\s*:\s*(.+?)\s*$', body)
+        return re.sub(r'[*_`]', '', match.group(1)).strip() if match else ''
+
+    def clean(value: str) -> str:
+        return re.sub(r'\s+', ' ', re.sub(r'[*_`]', '', value)).strip()
+
+    def heading(name: str) -> str:
+        match = re.search(
+            rf'(?is)(?:^|\n)###\s+\**{re.escape(name)}\**\s*\n(.*?)(?=\n###\s|\Z)',
+            body,
+        )
+        return (match.group(1) if match else '').strip()
+
+    if section == 'header':
+        score_match = re.search(r'(?i)\brisk\s+score\s*:\s*(\d+)', body)
+        confidence_match = re.search(r'(?i)(?:\bconfidence\s*:\s*(\d{1,3})\s*%|(\d{1,3})\s*%\s*confidence)', body)
+        score = int(score_match.group(1)) if score_match else 0
+        priority = (field('Priority') or 'medium').lower()
+        level = 'critical' if score >= 90 else 'high' if score >= 70 else priority
+        if level not in {'critical', 'high', 'medium', 'low', 'info'}:
+            level = 'medium'
+        return {'header': {
+            'risk_level': level,
+            'ai_confidence': f'{confidence_match.group(1) or confidence_match.group(2)}%' if confidence_match else '70%',
+            'score': score,
+            'summary_title': field('Title') or 'SOC incident analysis',
+            'status': field('Status') or 'new',
+            'platform': '',
+            'source': '',
+        }}
+
+    if section == 'summary':
+        summary = clean(heading('Summary')) or clean(body[:1200])
+        return {
+            'alert_explanation': summary,
+            'risk_level_recommendation': {
+                'level': 'high' if re.search(r'(?i)risk score\s*:\s*[7-9]\d|risk score\s*:\s*100', body) else 'medium',
+                'rationale': 'Derived from the AI incident analysis.',
+            },
+            'case_summary': {
+                'incident_summary': summary,
+                'impact_assessment': 'Pending validation.',
+                'root_cause': 'Under investigation.',
+                'remediation_recommendations': [],
+            },
+        }
+
+    if section == 'tasks':
+        action_section = heading('Recommended Actions') or heading('Immediate Actions')
+        actions = []
+        for line in action_section.splitlines():
+            match = re.match(r'^\s*\d+\.\s+(.+?)\s*$', line)
+            if match:
+                title = clean(match.group(1))
+                if title:
+                    actions.append({'title': title, 'detail': 'Recommended follow-up action from the AI analysis.'})
+        return {
+            'completed_tasks': [
+                {'title': 'AI incident triage', 'detail': 'Generated an incident summary and extracted key indicators.'}
+            ],
+            'next_tasks': actions,
+        }
+    return {}
+
+def _generate_structured_sections(prompt: str, overrides: Dict[str, Any] | None = None) -> tuple[Dict[str, Any], List[str]]:
+    """Request each UI section independently so one long answer cannot erase others."""
+    specs = [
+        (
+            'header',
+            'Return STRICT JSON only with exactly this shape: '
+            '{"header":{"risk_level":"critical|high|medium|low|info",'
+            '"ai_confidence":"string","score":0,"summary_title":"string",'
+            '"status":"string","platform":"string","source":"string"}}',
+        ),
+        (
+            'summary',
+            'Return STRICT JSON only with exactly this shape: '
+            '{"alert_explanation":"string",'
+            '"risk_level_recommendation":{"level":"string","rationale":"string"},'
+            '"case_summary":{"incident_summary":"string","impact_assessment":"string",'
+            '"root_cause":"string","remediation_recommendations":["string"]}}',
+        ),
+        (
+            'tasks',
+            'Return STRICT JSON only with exactly this shape: '
+            '{"completed_tasks":[{"title":"string","detail":"string"}],'
+            '"next_tasks":[{"title":"string","detail":"string"}]}',
+        ),
+    ]
+    assistant: Dict[str, Any] = {}
+    raw_failures: List[str] = []
+    for name, schema in specs:
+        section_prompt = (
+            'You are a SOC analyst. Generate only the requested section. '
+            'Do not use Markdown, commentary, or code fences.\n'
+            f'Requested section: {name}\n{schema}\n'
+            'Use the following ticket context:\n'
+            f'{prompt}'
+        )
+        response = _call_openai(section_prompt, overrides=overrides)
+        response_text = _extract_response_text(response)
+        parsed = _parse_structured_json(response_text)
+        fallback = _parse_section_markdown(name, response_text)
+        if parsed and fallback:
+            if name == 'header':
+                parsed_header = parsed.get('header') if isinstance(parsed.get('header'), dict) else {}
+                fallback_header = fallback.get('header') if isinstance(fallback.get('header'), dict) else {}
+                if not parsed_header.get('score') and fallback_header.get('score'):
+                    parsed_header['score'] = fallback_header['score']
+                if not parsed_header.get('ai_confidence') or parsed_header.get('ai_confidence') == '70%':
+                    parsed_header['ai_confidence'] = fallback_header.get('ai_confidence', parsed_header.get('ai_confidence'))
+                parsed['header'] = {**fallback_header, **parsed_header}
+            if name == 'tasks':
+                if not isinstance(parsed.get('completed_tasks'), list) or not parsed.get('completed_tasks'):
+                    parsed['completed_tasks'] = fallback.get('completed_tasks', [])
+                if not isinstance(parsed.get('next_tasks'), list) or not parsed.get('next_tasks'):
+                    parsed['next_tasks'] = fallback.get('next_tasks', [])
+        elif not parsed:
+            parsed = fallback
+        if parsed:
+            assistant.update(parsed)
+        else:
+            raw_failures.append(f'{name}: {response_text[:4000]}')
+    return assistant, raw_failures
 
 def _parse_responses_stream(res: requests.Response) -> Dict[str, Any]:
     text_buffer: List[str] = []
@@ -398,6 +621,59 @@ def _decide_mcp_tool_and_args_by_ai(
         return None
 
 
+def _select_skills_by_ai(ticket, alert_json, enabled_skills, overrides=None):
+    """Use the model to select relevant enabled skills from alert evidence."""
+    if not enabled_skills:
+        return []
+    allowed = []
+    lookup = {}
+    for item in enabled_skills:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("route") or "").strip()
+            description = str(item.get("description") or item.get("summary") or "").strip()
+        else:
+            name, description = str(item).strip(), ""
+        if name:
+            allowed.append({"name": name, "description": description[:500]})
+            lookup[name.lower()] = item
+            if isinstance(item, dict) and item.get("route"):
+                lookup[str(item["route"]).strip().lower()] = item
+    if not allowed:
+        return []
+    evidence = {
+        "title": str(getattr(ticket, "title", "") or ""),
+        "description": str(getattr(ticket, "description", "") or ""),
+        "raw_message": getattr(ticket, "alert_message", "") or "",
+        "alert_json": alert_json,
+    }
+    selector_prompt = (
+        'You are a SOC skill router. Select only enabled skills materially relevant to the alert. '
+        'Return JSON only: {"skills":[{"name":"exact enabled name","reason":"short"}]}. '
+        'Return {"skills":[]} when none apply. Never invent names.\n'
+        + 'Enabled skills:\n' + json.dumps(allowed, ensure_ascii=False)
+        + '\nAlert evidence:\n' + json.dumps(evidence, ensure_ascii=False, default=str)
+    )
+    try:
+        response = _call_openai(selector_prompt, overrides=overrides)
+        selected = _parse_structured_json(_extract_response_text(response))
+        values = selected.get("skills") if isinstance(selected, dict) else []
+        if isinstance(values, list):
+            result = []
+            for value in values:
+                name = str(value.get("name") if isinstance(value, dict) else value).strip().lower()
+                if name in lookup and lookup[name] not in result:
+                    result.append(lookup[name])
+            return result
+    except Exception:
+        logger.exception("AI skill selection failed; using text fallback")
+    text = json.dumps(evidence, ensure_ascii=False, default=str).lower()
+    result = []
+    for item in allowed:
+        tokens = [x for x in re.split(r"[-_\s]+", item["name"].lower()) if len(x) > 3]
+        if tokens and sum(x in text for x in tokens) >= max(1, len(tokens) // 2):
+            result.append(lookup[item["name"].lower()])
+    return result
+
 def generate_ai_assistant_output(
     ticket: EventTicket,
     alert_json: Any,
@@ -549,15 +825,34 @@ def generate_ai_assistant_output(
         mcp_context=mcp_context,
         user_prompt=user_prompt,
     )
-    response = _call_openai(prompt, overrides=overrides)
-    text = _extract_response_text(response)
-
-    parsed = None
-    if text:
-        try:
-            parsed = json.loads(text)
-        except Exception:
-            parsed = None
+    enabled_skills = (overrides or {}).get("skills") if isinstance((overrides or {}).get("skills"), list) else []
+    selected_skills = _select_skills_by_ai(
+        ticket=ticket,
+        alert_json=alert_json,
+        enabled_skills=enabled_skills,
+        overrides=overrides,
+    )
+    skill_instructions = []
+    selected_skill_names = []
+    for item in selected_skills:
+        skill_name = str(item.get("name") or item.get("route") or "").strip() if isinstance(item, dict) else str(item).strip()
+        skill_doc = read_skill(skill_name)
+        if skill_doc and skill_doc.content:
+            selected_skill_names.append(skill_name)
+            skill_instructions.append(f"SKILL: {skill_doc.name}\n{skill_doc.content[:12000]}")
+            record_skill_call(skill_name, True)
+        elif skill_name:
+            record_skill_call(skill_name, False)
+    if skill_instructions:
+        prompt += "\n\nEnabled skill instructions (follow only when supported by ticket evidence):\n" + "\n\n".join(skill_instructions)
+    raw_failures: List[str] = []
+    if user_prompt:
+        response = _call_openai(prompt, overrides=overrides)
+        text = _extract_response_text(response)
+        parsed = _parse_structured_json(text)
+    else:
+        parsed, raw_failures = _generate_structured_sections(prompt, overrides=overrides)
+        text = '\n\n'.join(raw_failures)
 
     parsed = apply_local_skills(
         assistant=parsed,
@@ -565,6 +860,7 @@ def generate_ai_assistant_output(
         timeline=timeline,
         skills=(overrides or {}).get("skills"),
     )
+    normalized_assistant, field_sources = _normalize_ai_assistant(parsed, ticket=ticket, raw_text=text)
 
     return {
         "model": (overrides or {}).get("model") or _get_setting("OPENAI_MODEL", "gpt-5.1-codex"),
@@ -583,6 +879,9 @@ def generate_ai_assistant_output(
             "cmdb_assets": cmdb_assets,
             "observables": observables_payload,
         },
-        "assistant": parsed,
-        "assistant_raw": text if parsed is None else None,
+        "assistant": normalized_assistant,
+        "skills_used": selected_skill_names,
+        "field_sources": field_sources,
+        "raw_response": text if text else None,
+        "assistant_raw": text if text else None,
     }

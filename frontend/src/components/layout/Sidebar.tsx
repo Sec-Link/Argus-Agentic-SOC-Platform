@@ -23,7 +23,11 @@ import {
   Bot,
   UserCheck,
   ScrollText,
+<<<<<<< HEAD
   FileText,
+=======
+  SlidersHorizontal,
+>>>>>>> origin/main
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -73,6 +77,8 @@ function iconByKey(key: RouteKey): React.ReactNode {
       return Ic(UserCheck); // Approvals
     case 'audit-logs':
       return Ic(ScrollText);
+    case 'system-settings':
+      return Ic(SlidersHorizontal);
     default:
       return null;
   }
@@ -100,7 +106,7 @@ export default function Sidebar({
   setOpenKeys: (keys: string[]) => void;
   setIsResizing: (v: boolean) => void;
   setSiderWidthCustomized: (v: boolean) => void;
-  canAccess: (perm?: string) => boolean;
+  canAccess: (perm?: string, key?: RouteKey) => boolean;
   onNavigate: (path: string) => void;
 }) {
   const labelOverrides = Object.fromEntries(settingsItems.map((item) => [item.key, item.label])) as Partial<
@@ -120,6 +126,7 @@ export default function Sidebar({
     permissions: labelOverrides.permissions || 'Access Management',
     'registration-approvals': labelOverrides['registration-approvals'] || 'Approvals',
     'audit-logs': labelOverrides['audit-logs'] || 'Audit Logs',
+    'system-settings': labelOverrides['system-settings'] || 'System Settings',
     workflows: labelOverrides.workflows || 'Workflows',
     'workflow-executions': labelOverrides['workflow-executions'] || 'Executions',
     'ai-assistant': labelOverrides['ai-assistant'] || 'AI Assistant',
@@ -146,14 +153,14 @@ export default function Sidebar({
       key: 'administrationGroup',
       title: 'Administration',
       icon: Ic(Shield),
-      items: ['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs'],
+      items: ['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs', 'system-settings'],
     },
   ];
 
   // Build items[] so the collapsed rail renders native flyout popovers.
   const menuItems = navGroups
     .map((group) => {
-      const visibleItems = group.items.filter((key) => canAccess(permissionByKey[key]));
+      const visibleItems = group.items.filter((key) => canAccess(permissionByKey[key], key));
       if (visibleItems.length === 0) return null;
       const leaves = visibleItems.map((itemKey) => ({
         key: itemKey,
@@ -272,7 +279,7 @@ export default function Sidebar({
         onClick={({ key }) => {
           const nextKey = String(key) as RouteKey;
           const nextPerm = permissionByKey[nextKey];
-          if (nextPerm && !canAccess(nextPerm)) {
+          if (nextPerm && !canAccess(nextPerm, nextKey)) {
             message.warning('No permission to access this feature.');
             return;
           }

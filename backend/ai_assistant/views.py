@@ -253,9 +253,12 @@ def ai_chat(request):
         except Exception:
             pass
 
+    chat_input = str(data.get("message") or "")
+    if ticket:
+        chat_input += "\n\nCurrent case raw alert JSON:\n" + str(ticket.alert_message or "")
     try:
         result = run_chat_agent(
-            user_input=data.get("message"),
+            user_input=chat_input,
             history_messages=data.get("messages") or [],
             overrides=overrides,
             recommended_skills=recommended_skills,

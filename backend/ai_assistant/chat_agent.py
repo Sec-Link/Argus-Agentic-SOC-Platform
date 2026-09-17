@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -317,6 +317,73 @@ def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
     return {}
 
 
+def _chat_content(response: Dict[str, Any]) -> str:
+    choices = response.get("choices") if isinstance(response, dict) else []
+    if not isinstance(choices, list) or not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return str(message.get("content") or "").strip()
+
+
+def _preload_chat_skills(user_input: str, recommended_skills: List[str], overrides: Optional[Dict[str, Any]] = None) -> Tuple[List[str], List[str], List[Dict[str, Any]]]:
+    if not recommended_skills:
+        return [], [], []
+    names = [str(name).strip() for name in recommended_skills if str(name).strip()]
+    list_exec_id = start_mcp_execution("list_skills", {}, source="internal")
+    try:
+        catalog = list_skills()
+        list_success = True
+        list_content = "\n".join(catalog)
+    except Exception as exc:
+        catalog = []
+        list_success = False
+        list_content = f"Skill listing failed: {exc}"
+    finish_mcp_execution(list_exec_id, list_success, error="" if list_success else list_content)
+    update_mcp_stats("list_skills", list_success)
+    available = [name for name in names if name in catalog] if catalog else names
+    trace = [
+        {"type": "model_call", "iteration": 0, "purpose": "skill_selection"},
+        {"type": "tool_calls_detected", "iteration": 0, "count": 1},
+        {"type": "tool_call", "iteration": 0, "tool": "list_skills", "source": "internal", "arguments": {}, "automatic": True, "execution_id": list_exec_id},
+        {"type": "tool_result", "iteration": 0, "tool": "list_skills", "source": "internal", "success": list_success, "content": list_content, "automatic": True, "execution_id": list_exec_id},
+    ]
+    router_prompt = ('You are a SOC skill router. Select only relevant skills from this list based on the user request. '
+        'Return JSON only: {"skills":["exact skill name"]}. Return {"skills":[]} if none apply. Never invent names.\n'
+        + 'Available skills: ' + json.dumps(available, ensure_ascii=False) + '\nUser request: ' + user_input)
+    selected_names = []
+    try:
+        response = _call_openai_chat([{"role":"system","content":router_prompt},{"role":"user","content":user_input}], [], overrides=overrides)
+        text = _chat_content(response)
+        match = re.search(r'\{.*\}', text, flags=re.DOTALL)
+        payload = json.loads(match.group(0) if match else text)
+        values = payload.get("skills") if isinstance(payload, dict) else []
+        if isinstance(values, list):
+            selected_names = [str(value).strip() for value in values if str(value).strip() in available]
+    except Exception:
+        logger.exception("Chat skill preselection failed")
+    instructions = []
+    for name in selected_names:
+        read_exec_id = start_mcp_execution("read_skill", {"skill_name": name}, source="internal")
+        doc = read_skill(name)
+        if doc and doc.content:
+            finish_mcp_execution(read_exec_id, True)
+            update_mcp_stats("read_skill", True)
+            record_skill_call(name, True)
+            instructions.append(f"SKILL: {doc.name}\n{doc.content[:12000]}")
+            trace.extend([
+                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True, "execution_id": read_exec_id},
+                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": True, "content": doc.content[:2000], "automatic": True, "execution_id": read_exec_id},
+            ])
+        else:
+            finish_mcp_execution(read_exec_id, False, error=f"Skill not found: {name}")
+            update_mcp_stats("read_skill", False)
+            record_skill_call(name, False)
+            trace.extend([
+                {"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": {"skill_name": name}, "automatic": True, "execution_id": read_exec_id},
+                {"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": False, "content": f"Skill not found: {name}", "automatic": True, "execution_id": read_exec_id},
+            ])
+    return selected_names, instructions, trace
+
 def run_chat_agent(
     user_input: str,
     history_messages: Optional[List[Dict[str, Any]]] = None,
@@ -335,9 +402,12 @@ def run_chat_agent(
         "When responding to the user, include a short analysis summary in a second paragraph starting with "
         "\"AI thinking:\" (max 80 words)."
     )
+    preloaded_names, preloaded_instructions, preload_trace = _preload_chat_skills(user_input, recommended_skills, overrides=overrides)
     if recommended_skills:
         skills_hint = ", ".join([f"`{s}`" for s in recommended_skills])
-        system_prompt += f"\nRecommended skills: {skills_hint}. Use read_skill to load details when needed."
+        system_prompt += f"\nAvailable skills: {skills_hint}. You may still call read_skill for additional details."
+    if preloaded_instructions:
+        system_prompt += "\nSelected skill instructions (apply only when supported by evidence):\n" + "\n\n".join(preloaded_instructions)
 
     messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     for msg in history_messages:
@@ -350,6 +420,11 @@ def run_chat_agent(
 
     internal_tools, internal_handlers = _internal_tools()
     external_tools, external_mapping = _external_tools(overrides=overrides)
+    if preloaded_names:
+        internal_tools = [
+            tool for tool in internal_tools
+            if ((tool.get("function") or {}).get("name") != "read_skill")
+        ]
     tools = internal_tools + external_tools
 
     max_iter_value = None
@@ -362,7 +437,7 @@ def run_chat_agent(
     except Exception:
         max_iterations = 6
 
-    trace: List[Dict[str, Any]] = []
+    trace: List[Dict[str, Any]] = list(preload_trace)
     iteration = 0
     for _ in range(max_iterations):
         iteration += 1
@@ -436,6 +511,8 @@ def run_chat_agent(
             parts = content.split("AI thinking:", 1)
             content = parts[0].strip()
             summary = parts[1].strip()
+        if not content.strip():
+            content = summary or "AI analysis completed, but no user-facing response was returned."
         trace.append({"type": "assistant_response", "iteration": iteration, "content": content})
         if summary:
             trace.append({"type": "analysis_summary", "iteration": iteration, "content": summary})

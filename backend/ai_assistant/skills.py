@@ -47,13 +47,6 @@ def _apply_soc_ticket_triage(
     if not isinstance(assistant.get("next_tasks"), list):
         assistant["next_tasks"] = []
 
-    if not assistant["next_tasks"]:
-        assistant["next_tasks"] = [
-            {"title": "Validate affected scope", "detail": "Confirm impacted hosts/users from ticket context."},
-            {"title": "Correlate recent logs", "detail": "Review recent timeline and related alerts for recurrence."},
-            {"title": "Prepare containment plan", "detail": "Draft immediate containment actions for approval."},
-        ]
-
     if not isinstance(assistant.get("alert_explanation"), str):
         assistant["alert_explanation"] = "Initial triage completed using ticket context, timeline, and similar cases."
 
@@ -86,26 +79,9 @@ def apply_local_skills(
     if not routes:
         return assistant
 
-    applied_routes: set[str] = set()
     if "ticket_triage" in routes or "soc-ticket-triage" in routes:
         _apply_soc_ticket_triage(assistant, ticket=ticket, timeline=timeline)
-        applied_routes.add("ticket_triage")
-        applied_routes.add("soc-ticket-triage")
     if "incident_summary" in routes or "incident-summary" in routes:
         _apply_incident_summary(assistant, ticket=ticket, timeline=timeline)
-        applied_routes.add("incident_summary")
-        applied_routes.add("incident-summary")
 
-    if isinstance(skills, list):
-        for s in skills:
-            if not isinstance(s, dict):
-                continue
-            if s.get("enabled") is False:
-                continue
-            route = str(s.get("route") or s.get("name") or "").strip()
-            name = str(s.get("name") or route).strip()
-            if not name:
-                continue
-            if route in applied_routes:
-                record_skill_call(name, True)
     return assistant
