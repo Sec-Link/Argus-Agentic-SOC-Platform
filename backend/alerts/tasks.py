@@ -14,6 +14,8 @@ import logging
 import os
 import re
 import time
+import json
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -692,6 +694,368 @@ def sync_es_alerts_to_db(
         'index_table': index_table,
         'dedup_removed': dedup_removed,
         'backfilled_missing_ids': backfilled_missing_ids,
+    }
+
+
+def _as_bool(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {'0', 'false', 'no', 'off'}
+
+
+def _build_splunk_auth(cfg: Dict[str, Any]):
+    import requests
+
+    headers = {'Accept': 'application/json'}
+    auth = None
+    token = str(cfg.get('api_key') or cfg.get('token') or '').strip()
+    if token:
+        headers['Authorization'] = f'Splunk {token}'
+    elif cfg.get('username'):
+        auth = requests.auth.HTTPBasicAuth(str(cfg.get('username')), str(cfg.get('password') or ''))
+    return auth, headers
+
+
+def _build_splunk_search(index_name: str, *, size: int, search_query: Optional[str] = None) -> str:
+    query = (search_query or '').strip()
+    if not query:
+        return (
+            f'search index="{index_name}" earliest=-24h latest=now '
+            '| spath '
+            '| table _time alert_id timestamp severity message source_index rule_id title status description category _raw sourcetype source host index '
+            f'| head {max(1, size)}'
+        )
+    if not query.lower().startswith(('search ', '|')):
+        query = f'search {query}'
+    if '| head ' not in query.lower():
+        query = f'{query} | head {max(1, size)}'
+    return query
+
+
+def _fetch_splunk_events(cfg: Dict[str, Any], *, index_name: str, size: int) -> tuple[List[Dict[str, Any]], List[str]]:
+    import requests
+
+    errors: List[str] = []
+    docs: List[Dict[str, Any]] = []
+    host = str(cfg.get('host') or '').strip().rstrip('/')
+    if not host:
+        return docs, ['splunk_error: host is empty']
+
+    auth, headers = _build_splunk_auth(cfg)
+    url = f'{host}/services/search/jobs/export'
+    search = _build_splunk_search(index_name, size=size, search_query=cfg.get('search_query'))
+    verify = _as_bool(cfg.get('verify_certs'), True)
+
+    try:
+        connect_timeout = float(os.getenv('SPLUNK_HTTP_CONNECT_TIMEOUT_SECONDS', '5'))
+    except Exception:
+        connect_timeout = 5.0
+    try:
+        read_timeout = float(os.getenv('SPLUNK_HTTP_READ_TIMEOUT_SECONDS', '60'))
+    except Exception:
+        read_timeout = 60.0
+
+    try:
+        resp = requests.post(
+            url,
+            data={'search': search, 'output_mode': 'json'},
+            auth=auth,
+            headers=headers,
+            timeout=(connect_timeout, read_timeout),
+            verify=verify,
+        )
+        resp.raise_for_status()
+    except requests.Timeout as exc:
+        logger.exception('Splunk timeout when fetching %s: %s', url, exc)
+        return docs, [f'splunk_timeout: {exc}']
+    except requests.HTTPError as exc:
+        body = ''
+        try:
+            body = (exc.response.text or '')[:2000]
+        except Exception:
+            body = ''
+        logger.exception('Splunk HTTPError when fetching %s: %s body=%s', url, exc, body)
+        return docs, [f'splunk_http_error: {exc} {body}'.strip()]
+    except requests.RequestException as exc:
+        logger.exception('Splunk network error when fetching %s: %s', url, exc)
+        return docs, [f'splunk_network_error: {exc}']
+
+    for line in (resp.text or '').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            errors.append(f'splunk_parse_error: {line[:200]}')
+            continue
+        result = payload.get('result') if isinstance(payload, dict) else None
+        if isinstance(result, dict):
+            docs.append(result)
+
+    return docs[: max(1, size)], errors
+
+
+def _parse_splunk_raw_fields(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, str):
+        return {}
+    text = raw.strip()
+    if not text:
+        return {}
+
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+
+    start = text.find('{')
+    end = text.rfind('}')
+    if start >= 0 and end > start:
+        try:
+            payload = json.loads(text[start : end + 1])
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+
+    fields: Dict[str, Any] = {}
+    pattern = re.compile(r'(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)=(?P<value>"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|\S+)')
+    for match in pattern.finditer(text):
+        key = match.group('key')
+        value = match.group('value').strip()
+        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+            try:
+                value = json.loads(value)
+            except Exception:
+                value = value[1:-1]
+        elif len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+            value = value[1:-1].replace("\\'", "'")
+        fields[key] = value
+    return fields
+
+
+def _normalize_splunk_doc(doc: Dict[str, Any], *, index_name: str) -> Dict[str, Any]:
+    out = dict(doc or {})
+    raw = out.get('_raw') or out.get('raw') or ''
+    raw_fields = _parse_splunk_raw_fields(raw)
+    for key, value in raw_fields.items():
+        if value not in (None, '') and out.get(key) in (None, ''):
+            out[key] = value
+
+    ts = out.get('timestamp') or out.get('@timestamp') or out.get('_time') or out.get('time')
+    if ts and not out.get('timestamp'):
+        out['timestamp'] = ts
+    if raw and not out.get('message'):
+        out['message'] = str(raw)
+    if not out.get('title') and out.get('message'):
+        out['title'] = str(out.get('message'))[:255]
+
+    fingerprint_seed = json.dumps(
+        {
+            'index': out.get('index') or index_name,
+            '_cd': out.get('_cd'),
+            '_bkt': out.get('_bkt'),
+            '_time': out.get('_time') or ts,
+            '_raw': raw,
+        },
+        sort_keys=True,
+        default=str,
+    )
+    fingerprint = hashlib.sha256(fingerprint_seed.encode('utf-8')).hexdigest()
+    out.setdefault('_splunk_id', out.get('_cd') or fingerprint)
+    out.setdefault('id', f'splunk:{out["_splunk_id"]}')
+    out['source_index'] = index_name
+    return out
+
+
+def _ticket_priority_from_severity(severity: Any) -> str:
+    normalized = _normalize_alert_severity(severity)
+    if normalized in {'critical', 'high', 'medium', 'low'}:
+        return normalized
+    return 'medium'
+
+
+def _create_or_attach_ticket_for_alert(
+    *,
+    alert_id: str,
+    index_name: str,
+    defaults: Dict[str, Any],
+    doc: Dict[str, Any],
+) -> tuple[Optional[str], bool]:
+    if not alert_id:
+        return None, False
+
+    from tickets.models import EventTicket
+
+    event_siem_id = str(alert_id)[:255]
+    ticket = EventTicket.objects.filter(event_siem_id=event_siem_id, is_deleted=False).first()
+    created = False
+    if not ticket:
+        message = defaults.get('message') or ''
+        title = defaults.get('title') or message or 'Splunk Alert'
+        description = defaults.get('description') or message or ''
+        category = defaults.get('category')
+        valid_categories = {choice[0] for choice in EventTicket.EVENT_CATEGORY_CHOICES}
+        event_category = str(category).strip().lower() if category else ''
+        if event_category not in valid_categories:
+            event_category = None
+
+        ticket = EventTicket.objects.create(
+            event_siem_id=event_siem_id,
+            title=str(title)[:255] or 'Splunk Alert',
+            description=str(description),
+            alert_message=json.dumps(doc or {}, ensure_ascii=True, default=str),
+            priority=_ticket_priority_from_severity(defaults.get('severity')),
+            status='new',
+            create_uid='siem',
+            event_sources='Splunk',
+            event_platform='Splunk',
+            event_category=event_category,
+        )
+        created = True
+
+    Alert.objects.filter(alert_id=str(alert_id), source_index=index_name).update(ticket_number=ticket.ticket_number)
+    return ticket.ticket_number, created
+
+
+def sync_splunk_alerts_to_db(
+    *,
+    integration_id: Optional[str] = None,
+    size: int = 1000,
+) -> Dict[str, Any]:
+    """Fetch Splunk events and upsert them into `alerts_alert`.
+
+    Field mapping intentionally mirrors `sync_es_alerts_to_db()` so Splunk and
+    ES alerts share the same downstream UI and risk-processing behavior.
+    """
+    if size <= 0:
+        size = 1000
+
+    from integrations.models import Integration
+
+    qs = Integration.objects.filter(type__in=['splunk_search', 'splunk'])
+    if integration_id:
+        qs = qs.filter(id=integration_id)
+    integration = qs.order_by('-updated_at', '-created_at').first()
+    if not integration:
+        return {
+            'source': 'splunk-search-api',
+            'index': '',
+            'fetched': 0,
+            'inserted': 0,
+            'updated': 0,
+            'skipped': 0,
+            'errors': ['splunk_error: saved Splunk Data Source integration not found'],
+        }
+
+    cfg = integration.config or {}
+    index_name = str(cfg.get('index') or 'main').strip() or 'main'
+    docs, errors = _fetch_splunk_events(cfg, index_name=index_name, size=size)
+    docs = [_normalize_splunk_doc(doc, index_name=index_name) for doc in docs if isinstance(doc, dict)]
+
+    inserted = 0
+    updated = 0
+    skipped = 0
+    tickets_created = 0
+    tickets_attached = 0
+
+    for doc in docs:
+        try:
+            alert_id = _ensure_alert_identity(doc, index_name)
+            doc['alert_id'] = alert_id
+            doc['source_index'] = index_name
+            clean_doc = _sanitize_doc(doc if isinstance(doc, dict) else {})
+            parsed_ts = _extract_alert_timestamp(clean_doc or doc, None)
+
+            defaults = {
+                'timestamp': parsed_ts or django_timezone.now(),
+                'severity': _normalize_alert_severity(_get_alert_field(doc, 'severity', 'level', 'body.severity', 'body.level')),
+                'message': _get_alert_field(doc, 'message', 'title', '_raw', 'body.message', 'body.title'),
+                'source_index': index_name,
+                'rule_id': _get_alert_field(doc, 'rule_id', 'body.rule_id', 'savedsearch_name', 'search_name'),
+                'title': _get_alert_field(doc, 'title', 'body.title', 'savedsearch_name', 'search_name'),
+                'status': _coerce_int(_get_alert_field(doc, 'status', 'body.status')),
+                'description': _get_alert_field(doc, 'description', 'details', '_raw', 'body.description'),
+                'category': _get_alert_field(doc, 'category', 'body.category', 'sourcetype', 'source'),
+                'source_data': {**(clean_doc or {}), **doc, 'alert_id': alert_id},
+            }
+
+            with transaction.atomic():
+                existing = Alert.objects.filter(alert_id=alert_id, source_index=index_name).order_by('-id').first()
+                if existing:
+                    for key, value in defaults.items():
+                        setattr(existing, key, value)
+                    existing.save(update_fields=list(defaults.keys()))
+                    created = False
+                else:
+                    Alert.objects.create(alert_id=alert_id, **defaults)
+                    created = True
+
+            if created:
+                try:
+                    from risk.services import process_alert_for_risk
+
+                    doc['rule_id'] = defaults.get('rule_id')
+                    doc['severity'] = defaults.get('severity')
+                    process_alert_for_risk(doc)
+                except Exception:
+                    logger.exception('RBA processing failed for splunk alert_id=%s (non-fatal)', alert_id)
+
+            try:
+                ticket_number, ticket_created = _create_or_attach_ticket_for_alert(
+                    alert_id=alert_id,
+                    index_name=index_name,
+                    defaults=defaults,
+                    doc=doc,
+                )
+                if ticket_number:
+                    if ticket_created:
+                        tickets_created += 1
+                    else:
+                        tickets_attached += 1
+            except Exception as ticket_exc:
+                errors.append(f'ticket_error alert_id={alert_id}: {ticket_exc}')
+                logger.exception('Ticket creation failed for splunk alert_id=%s', alert_id)
+
+            inserted += 1 if created else 0
+            updated += 0 if created else 1
+        except (IntegrityError, DatabaseError) as db_err:
+            skipped += 1
+            msg = f"db_error alert_id={doc.get('alert_id')}: {db_err}"
+            errors.append(msg)
+            logger.exception(msg)
+        except Exception as exc:
+            skipped += 1
+            msg = f"unexpected_error alert_id={doc.get('alert_id')}: {exc}"
+            errors.append(msg)
+            logger.exception(msg)
+
+    db_total_count = Alert.objects.filter(source_index=index_name).exclude(alert_id__isnull=True).exclude(alert_id='').count()
+    logger.info(
+        'Splunk->DB sync done (integration=%s index=%s fetched=%d inserted=%d updated=%d skipped=%d)',
+        integration.id,
+        index_name,
+        len(docs),
+        inserted,
+        updated,
+        skipped,
+    )
+    return {
+        'source': 'splunk-search-api',
+        'integration_id': str(integration.id),
+        'index': index_name,
+        'db_total': db_total_count,
+        'fetched': len(docs),
+        'inserted': inserted,
+        'updated': updated,
+        'skipped': skipped,
+        'tickets_created': tickets_created,
+        'tickets_attached': tickets_attached,
+        'errors': errors[:10],
     }
 
 

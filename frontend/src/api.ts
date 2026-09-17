@@ -835,6 +835,16 @@ export async function testEsIntegration(payload:any){
   return r.data
 }
 
+export async function testIntegrationConnection(payload:any){
+  const r = await client.post('/integrations/test_connection', payload)
+  return r.data
+}
+
+export async function fetchSplunkIntegrationData(id: string, payload:any = {}){
+  const r = await client.post(`/integrations/${encodeURIComponent(id)}/fetch-data/`, payload)
+  return r.data
+}
+
 export async function previewEsIntegration(payload:any){
   const r = await client.post('/integrations/preview_es', payload)
   return r.data
@@ -1286,7 +1296,7 @@ export async function getWorkflow(id: string): Promise<Workflow> {
 }
 
 // Create workflow
-type WorkflowWritePayload = Omit<Partial<Workflow>, 'execution_engine'> & {
+export type WorkflowWritePayload = Omit<Partial<Workflow>, 'execution_engine'> & {
   execution_engine?: 'prefect';
 };
 

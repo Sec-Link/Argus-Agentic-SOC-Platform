@@ -779,13 +779,6 @@ class WorkflowSchedule(models.Model):
         ('cron', 'Cron'),
         ('interval', 'Interval (seconds)'),
     ]
-class WorkflowEventCheckpoint(models.Model):
-    """Durable replay position for the Django Prefect event consumer."""
-
-    name = models.CharField(max_length=64, primary_key=True)
-    occurred = models.DateTimeField()
-
-
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workflow = models.ForeignKey(
@@ -823,3 +816,10 @@ class WorkflowEventCheckpoint(models.Model):
 
     def __str__(self):
         return f"{self.workflow.name} - {self.name}"
+
+
+class WorkflowEventCheckpoint(models.Model):
+    """Durable replay position for the Django Prefect event consumer."""
+
+    name = models.CharField(max_length=64, primary_key=True)
+    occurred = models.DateTimeField()

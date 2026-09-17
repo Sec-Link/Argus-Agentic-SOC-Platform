@@ -14,6 +14,7 @@ from .ip_lookup import IPLookupAction
 from .log import LogAction
 from .release_ip import ReleaseIPAction
 from .send_email import SendEmailAction
+from .send_notification import SendNotificationAction
 from .update_ticket import UpdateTicketAction
 
 
@@ -22,6 +23,7 @@ class ActionRegistry:
         "log": LogAction,
         "delay": DelayAction,
         "send_email": SendEmailAction,
+        "send_notification": SendNotificationAction,
         "api_call": ApiCallAction,
         "create_ticket": CreateTicketAction,
         "update_ticket": UpdateTicketAction,
