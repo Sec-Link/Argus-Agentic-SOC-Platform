@@ -27,4 +27,5 @@ urlpatterns = [
     path('api/v1/ai-assistant/', include('ai_assistant.urls')),
     path('api/v1/orchestrator/', include('orchestrator.urls')),
     path('api/v1/risk/', include('risk.urls')),
+    path('api/v1/reports/', include('reports.urls')),
 ]

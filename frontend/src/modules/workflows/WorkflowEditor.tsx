@@ -33,6 +33,7 @@ import {
   getAvailableActions,
   executeWorkflow,
   Workflow,
+  WorkflowWritePayload,
   WorkflowStep,
   ActionInfo,
 } from 'services/workflows';
@@ -187,7 +188,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
 
       const tags = normalizeTags(values.tags);
 
-      const payload: Partial<Workflow> = {
+      const payload: WorkflowWritePayload = {
         name: values.name,
         description: values.description || '',
         trigger_type: values.trigger_type,
@@ -714,4 +715,3 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
 };
 
 export default WorkflowEditor;
-
