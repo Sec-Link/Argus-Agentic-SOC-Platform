@@ -1,8 +1,6 @@
 import io
 import json
 from copy import deepcopy
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -12,7 +10,7 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from rest_framework.exceptions import ValidationError
 
-from workflows.models import PrefectDeployment, Workflow
+from workflows.models import PrefectDeployment, Workflow, WorkflowRevision
 from workflows.prefect.secrets import decrypt_secret_variable, encrypt_payload
 from workflows.publisher import build_published_export, import_workflow_from_json_payload, publish_workflow
 from workflows.secret_config import SecretConfigError, is_encrypted
@@ -77,21 +75,20 @@ class WorkflowSecretVariablesTests(TestCase):
             'order': 0, 'name': 'Call', 'action_type': 'api_call',
             'action_config': {'url': 'https://example.com', 'auth_type': 'bearer', 'auth_secret': '{{variables.token}}'},
         }])
-        with TemporaryDirectory() as directory, patch('workflows.publisher.GENERATED_FLOWS_DIR', Path(directory)):
-            publish_workflow(workflow, register_deployment=False)
-            exported, _ = build_published_export(workflow)
-            self.assertEqual(exported['secret_variables'], workflow.secret_variables)
-            self.assertNotIn(self.value, json.dumps(exported))
-            imported = import_workflow_from_json_payload(exported, created_by=self.user, update_existing=False)
-            self.assertEqual(imported.secret_variables, workflow.secret_variables)
-            clone = imported.clone(user=self.user)
-            self.assertEqual(clone.secret_variables, imported.secret_variables)
-            clone.secret_variables.clear()
-            self.assertEqual(list(imported.secret_variables), ['token'])
-            with override_settings(WORKFLOW_ENCRYPTION_KEYS=[Fernet.generate_key().decode('ascii')]):
-                with self.assertRaises(ValidationError) as error:
-                    import_workflow_from_json_payload(exported, created_by=self.user, update_existing=False)
-                self.assertNotIn(self.value, str(error.exception))
+        publish_workflow(workflow, register_deployment=False)
+        exported, _ = build_published_export(workflow)
+        self.assertEqual(exported['secret_variables'], workflow.secret_variables)
+        self.assertNotIn(self.value, json.dumps(exported))
+        imported = import_workflow_from_json_payload(exported, created_by=self.user, update_existing=False)
+        self.assertEqual(imported.secret_variables, workflow.secret_variables)
+        clone = imported.clone(user=self.user)
+        self.assertEqual(clone.secret_variables, imported.secret_variables)
+        clone.secret_variables.clear()
+        self.assertEqual(list(imported.secret_variables), ['token'])
+        with override_settings(WORKFLOW_ENCRYPTION_KEYS=[Fernet.generate_key().decode('ascii')]):
+            with self.assertRaises(ValidationError) as error:
+                import_workflow_from_json_payload(exported, created_by=self.user, update_existing=False)
+            self.assertNotIn(self.value, str(error.exception))
 
     def test_only_sensitive_fields_accept_references_and_conditions_reject_them(self):
         valid_config = {'url': 'https://example.com', 'headers': [{'key': 'X-Key', 'sensitive': True, 'value': '{{variables.token}}'}]}
@@ -129,31 +126,48 @@ class WorkflowSecretVariablesTests(TestCase):
         self.assertTrue(is_encrypted(workflow.secret_variables['token']))
         Workflow.objects.filter(pk=workflow.pk).update(secret_variables={'token': self.value})
         workflow.refresh_from_db()
-        with TemporaryDirectory() as directory, patch('workflows.publisher.GENERATED_FLOWS_DIR', Path(directory)):
-            with self.assertRaisesRegex(ValueError, 'secret variables'):
-                publish_workflow(workflow, register_deployment=False)
-            self.assertEqual(list(Path(directory).iterdir()), [])
+        with self.assertRaisesRegex(ValueError, 'secret variables'):
+            publish_workflow(workflow, register_deployment=False)
+        self.assertFalse(WorkflowRevision.objects.exists())
 
     def test_management_command_rotates_secret_variables_in_database_and_manifests(self):
-        workflow = self.create_workflow(is_draft=False)
+        workflow = self.create_workflow()
+        publish_workflow(workflow, register_deployment=False)
+        publish_workflow(workflow, register_deployment=False)
         original = dict(workflow.secret_variables)
+        revisions = list(WorkflowRevision.objects.filter(workflow=workflow))
         new_key = Fernet.generate_key().decode('ascii')
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / str(workflow.pk) / 'v1.json'
-            path.parent.mkdir()
-            path.write_text(json.dumps({'secret_variables': original, 'steps': []}), encoding='utf-8')
-            with (
-                override_settings(WORKFLOW_ENCRYPTION_KEYS=[new_key, self.key]),
-                patch('workflows.management.commands.migrate_workflow_secrets.GENERATED_FLOWS_DIR', Path(directory)),
-                patch('workflows.management.commands.migrate_workflow_secrets.publish_workflow') as publish,
-            ):
-                call_command('migrate_workflow_secrets', rotate=True, stdout=io.StringIO())
-                workflow.refresh_from_db()
-                self.assertEqual(workflow.secret_variables, original)
-                self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['secret_variables'], original)
-                publish.assert_not_called()
-                call_command('migrate_workflow_secrets', rotate=True, apply=True, stdout=io.StringIO())
+        with (
+            override_settings(WORKFLOW_ENCRYPTION_KEYS=[new_key, self.key]),
+            patch('workflows.management.commands.migrate_workflow_secrets.publish_workflow') as publish,
+        ):
+            call_command('migrate_workflow_secrets', rotate=True, stdout=io.StringIO())
             workflow.refresh_from_db()
-            for variables in (workflow.secret_variables, json.loads(path.read_text(encoding='utf-8'))['secret_variables'], publish.call_args.args[0].secret_variables):
-                self.assertNotEqual(variables, original)
-                self.assertEqual(decrypt_secret_variable('token', variables['token'], [new_key]), self.value)
+            self.assertEqual(workflow.secret_variables, original)
+            for revision in revisions:
+                revision.refresh_from_db()
+                self.assertEqual(revision.manifest['secret_variables'], original)
+            publish.assert_not_called()
+            call_command('migrate_workflow_secrets', rotate=True, apply=True, stdout=io.StringIO())
+        workflow.refresh_from_db()
+        rotated = [workflow.secret_variables, publish.call_args.args[0].secret_variables]
+        for revision in revisions:
+            revision.refresh_from_db()
+            rotated.append(revision.manifest['secret_variables'])
+        for variables in rotated:
+            self.assertNotEqual(variables, original)
+            self.assertEqual(decrypt_secret_variable('token', variables['token'], [new_key]), self.value)
+
+    def test_rotation_failure_rolls_back_draft_and_all_revisions(self):
+        workflow = self.create_workflow()
+        publish_workflow(workflow, register_deployment=False)
+        original = dict(workflow.secret_variables)
+        with (
+            override_settings(WORKFLOW_ENCRYPTION_KEYS=[Fernet.generate_key().decode('ascii'), self.key]),
+            patch('workflows.management.commands.migrate_workflow_secrets.publish_workflow', side_effect=ValueError('failed')),
+            self.assertRaisesRegex(ValueError, 'failed'),
+        ):
+            call_command('migrate_workflow_secrets', rotate=True, apply=True, stdout=io.StringIO())
+        workflow.refresh_from_db()
+        self.assertEqual(workflow.secret_variables, original)
+        self.assertEqual(WorkflowRevision.objects.get().manifest['secret_variables'], original)

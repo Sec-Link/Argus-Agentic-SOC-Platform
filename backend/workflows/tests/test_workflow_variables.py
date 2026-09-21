@@ -1,6 +1,4 @@
 from copy import deepcopy
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -32,25 +30,24 @@ class WorkflowVariablesTests(TestCase):
             self.assertFalse(serializer.is_valid())
             self.assertIn('variables', serializer.errors)
 
-        with TemporaryDirectory() as directory, patch('workflows.publisher.GENERATED_FLOWS_DIR', Path(directory)):
-            publish_workflow(workflow, register_deployment=False)
-            changed = WorkflowCreateSerializer(workflow, data={'variables': {'recipient': 'new@example.com'}}, partial=True)
-            self.assertTrue(changed.is_valid(), changed.errors)
-            changed.save()
-            exported, _ = build_published_export(workflow)
-            self.assertEqual(exported['variables'], variables)
-            imported = import_workflow_from_json_payload(exported, created_by=user, update_existing=False)
-            imported.refresh_from_db()
-            self.assertEqual(WorkflowDetailSerializer(imported).data['variables'], variables)
-            self.assertEqual(imported.steps.get().action_config['message'], '{{variables.recipient}}')
-            clone = imported.clone(user=user)
-            self.assertEqual(clone.variables, variables)
-            clone.variables['nested']['site'] = 'Changed'
-            self.assertEqual(imported.variables['nested']['site'], 'SOC')
+        publish_workflow(workflow, register_deployment=False)
+        changed = WorkflowCreateSerializer(workflow, data={'variables': {'recipient': 'new@example.com'}}, partial=True)
+        self.assertTrue(changed.is_valid(), changed.errors)
+        changed.save()
+        exported, _ = build_published_export(workflow)
+        self.assertEqual(exported['variables'], variables)
+        imported = import_workflow_from_json_payload(exported, created_by=user, update_existing=False)
+        imported.refresh_from_db()
+        self.assertEqual(WorkflowDetailSerializer(imported).data['variables'], variables)
+        self.assertEqual(imported.steps.get().action_config['message'], '{{variables.recipient}}')
+        clone = imported.clone(user=user)
+        self.assertEqual(clone.variables, variables)
+        clone.variables['nested']['site'] = 'Changed'
+        self.assertEqual(imported.variables['nested']['site'], 'SOC')
 
-            exported.pop('variables')
-            legacy = import_workflow_from_json_payload(exported, created_by=user, update_existing=False)
-            self.assertEqual(legacy.variables, {})
+        exported.pop('variables')
+        legacy = import_workflow_from_json_payload(exported, created_by=user, update_existing=False)
+        self.assertEqual(legacy.variables, {})
 
     def test_declared_variables_resolve_in_actions_and_conditions_without_mutating_the_manifest(self):
         workflow_id, condition_id, action_id = (str(uuid4()) for _ in range(3))

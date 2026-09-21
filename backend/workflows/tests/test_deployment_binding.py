@@ -1,6 +1,4 @@
 import os
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -16,14 +14,9 @@ from workflows.publisher import publish_workflow
 
 class DeploymentBindingTests(TestCase):
     def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        for mocked in (
-            patch('workflows.publisher.GENERATED_FLOWS_DIR', Path(directory.name)),
-            patch.dict(os.environ, {'PREFECT_API_URL': 'http://prefect.test/api', 'PREFECT_DEPLOYMENT_ID': str(uuid4())}),
-        ):
-            mocked.start()
-            self.addCleanup(mocked.stop)
+        environment = patch.dict(os.environ, {'PREFECT_API_URL': 'http://prefect.test/api', 'PREFECT_DEPLOYMENT_ID': str(uuid4())})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.first = PrefectDeployment.objects.create(id=uuid4(), name='Site A', status='NOT_READY')
         self.second = PrefectDeployment.objects.create(id=uuid4(), name='Site B', status='READY')
         self.user = get_user_model().objects.create_user(username='deployment-bindings')
@@ -61,12 +54,15 @@ class DeploymentBindingTests(TestCase):
             self.assertFalse(workflow.is_draft)
             self.assertEqual(workflow.name, 'Bound workflow')
 
-    def test_draft_can_be_unbound_but_activation_and_publish_require_a_registered_uuid(self):
+    def test_draft_flags_cannot_publish_and_publish_requires_a_registered_uuid(self):
         response = self.client.post('/api/v1/workflows/workflows/', {'name': 'Draft'}, format='json')
         self.assertEqual(response.status_code, 201, response.content)
         workflow = Workflow.objects.get(pk=response.json()['id'])
         WorkflowStep.objects.create(workflow=workflow, name='Log', action_type='log', action_config={'message': 'draft'})
-        for payload in ({'is_draft': False}, {'prefect_deployment_id': 'invalid'}, {'prefect_deployment_id': str(uuid4())}):
+        unchanged = self.client.patch(self.url(workflow), {'is_draft': False}, format='json')
+        self.assertEqual(unchanged.status_code, 200, unchanged.content)
+        self.assertTrue(unchanged.data['is_draft'])
+        for payload in ({'prefect_deployment_id': 'invalid'}, {'prefect_deployment_id': str(uuid4())}):
             rejected = self.client.patch(self.url(workflow), payload, format='json')
             self.assertEqual(rejected.status_code, 400, rejected.content)
         self.assertEqual(self.client.post(self.url(workflow) + 'publish/', {}, format='json').status_code, 400)
@@ -74,6 +70,10 @@ class DeploymentBindingTests(TestCase):
             'prefect_deployment_id': str(self.first.id), 'is_draft': False,
         }, format='json')
         self.assertEqual(selected.status_code, 200, selected.content)
+        self.assertTrue(selected.data['is_draft'])
+        self.assertEqual(self.client.post(self.url(workflow) + 'publish/', {}, format='json').status_code, 200)
+        workflow.refresh_from_db()
+        self.assertFalse(workflow.is_draft)
 
     def test_invalid_old_binding_allows_other_edits_but_not_new_selection(self):
         workflow = self.workflow()
@@ -120,12 +120,18 @@ class DeploymentBindingTests(TestCase):
         workflow = self.workflow()
         workflow.trigger_type, workflow.schedule_cron = 'scheduled', '0 * * * *'
         workflow.save()
-        plan = WorkflowSchedule.objects.create(workflow=workflow, name='default', cron=workflow.schedule_cron)
+        plan = WorkflowSchedule.objects.create(
+            workflow=workflow, name='default', cron=workflow.schedule_cron,
+            sync_status='synced', synced_version=workflow.version,
+        )
         url = f'/api/v1/workflows/schedules/{plan.id}/'
         with patch('workflows.prefect_client.list_deployment_schedules', side_effect=prefect_client.PrefectAPIError('offline')):
             response = self.client.delete(url)
         self.assertEqual(response.status_code, 400)
         self.assertTrue(WorkflowSchedule.objects.filter(pk=plan.pk).exists())
+        plan.refresh_from_db()
+        self.assertEqual(plan.sync_status, 'synced')
+        self.assertEqual(plan.last_error, '')
         workflow.refresh_from_db()
         self.assertEqual(workflow.schedule_cron, '0 * * * *')
         self.first.is_available = False
@@ -159,4 +165,8 @@ class DeploymentBindingTests(TestCase):
             with self.assertRaisesMessage(ValidationError, str(plan.id)):
                 callbacks[0]()
         self.assertTrue(WorkflowSchedule.objects.filter(pk=plan.id).exists())
+        plan.refresh_from_db()
+        self.assertEqual(plan.sync_status, 'failed')
+        self.assertIn('response lost', plan.last_error)
+        self.assertIsNone(plan.synced_version)
         self.assertEqual(self.client.patch(self.url(workflow), {'prefect_deployment_id': str(self.second.id)}, format='json').status_code, 400)

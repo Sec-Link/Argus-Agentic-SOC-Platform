@@ -1,19 +1,19 @@
 """Workflow publisher for versioned and atomic Prefect manifests."""
 from __future__ import annotations
 
-import json
 import logging
-import os
-import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone as dt_timezone
-from pathlib import Path
 from typing import Any, Dict, Iterable, List
 from uuid import UUID
 
+from django.db import transaction
+from django.db.models import Max
+from django.utils import timezone
+
 from .prefect.actions import ActionRegistry
 
-from .models import Workflow, WorkflowStep
+from .models import Workflow, WorkflowRevision, WorkflowStep
 from .persistence import persist_workflow_definition
 from .secret_config import (
     SecretConfigError,
@@ -26,10 +26,6 @@ from .secret_config import (
 )
 
 logger = logging.getLogger(__name__)
-
-GENERATED_FLOWS_DIR = Path(__file__).resolve().parent / 'flows' / 'generated'
-CURRENT_POINTER_FILENAME = 'current.json'
-
 
 def _serialize_step(step: WorkflowStep) -> Dict[str, Any]:
     config: Dict[str, Any] = {}
@@ -70,46 +66,8 @@ def serialize_workflow(workflow: Workflow) -> Dict[str, Any]:
     }
 
 
-def _workflow_dir(workflow: Workflow) -> Path:
-    return GENERATED_FLOWS_DIR / str(workflow.id)
-
-
 def _manifest_filename(version: int) -> str:
     return f'v{version}.json'
-
-
-def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(prefix=path.stem + '.', suffix='.tmp', dir=str(path.parent))
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-            json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)
-        os.replace(temp_path, path)
-    except Exception:
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
-        raise
-
-
-def _atomic_create_json(path: Path, payload: Dict[str, Any]) -> None:
-    """Atomically create an immutable JSON file without replacing a peer."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(prefix=path.stem + '.', suffix='.tmp', dir=str(path.parent))
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-            json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)
-        os.link(temp_path, path)
-    finally:
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
-
-
-def _active_steps(workflow: Workflow) -> List[Dict[str, Any]]:
-    return list((serialize_workflow(workflow).get('steps') or []))
 
 
 def _validate_action_types(steps: Iterable[Dict[str, Any]]) -> None:
@@ -171,58 +129,37 @@ def _build_manifest_record(workflow: Workflow, version: int) -> Dict[str, Any]:
     return payload
 
 
-def _current_pointer_payload(workflow: Workflow, version: int, published_at: str) -> Dict[str, Any]:
+def resolve_manifest_metadata(workflow: Workflow) -> Dict[str, Any]:
+    revision = workflow.published_revision
+    if revision is None:
+        raise FileNotFoundError(f'Published manifest pointer not found for workflow {workflow.id}')
+    if revision.workflow_id != workflow.id:
+        raise ValueError('Published manifest pointer belongs to another workflow.')
+    if revision.version < 1:
+        raise ValueError('Published manifest version is invalid.')
     return {
         'workflow_id': str(workflow.id),
         'workflow_name': workflow.name,
-        'current_version': version,
-        'manifest_filename': _manifest_filename(version),
-        'published_at': published_at,
+        'current_version': revision.version,
+        'manifest_filename': _manifest_filename(revision.version),
+        'published_at': revision.published_at.isoformat(),
     }
-
-
-def _manifest_path_for_version(workflow: Workflow, version: int) -> Path:
-    return _workflow_dir(workflow) / _manifest_filename(version)
-
-
-def _current_pointer_path(workflow: Workflow) -> Path:
-    return _workflow_dir(workflow) / CURRENT_POINTER_FILENAME
-
-
-def resolve_manifest_metadata(workflow: Workflow) -> Dict[str, Any]:
-    pointer_path = _current_pointer_path(workflow)
-    if not pointer_path.exists():
-        raise FileNotFoundError(f'Published manifest pointer not found for workflow {workflow.id}')
-    with open(pointer_path, 'r', encoding='utf-8') as handle:
-        return json.load(handle)
 
 
 def load_current_published_manifest(workflow: Workflow) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Load and validate the manifest selected by a workflow's current pointer."""
     pointer = resolve_manifest_metadata(workflow)
-    manifest_filename = str(pointer.get('manifest_filename') or '').strip()
-    try:
-        manifest_version = int(pointer.get('current_version') or 0)
-    except (TypeError, ValueError) as exc:
-        raise ValueError('Published manifest version is invalid.') from exc
-
-    if manifest_version < 1 or not manifest_filename:
-        raise ValueError('Published manifest pointer is incomplete.')
-    if Path(manifest_filename).name != manifest_filename:
-        raise ValueError('Published manifest filename is invalid.')
-    if str(pointer.get('workflow_id') or '') != str(workflow.id):
-        raise ValueError('Published manifest pointer belongs to another workflow.')
-
-    manifest = load_published_manifest(workflow, manifest_version)
-    if manifest_filename != _manifest_filename(manifest_version):
-        raise ValueError('Published manifest filename does not match its version.')
+    manifest = _validate_published_manifest(
+        workflow, pointer['current_version'], deepcopy(workflow.published_revision.manifest),
+    )
+    pointer['workflow_name'] = manifest.get('name', workflow.name)
     return pointer, manifest
 
 
 def get_published_state(workflow: Workflow) -> Dict[str, Any]:
     try:
-        pointer, _ = load_current_published_manifest(workflow)
-    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pointer = resolve_manifest_metadata(workflow)
+    except (FileNotFoundError, TypeError, ValueError):
         return {
             'published_version': None,
             'published_at': None,
@@ -247,28 +184,19 @@ def build_published_export(workflow: Workflow) -> tuple[Dict[str, Any], Dict[str
 
 
 def _next_publish_version(workflow: Workflow) -> int:
-    published_versions = [
-        int(path.stem[1:])
-        for path in _workflow_dir(workflow).glob('v*.json')
-        if path.stem[1:].isdigit() and int(path.stem[1:]) > 0
-    ]
-    try:
-        pointer = resolve_manifest_metadata(workflow)
-        pointer_version = int(pointer.get('current_version') or 0)
-    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
-        pointer_version = 0
-
-    if published_versions or pointer_version > 0:
-        return max([int(workflow.version or 1), pointer_version, *published_versions]) + 1
+    latest = WorkflowRevision.objects.filter(workflow=workflow).aggregate(version=Max('version'))['version']
+    if latest is not None:
+        return max(int(workflow.version or 1), latest) + 1
     return max(int(workflow.version or 1), 1)
 
 
 def load_manifest_definition(workflow: Workflow, version: int) -> Dict[str, Any]:
-    manifest_path = _manifest_path_for_version(workflow, version)
-    if not manifest_path.exists():
-        raise FileNotFoundError(f'Published manifest not found: {manifest_path.name}')
-    with open(manifest_path, 'r', encoding='utf-8') as handle:
-        return json.load(handle)
+    try:
+        return WorkflowRevision.objects.values_list('manifest', flat=True).get(
+            workflow=workflow, version=version,
+        )
+    except WorkflowRevision.DoesNotExist as exc:
+        raise FileNotFoundError(f'Published manifest not found: {_manifest_filename(version)}') from exc
 
 
 def _validate_published_manifest(
@@ -378,108 +306,43 @@ def load_published_manifest(workflow: Workflow, version: int) -> Dict[str, Any]:
     )
 
 
-def load_manifest_definition_by_ref(manifest_ref: str) -> Dict[str, Any]:
-    manifest_path = GENERATED_FLOWS_DIR / manifest_ref
-    if not manifest_path.exists():
-        raise FileNotFoundError(f'Published manifest not found: {manifest_ref}')
-    with open(manifest_path, 'r', encoding='utf-8') as handle:
-        return json.load(handle)
-
-
+@transaction.atomic
 def publish_workflow(
     workflow: Workflow,
     *,
     register_deployment: bool = True,
 ) -> Dict[str, Any]:
-    active_steps = _active_steps(workflow)
-    _validate_action_types(active_steps)
-    _validate_action_configs(active_steps)
-
-    publish_version = _next_publish_version(workflow)
-    manifest = _build_manifest_record(workflow, publish_version)
-    _validate_published_manifest(workflow, publish_version, manifest)
-    manifest_path = _manifest_path_for_version(workflow, publish_version)
-    pointer_path = _current_pointer_path(workflow)
+    locked = Workflow.objects.select_for_update().get(pk=workflow.pk)
+    publish_version = _next_publish_version(locked)
+    manifest = _build_manifest_record(locked, publish_version)
+    _validate_action_types(manifest['steps'])
+    _validate_action_configs(manifest['steps'])
+    _validate_published_manifest(locked, publish_version, manifest)
     published_at = manifest['_meta']['published_at']
+    revision = WorkflowRevision.objects.create(
+        workflow=locked, version=publish_version, manifest=manifest,
+        published_at=datetime.fromisoformat(published_at),
+    )
+    Workflow.objects.filter(pk=locked.pk).update(
+        version=publish_version, execution_engine='prefect', is_draft=False,
+        published_revision=revision, updated_at=timezone.now(),
+    )
+    locked.schedules.update(sync_status='pending', last_error='')
+    workflow.refresh_from_db()
 
-    if manifest_path.exists():
-        raise FileExistsError(f'Published manifest already exists: {manifest_path.name}')
-    _atomic_create_json(manifest_path, manifest)
-    _atomic_write_json(pointer_path, _current_pointer_payload(workflow, publish_version, published_at))
-
-    workflow.version = publish_version
-    workflow.execution_engine = 'prefect'
-    workflow.is_draft = False
-    workflow.save(update_fields=['version', 'execution_engine', 'is_draft', 'updated_at'])
-
-    logger.info('Published workflow "%s" (id=%s) version %s to %s', workflow.name, workflow.id, publish_version, manifest_path)
+    logger.info('Published workflow "%s" (id=%s) version %s', workflow.name, workflow.id, publish_version)
+    manifest_filename = _manifest_filename(publish_version)
     return {
         'slug': str(workflow.id),
-        'manifest_ref': f'{workflow.id}/{manifest_path.name}',
-        'manifest_path': str(manifest_path),
+        'manifest_ref': f'{workflow.id}/{manifest_filename}',
+        'manifest_path': '',
         'manifest_version': publish_version,
-        'manifest_filename': manifest_path.name,
+        'manifest_filename': manifest_filename,
         'published_at': published_at,
-        'steps_count': len(active_steps),
+        'steps_count': len(manifest['steps']),
         'deployment_registered': False,
         'deployment_id': workflow.prefect_deployment_id or None,
     }
-
-
-def list_published_manifests() -> List[Dict[str, Any]]:
-    # Intentionally retained but not exposed by URLs/UI. The product does not
-    # currently support disaster recovery from server-local manifests, and
-    # restoring one can mismatch database UUIDs and published-state pointers.
-    if not GENERATED_FLOWS_DIR.exists():
-        return []
-
-    manifests: List[Dict[str, Any]] = []
-    for pointer_file in sorted(GENERATED_FLOWS_DIR.glob(f'*/{CURRENT_POINTER_FILENAME}')):
-        try:
-            with open(pointer_file, 'r', encoding='utf-8') as handle:
-                pointer = json.load(handle)
-            workflow_dir = pointer_file.parent
-            manifest_filename = pointer.get('manifest_filename') or ''
-            manifest_path = workflow_dir / manifest_filename
-            with open(manifest_path, 'r', encoding='utf-8') as handle:
-                data = json.load(handle)
-            meta = data.get('_meta', {})
-            manifests.append({
-                'filename': f"{workflow_dir.name}/{manifest_filename}",
-                'slug': workflow_dir.name,
-                'name': data.get('name', workflow_dir.name),
-                'description': data.get('description', ''),
-                'steps_count': len(data.get('steps', [])),
-                'published_at': meta.get('published_at'),
-                'version': meta.get('version'),
-                'trigger_type': meta.get('trigger_type', 'manual'),
-                'tags': meta.get('tags', []),
-                'has_flow_file': False,
-            })
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning('Skipping invalid manifest pointer %s: %s', pointer_file, exc)
-    return manifests
-
-
-def import_workflow_from_manifest(
-    filename: str,
-    *,
-    created_by,
-    update_existing: bool = True,
-) -> Workflow:
-    # Intentionally retained as dormant recovery code. See the comment on
-    # list_published_manifests; normal transfers must use uploaded JSON.
-    manifest_path = GENERATED_FLOWS_DIR / filename
-    if not manifest_path.exists():
-        raise FileNotFoundError(f'Manifest file not found: {filename}')
-
-    with open(manifest_path, 'r', encoding='utf-8') as handle:
-        payload = json.load(handle)
-    return import_workflow_from_json_payload(
-        payload,
-        created_by=created_by,
-        update_existing=update_existing,
-    )
 
 
 def import_workflow_from_json_payload(

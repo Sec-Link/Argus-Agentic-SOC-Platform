@@ -7,6 +7,7 @@ Usage:
     python manage.py load_sample_workflows --email user1@example.com,user2@example.com
 """
 from django.core.management.base import BaseCommand
+from django.db import transaction
 from ...models import Workflow, WorkflowStep
 
 
@@ -37,12 +38,13 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS('Sample workflows loaded successfully!'))
 
+    @transaction.atomic
     def create_high_alert_email_workflow(self, recipient_emails, force=False):
         """Create the High/Critical Alert Email Notification workflow."""
         workflow_name = 'High/Critical Alert Email Notification'
 
         # Check if workflow already exists
-        existing = Workflow.objects.filter(name=workflow_name).first()
+        existing = Workflow.objects.select_for_update().filter(name=workflow_name).first()
         if existing:
             if force:
                 self.stdout.write(f'  Deleting existing workflow: {workflow_name}')
@@ -65,7 +67,7 @@ class Command(BaseCommand):
                 'severity': ['high', 'critical']
             },
             is_active=True,
-            is_draft=False,
+            is_draft=True,
             version=1,
             tags=['alert', 'notification', 'email', 'high-severity', 'sample'],
             edges=[

@@ -2,6 +2,8 @@
 Workflow Admin Configuration
 """
 from django.contrib import admin
+from django.db import transaction
+from django.utils import timezone
 from .models import (
     ActionTemplate,
     Workflow,
@@ -19,6 +21,14 @@ class ActionTemplateAdmin(admin.ModelAdmin):
     search_fields = ['name', 'action_type', 'description']
     readonly_fields = ['id', 'created_at', 'updated_at']
 
+    @transaction.atomic
+    def delete_queryset(self, request, queryset):
+        list(Workflow.objects.select_for_update().filter(
+            pk__in=WorkflowStep.objects.filter(action_template__in=queryset).values('workflow_id'),
+        ).order_by('pk'))
+        for template in queryset:
+            template.delete()
+
 
 class WorkflowStepInline(admin.TabularInline):
     model = WorkflowStep
@@ -32,7 +42,7 @@ class WorkflowAdmin(admin.ModelAdmin):
     list_display = ['name', 'trigger_type', 'is_active', 'is_draft', 'version', 'created_by', 'created_at']
     list_filter = ['trigger_type', 'is_active', 'is_draft']
     search_fields = ['name', 'description']
-    readonly_fields = ['id', 'created_at', 'updated_at']
+    readonly_fields = ['id', 'version', 'is_draft', 'published_revision', 'created_at', 'updated_at']
     inlines = [WorkflowStepInline]
 
     def get_readonly_fields(self, request, obj=None):
@@ -41,6 +51,17 @@ class WorkflowAdmin(admin.ModelAdmin):
             fields.append('execution_engine')
         return fields
 
+    @transaction.atomic
+    def changeform_view(self, request, object_id=None, form_url='', extra_context=None):
+        if request.method == 'POST' and object_id:
+            list(Workflow.objects.select_for_update().filter(pk=object_id))
+        return super().changeform_view(request, object_id, form_url, extra_context)
+
+    @transaction.atomic
+    def delete_queryset(self, request, queryset):
+        list(queryset.select_for_update().order_by('pk'))
+        queryset.delete()
+
 
 @admin.register(WorkflowStep)
 class WorkflowStepAdmin(admin.ModelAdmin):
@@ -48,6 +69,16 @@ class WorkflowStepAdmin(admin.ModelAdmin):
     list_filter = ['workflow', 'is_active', 'on_failure']
     search_fields = ['name', 'action_type']
     readonly_fields = ['id', 'created_at', 'updated_at']
+
+    def get_readonly_fields(self, request, obj=None):
+        return [*self.readonly_fields, *(['workflow'] if obj else [])]
+
+    @transaction.atomic
+    def delete_queryset(self, request, queryset):
+        workflow_ids = set(queryset.values_list('workflow_id', flat=True))
+        list(Workflow.objects.select_for_update().filter(pk__in=workflow_ids).order_by('pk'))
+        queryset.delete()
+        Workflow.objects.filter(pk__in=workflow_ids).update(is_draft=True, updated_at=timezone.now())
 
 
 class StepExecutionInline(admin.TabularInline):

@@ -60,7 +60,7 @@ class Command(BaseCommand):
                     serializer = WorkflowCreateSerializer(instance=workflow, data={
                         'prefect_deployment_id': deployment_id,
                         'is_active': bool(options.get('activate')),
-                        'is_draft': not bool(options.get('activate')),
+                        'is_draft': True,
                     }, partial=True)
                     serializer.is_valid(raise_exception=True)
                     workflow = serializer.save()

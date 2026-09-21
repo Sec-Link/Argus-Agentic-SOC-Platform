@@ -66,25 +66,16 @@ def _sync_schedule(schedule):
 
     try:
         sync_schedule(schedule)
-    except (OSError, ValueError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:
         raise ValidationError({'schedule': str(exc)}) from exc
 
 
-@transaction.atomic
 def _sync_saved_schedule(schedule_id):
-    workflow_id = WorkflowSchedule.objects.filter(pk=schedule_id).values_list('workflow_id', flat=True).first()
-    if workflow_id is None:
-        return
-    workflow = Workflow.objects.select_for_update().get(pk=workflow_id)
-    schedule = WorkflowSchedule.objects.filter(pk=schedule_id).first()
-    if schedule is None:
-        return
-    schedule.workflow = workflow
     try:
-        _sync_schedule(schedule)
+        _sync_schedule(schedule_id)
     except ValidationError as exc:
         raise ValidationError({
-            'schedule': f'Plan {schedule.id} was saved but Prefect synchronization failed. Retry or delete this plan. {exc.detail["schedule"]}'
+            'schedule': f'Plan {schedule_id} was saved but Prefect synchronization failed. Retry or delete this plan. {exc.detail["schedule"]}'
         }) from exc
 
 
@@ -186,7 +177,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         return WorkflowDetailSerializer
 
     def get_queryset(self):
-        queryset = Workflow.objects.all()
+        queryset = Workflow.objects.select_related('published_revision').defer('published_revision__manifest')
 
         trigger_type = self.request.query_params.get('trigger_type')
         if trigger_type:
@@ -253,9 +244,11 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         if workflow.trigger_type != 'scheduled' or not workflow.schedule_cron:
             if schedule and schedule.is_active:
                 schedule.is_active = False
+                schedule.sync_status = 'pending'
+                schedule.last_error = ''
+                schedule.save(update_fields=['is_active', 'sync_status', 'last_error'])
                 if sync:
-                    _sync_schedule(schedule)
-                schedule.save(update_fields=['is_active'])
+                    transaction.on_commit(lambda: _sync_saved_schedule(schedule.pk))
             return
 
         if schedule and schedule.cron == workflow.schedule_cron and schedule.is_active == workflow.is_active:
@@ -272,6 +265,8 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         schedule.interval_seconds = None
         schedule.timezone = 'UTC'
         schedule.is_active = workflow.is_active
+        schedule.sync_status = 'pending'
+        schedule.last_error = ''
         try:
             require_deployment(workflow.prefect_deployment_id)
         except ValueError as exc:
@@ -342,14 +337,24 @@ class WorkflowScheduleViewSet(viewsets.ModelViewSet):
             require_deployment(workflow.prefect_deployment_id)
         except ValueError as exc:
             raise ValidationError({'workflow': str(exc)}) from exc
-        schedule = serializer.save(workflow=workflow, created_by=self.request.user)
-        transaction.on_commit(lambda: _sync_saved_schedule(schedule.pk))
+        schedule = serializer.save(workflow=workflow, created_by=self.request.user, sync_status='pending', last_error='')
+
+        def sync_saved():
+            _sync_saved_schedule(schedule.pk)
+            schedule.refresh_from_db()
+
+        transaction.on_commit(sync_saved)
 
     @transaction.atomic
     def perform_update(self, serializer):
         serializer.instance = self._locked_schedule(serializer.instance)
-        schedule = serializer.save()
-        _sync_schedule(schedule)
+        schedule = serializer.save(sync_status='pending', last_error='')
+
+        def sync_saved():
+            _sync_saved_schedule(schedule.pk)
+            schedule.refresh_from_db()
+
+        transaction.on_commit(sync_saved)
 
     @transaction.atomic
     def perform_destroy(self, instance):
@@ -361,7 +366,7 @@ class WorkflowScheduleViewSet(viewsets.ModelViewSet):
         except (OSError, ValueError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:
             raise ValidationError({'schedule': f'Could not remove the Prefect schedule; the local plan was kept. {exc}'}) from exc
         if instance.name == 'default':
-            Workflow.objects.filter(pk=instance.workflow_id).update(schedule_cron=None)
+            Workflow.objects.filter(pk=instance.workflow_id).update(schedule_cron=None, is_draft=True)
         instance.delete()
 
     @action(detail=True, methods=['post'])
@@ -369,8 +374,10 @@ class WorkflowScheduleViewSet(viewsets.ModelViewSet):
     def pause(self, request, pk=None):
         schedule = self._locked_schedule(self.get_object())
         schedule.is_active = False
-        _sync_schedule(schedule)
-        schedule.save(update_fields=['is_active'])
+        schedule.sync_status = 'pending'
+        schedule.last_error = ''
+        schedule.save(update_fields=['is_active', 'sync_status', 'last_error'])
+        transaction.on_commit(lambda: _sync_saved_schedule(schedule.pk))
         return Response({'status': 'paused'})
 
     @action(detail=True, methods=['post'])
@@ -378,8 +385,10 @@ class WorkflowScheduleViewSet(viewsets.ModelViewSet):
     def resume(self, request, pk=None):
         schedule = self._locked_schedule(self.get_object())
         schedule.is_active = True
-        _sync_schedule(schedule)
-        schedule.save(update_fields=['is_active'])
+        schedule.sync_status = 'pending'
+        schedule.last_error = ''
+        schedule.save(update_fields=['is_active', 'sync_status', 'last_error'])
+        transaction.on_commit(lambda: _sync_saved_schedule(schedule.pk))
         return Response({'status': 'resumed'})
 
     @action(detail=True, methods=['post'], url_path='execute')
@@ -420,14 +429,24 @@ class WorkflowStepViewSet(viewsets.ModelViewSet):
         return WorkflowStepSerializer
 
     @action(detail=False, methods=['post'])
+    @transaction.atomic
     def reorder(self, request):
-        step_orders = request.data.get('step_orders', [])
+        from .serializers import WorkflowStepOrderSerializer
 
-        for item in step_orders:
-            step_id = item.get('id')
-            order = item.get('order')
-            if step_id is not None and order is not None:
-                WorkflowStep.objects.filter(id=step_id).update(order=order)
+        serializer = WorkflowStepOrderSerializer(data=request.data.get('step_orders', []), many=True)
+        serializer.is_valid(raise_exception=True)
+        items = serializer.validated_data
+        step_ids = {item['id'] for item in items}
+        if len(step_ids) != len(items):
+            raise ValidationError({'step_orders': 'Duplicate step IDs are not allowed.'})
+        steps = self.get_queryset().filter(pk__in=step_ids)
+        workflow_ids = set(steps.values_list('workflow_id', flat=True))
+        list(Workflow.objects.select_for_update().filter(pk__in=workflow_ids).order_by('pk'))
+        if steps.count() != len(items):
+            raise ValidationError({'step_orders': 'One or more steps no longer exist.'})
+        for item in items:
+            steps.filter(pk=item['id']).update(order=item['order'])
+        Workflow.objects.filter(pk__in=workflow_ids).update(is_draft=True, updated_at=timezone.now())
 
         return Response({'status': 'reordered'})
 
@@ -719,31 +738,13 @@ class WorkflowPublishView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class WorkflowPublishedListView(APIView):
-    """Dormant server-manifest recovery endpoint; intentionally not routed."""
-
-    # Kept (rather than deleted) so the previous recovery implementation is
-    # documented in place. It is disabled because this product does not offer
-    # disaster recovery and imported manifest UUIDs can diverge from DB UUIDs.
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request):
-        from .publisher import list_published_manifests
-        manifests = list_published_manifests()
-        return Response({'manifests': manifests})
-
-
 class WorkflowImportView(APIView):
-    """Import a workflow from a published manifest file or uploaded JSON."""
+    """Import uploaded JSON as an inactive database draft."""
 
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         from .publisher import import_workflow_from_json_payload
-        # Server-local manifest recovery is intentionally disabled. Keep the
-        # old import available in source history without exposing it here:
-        # from .publisher import import_workflow_from_manifest
 
         update_existing = str(request.data.get('update_existing', 'true')).lower() == 'true'
 
@@ -772,26 +773,6 @@ class WorkflowImportView(APIView):
                 'workflow_name': workflow.name,
                 'removed_secret_fields': import_report.get('removed_secret_fields', []),
             }, status=status.HTTP_201_CREATED)
-
-        # Disabled server-manifest recovery path. It is preserved as comments
-        # because recovery is out of scope and the old implementation could
-        # create a DB workflow whose UUID does not match the manifest pointer.
-        # filename = request.data.get('filename')
-        # if filename:
-        #     try:
-        #         workflow = import_workflow_from_manifest(
-        #             filename,
-        #             created_by=request.user,
-        #             update_existing=update_existing,
-        #         )
-        #     except FileNotFoundError as exc:
-        #         return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
-        #     return Response({
-        #         'status': 'imported',
-        #         'source': 'manifest',
-        #         'workflow_id': str(workflow.id),
-        #         'workflow_name': workflow.name,
-        #     }, status=status.HTTP_201_CREATED)
 
         workflow_definition = request.data.get('workflow_definition')
         if isinstance(workflow_definition, dict):

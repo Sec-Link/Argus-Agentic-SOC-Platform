@@ -70,12 +70,13 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true", help="Show changes without saving")
         parser.add_argument("--force", action="store_true", help="Rebuild edges even if current edges look valid")
 
+    @transaction.atomic
     def handle(self, *args, **options):
         workflow_id = options.get("workflow_id")
         dry_run = options.get("dry_run", False)
         force = options.get("force", False)
 
-        workflows = Workflow.objects.all()
+        workflows = Workflow.objects.select_for_update().order_by('pk')
         if workflow_id:
             workflows = workflows.filter(id=workflow_id)
 

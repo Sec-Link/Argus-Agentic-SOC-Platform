@@ -146,7 +146,7 @@ def persist_workflow_definition(
         _normalize_step_payload(step, index)
         for index, step in enumerate(raw_steps)
     ]
-    instance = Workflow.objects.filter(name=name).first() if update_existing else None
+    instance = Workflow.objects.select_for_update().filter(name=name).first() if update_existing else None
     if instance is None:
         normalized_steps = remap_step_ids_for_new_workflow(normalized_steps)
 
@@ -160,7 +160,6 @@ def persist_workflow_definition(
         'schedule_cron': schedule_cron,
         'is_active': bool(is_active),
         'is_draft': bool(is_draft),
-        'version': int(workflow_definition.get('version') or 1),
         'tags': list(tags or workflow_definition.get('tags') or []),
         'edges': build_edges_from_step_payloads(normalized_steps),
         'steps': normalized_steps,

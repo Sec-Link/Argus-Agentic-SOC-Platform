@@ -181,10 +181,11 @@ class WorkflowStepSerializer(SensitiveConfigRepresentationMixin, serializers.Mod
 class WorkflowStepCreateSerializer(SensitiveConfigRepresentationMixin, serializers.ModelSerializer):
     """Serializer for creating/updating WorkflowStep."""
     id = serializers.UUIDField(required=False, allow_null=True)
-    next_step_true = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    next_step_false = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    workflow = serializers.PrimaryKeyRelatedField(queryset=Workflow.objects.all(), required=False)
+    next_step_true = serializers.UUIDField(required=False, allow_null=True)
+    next_step_false = serializers.UUIDField(required=False, allow_null=True)
     connections = serializers.ListField(
-        child=serializers.CharField(allow_blank=True),
+        child=serializers.UUIDField(),
         required=False,
     )
     configured_secret_fields = serializers.ListField(child=serializers.CharField(), read_only=True)
@@ -192,7 +193,7 @@ class WorkflowStepCreateSerializer(SensitiveConfigRepresentationMixin, serialize
     class Meta:
         model = WorkflowStep
         fields = [
-            'id', 'order', 'name', 'node_type', 'node_category', 'position_x', 'position_y',
+            'id', 'workflow', 'order', 'name', 'node_type', 'node_category', 'position_x', 'position_y',
             'action_template', 'action_type',
             'action_config', 'configured_secret_fields', 'timeout_seconds', 'on_failure',
             'retry_count', 'retry_delay_seconds', 'condition',
@@ -203,11 +204,31 @@ class WorkflowStepCreateSerializer(SensitiveConfigRepresentationMixin, serialize
             'id': {'read_only': False, 'required': False},
         }
 
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            for field in ('next_step_true', 'next_step_false'):
+                if data.get(field) == '':
+                    data[field] = None
+        return super().to_internal_value(data)
+
     def validate(self, attrs):
+        if 'connections' in attrs:
+            attrs['connections'] = [str(value) for value in attrs['connections']]
         # Nested workflow writes need the parent serializer to merge secrets by
         # original Step ID before the existing rows are rebuilt.
         if self.parent is not None:
+            attrs.pop('workflow', None)
             return attrs
+        if self.instance is None:
+            if 'workflow' not in attrs:
+                raise serializers.ValidationError({'workflow': 'This field is required.'})
+            if attrs.get('id') and WorkflowStep.objects.filter(pk=attrs['id']).exists():
+                raise serializers.ValidationError({'id': 'This step ID already exists.'})
+        elif attrs.get('workflow', self.instance.workflow) != self.instance.workflow:
+            raise serializers.ValidationError({'workflow': 'A step cannot be moved to another workflow.'})
+        if self.instance is not None and 'id' in attrs and attrs['id'] != self.instance.pk:
+            raise serializers.ValidationError({'id': 'An existing step ID cannot be changed.'})
         action_type = attrs.get('action_type') or getattr(self.instance, 'action_type', '')
         if 'action_config' in attrs:
             existing = _step_existing_config(self.instance, attrs)
@@ -225,6 +246,17 @@ class WorkflowStepCreateSerializer(SensitiveConfigRepresentationMixin, serialize
         )
         return attrs
 
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        Workflow.objects.select_for_update().get(pk=instance.workflow_id)
+        instance = WorkflowStep.objects.get(pk=instance.pk)
+        return super().update(instance, validated_data)
+
+
+class WorkflowStepOrderSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    order = serializers.IntegerField(min_value=0)
+
 
 class WorkflowScheduleSerializer(serializers.ModelSerializer):
     workflow_name = serializers.CharField(source='workflow.name', read_only=True)
@@ -237,7 +269,11 @@ class WorkflowScheduleSerializer(serializers.ModelSerializer):
             'trigger_source', 'trigger_data', 'created_by',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+        fields += ['sync_status', 'synced_version', 'last_error', 'last_synced_at']
+        read_only_fields = [
+            'id', 'created_by', 'created_at', 'updated_at',
+            'sync_status', 'synced_version', 'last_error', 'last_synced_at',
+        ]
 
     def validate(self, attrs):
         if self.instance and attrs.get('workflow', self.instance.workflow) != self.instance.workflow:
@@ -383,7 +419,7 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
             'schedule_cron', 'is_active', 'is_draft', 'version', 'tags', 'edges', 'variables',
             'secret_variables', 'configured_secret_variables', 'steps'
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'version']
 
     def validate_variables(self, value):
         if not isinstance(value, dict):
@@ -407,6 +443,9 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         variables = attrs.get('variables', getattr(self.instance, 'variables', {}))
         secrets = attrs.get('secret_variables', getattr(self.instance, 'secret_variables', {}))
+        step_ids = [step['id'] for step in attrs.get('steps', []) if step.get('id')]
+        if len(step_ids) != len(set(step_ids)):
+            raise serializers.ValidationError({'steps': 'Duplicate step IDs are not allowed.'})
         if set(variables).intersection(secrets):
             raise serializers.ValidationError({'secret_variables': 'Ordinary and secret variable names must be distinct.'})
         self._validate_deployment(self.instance, attrs)
@@ -423,10 +462,10 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
             })
         runnable = (
             attrs.get('is_active', getattr(instance, 'is_active', True))
-            and not attrs.get('is_draft', getattr(instance, 'is_draft', True))
+            and bool(getattr(instance, 'published_revision_id', None))
             and attrs.get('execution_engine', getattr(instance, 'execution_engine', 'prefect')) == 'prefect'
         )
-        was_runnable = instance and instance.is_active and not instance.is_draft and instance.execution_engine == 'prefect'
+        was_runnable = instance and instance.is_active and instance.published_revision_id and instance.execution_engine == 'prefect'
         if (changed and deployment_id) or (runnable and (changed or not was_runnable)):
             try:
                 deployment_id = require_deployment(deployment_id)
@@ -484,6 +523,8 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
 
     def _create_step(self, workflow, step_data, order_offset=0, existing_config=None):
         step_id = self._to_uuid_or_none(step_data.pop('id', None))
+        if step_id and WorkflowStep.objects.filter(pk=step_id).exclude(workflow=workflow).exists():
+            raise serializers.ValidationError({'steps': 'A step ID belongs to another workflow.'})
         self._sanitize_step_references(step_data)
         self._prepare_step_config(step_data, existing_config)
 
@@ -546,6 +587,8 @@ class WorkflowCreateSerializer(serializers.ModelSerializer):
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+        if prepared_steps is not None:
+            instance.is_draft = True
         instance.save()
 
         if prepared_steps is not None:

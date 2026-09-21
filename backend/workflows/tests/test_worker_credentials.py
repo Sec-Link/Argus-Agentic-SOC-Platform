@@ -1,6 +1,4 @@
 import os
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -53,9 +51,7 @@ class WorkerProvisioningTests(TestCase):
 
     @patch('workflows.worker_credentials.Secret')
     def test_manual_and_scheduled_envelopes_contain_no_secret(self, secret):
-        with tempfile.TemporaryDirectory() as directory, patch(
-            'workflows.publisher.GENERATED_FLOWS_DIR', Path(directory)
-        ), patch.dict(os.environ, {'PREFECT_API_URL': 'http://prefect.test/api'}):
+        with patch.dict(os.environ, {'PREFECT_API_URL': 'http://prefect.test/api'}):
             workflow = Workflow.objects.create(name='Managed auth')
             WorkflowStep.objects.create(workflow=workflow, name='Create', order=0,
                                         action_type='create_ticket', action_config={'title': 'Test'})
