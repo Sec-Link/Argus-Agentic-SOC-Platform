@@ -51,14 +51,18 @@ db.sqlite3
 /staticfiles/
 
 # IDE
-.vscode/*
-!.vscode/launch.json
-!.vscode/tasks.json
+.vscode/
 .idea/
 *.iml
 *.swp
 *.swo
 *~
+
+# Local workflow debugging
+/scripts/check-prefect-debug.py
+/scripts/debug-prefect-worker.py
+/scripts/prepare-prefect-debug.ps1
+/docs/development-windows-uv.zh-CN.md
 
 # OS
 .DS_Store
