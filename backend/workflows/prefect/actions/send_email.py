@@ -24,7 +24,7 @@ class SendEmailAction(BaseAction):
     }
 
     def execute(self, config: Dict[str, Any], context: Dict[str, Any]) -> ActionResult:
-        recipients = config.get("to", [])
+        recipients = self.resolve_variables(config.get("to", []), context)
         if isinstance(recipients, str):
             recipients = [recipients]
         subject = self.resolve_variables(config.get("subject", ""), context)

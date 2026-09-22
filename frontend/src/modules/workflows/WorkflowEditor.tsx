@@ -38,6 +38,9 @@ import {
 } from 'services/workflows';
 import { listInterfaceEndpoints } from 'services/interfaces';
 import type { InterfaceEndpoint } from 'services/interfaces';
+import WorkflowVariablesPanel, { VariableReference } from './components/WorkflowVariablesPanel';
+import { declarationsToPayload, getWorkflowVariableOptions, variablesToDeclarations } from './variables';
+import type { VariableDeclaration } from './variables';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -113,6 +116,13 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
   const [webhookInterfaces, setWebhookInterfaces] = useState<InterfaceEndpoint[]>([]);
 
   const isNew = !workflowId;
+  const variableDeclarations: VariableDeclaration[] = Form.useWatch('variableDeclarations', form) || [];
+  const triggerType = Form.useWatch('trigger_type', form) || 'manual';
+  const variableOptions = getWorkflowVariableOptions(
+    Object.fromEntries(variableDeclarations.filter(row => row.type !== 'secret').map(row => [row.name, row.value])),
+    triggerType,
+    variableDeclarations.filter(row => row.type === 'secret').map(row => row.name),
+  );
 
   // Load available actions
   useEffect(() => {
@@ -150,6 +160,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
         is_active: false,
         is_draft: true,
         tags: [],
+        variableDeclarations: [],
       });
       setSteps([]);
       return;
@@ -158,7 +169,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
     const loadWorkflow = async () => {
       setLoading(true);
       try {
-        const data = await getWorkflow(workflowId);
+        const data: Workflow = await getWorkflow(workflowId);
         setWorkflow(data);
         form.setFieldsValue({
           name: data.name,
@@ -169,6 +180,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
           is_active: data.is_active,
           is_draft: data.is_draft,
           tags: data.tags?.join(', ') || '',
+          variableDeclarations: variablesToDeclarations(data.variables, data.configured_secret_variables),
         });
         setSteps(data.steps || []);
       } catch (err) {
@@ -187,7 +199,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
 
       const tags = normalizeTags(values.tags);
 
-      const payload: Partial<Workflow> = {
+      const payload = {
         name: values.name,
         description: values.description || '',
         trigger_type: values.trigger_type,
@@ -199,11 +211,12 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
         is_active: activate || values.is_active,
         is_draft: !activate && values.is_draft,
         tags,
+        ...declarationsToPayload(values.variableDeclarations),
         steps: steps.map((step, index) => ({
           ...step,
           order: index,
         })),
-      };
+      } satisfies Partial<Workflow>;
 
       let savedWorkflow: Workflow;
       if (isNew) {
@@ -214,6 +227,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
         message.success('Workflow updated successfully');
       }
 
+      form.setFieldValue('variableDeclarations', variablesToDeclarations(savedWorkflow.variables, savedWorkflow.configured_secret_variables));
       onSaved?.(savedWorkflow);
       if (isNew) {
         onBack();
@@ -501,6 +515,13 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
                   </Form.Item>
                 </Col>
               </Row>
+              <Form.Item
+                name="variableDeclarations"
+                label="Variables"
+                rules={[{ validator: async (_, rows) => { declarationsToPayload(rows); } }]}
+              >
+                <WorkflowVariablesPanel options={variableOptions} />
+              </Form.Item>
             </Form>
           </Card>
 
@@ -683,6 +704,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
               >
                 <TextArea rows={8} style={{ fontFamily: 'monospace' }} />
               </Form.Item>
+              <VariableReference options={variableOptions} />
 
               <Row gutter={16}>
                 <Col span={8}>

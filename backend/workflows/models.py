@@ -10,7 +10,8 @@ Defines the database models for SOAR workflow management:
 """
 import secrets
 import uuid
-from django.db import models
+from copy import deepcopy
+from django.db import models, transaction
 from django.contrib.auth.models import User
 from django.utils import timezone
 
@@ -116,10 +117,45 @@ class ActionTemplate(models.Model):
     def __str__(self):
         return f"{self.name} ({self.action_type})"
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
+        workflow_ids = list(Workflow.objects.select_for_update().filter(
+            pk__in=WorkflowStep.objects.filter(action_template_id=self.pk).values('workflow_id'),
+        ).order_by('pk').values_list('pk', flat=True))
+        previous = type(self).objects.filter(pk=self.pk).values('default_config', 'action_type').first()
         if _secure_action_config(self, "default_config", self.action_type):
             _include_secured_field(kwargs, "default_config")
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+        if previous and any(previous[field] != getattr(self, field) for field in previous):
+            Workflow.objects.filter(pk__in=workflow_ids).update(is_draft=True, updated_at=timezone.now())
+        return result
+
+    @transaction.atomic
+    def delete(self, *args, **kwargs):
+        workflow_ids = list(Workflow.objects.select_for_update().filter(
+            pk__in=WorkflowStep.objects.filter(action_template_id=self.pk).values('workflow_id'),
+        ).order_by('pk').values_list('pk', flat=True))
+        result = super().delete(*args, **kwargs)
+        Workflow.objects.filter(pk__in=workflow_ids).update(is_draft=True, updated_at=timezone.now())
+        return result
+
+
+class PrefectDeployment(models.Model):
+    """Compatible execution targets discovered from the configured Prefect server."""
+
+    id = models.UUIDField(primary_key=True, editable=False)
+    name = models.CharField(max_length=255)
+    work_pool_name = models.CharField(max_length=255, blank=True, default='')
+    work_queue_name = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=32, blank=True, default='')
+    is_available = models.BooleanField(default=True)
+    last_synced_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['name', 'id']
+
+    def __str__(self):
+        return self.name
 
 
 class Workflow(models.Model):
@@ -155,7 +191,7 @@ class Workflow(models.Model):
         max_length=64,
         blank=True,
         default='',
-        help_text="Optional Prefect deployment id override for this workflow."
+        help_text="Registered Prefect deployment selected for this workflow. Required before execution."
     )
 
     # Trigger configuration
@@ -197,6 +233,10 @@ class Workflow(models.Model):
     is_active = models.BooleanField(default=True, help_text="Is this workflow active?")
     is_draft = models.BooleanField(default=True, help_text="Is this a draft version?")
     version = models.PositiveIntegerField(default=1, help_text="Workflow version number")
+    published_revision = models.ForeignKey(
+        'WorkflowRevision', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+', editable=False,
+    )
 
     # Ownership
     created_by = models.ForeignKey(
@@ -209,6 +249,16 @@ class Workflow(models.Model):
 
     # Metadata
     tags = models.JSONField(default=list, blank=True, help_text="Tags for categorization")
+    variables = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Declared variables available as {{variables.name}} during execution.",
+    )
+    secret_variables = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Encrypted reusable workflow variables; plaintext is write-only.",
+    )
 
     # Visual workflow editor data - stores edges/connections between nodes
     edges = models.JSONField(
@@ -232,6 +282,45 @@ class Workflow(models.Model):
         """Get all steps in execution order."""
         return self.steps.all().order_by('order')
 
+    @property
+    def configured_secret_variables(self):
+        return sorted(self.secret_variables)
+
+    @transaction.atomic
+    def save(self, *args, **kwargs):
+        from .secret_config import SecretConfigError, prepare_secret_variables
+
+        stored = type(self).objects.select_for_update().filter(pk=self.pk).first() if self.pk else None
+        existing = stored.secret_variables if stored else {}
+        secured = prepare_secret_variables(self.secret_variables, existing=existing)
+        if set(secured).intersection(self.variables):
+            raise SecretConfigError('Ordinary and secret variable names must be distinct.')
+        if secured != self.secret_variables:
+            _include_secured_field(kwargs, 'secret_variables')
+        self.secret_variables = secured
+        definition_fields = {
+            'name', 'description', 'trigger_type', 'trigger_conditions', 'schedule_cron',
+            'tags', 'variables', 'secret_variables', 'edges',
+        }
+        fields = kwargs.get('update_fields')
+        if fields is not None:
+            definition_fields.intersection_update(fields)
+        changed = not stored or any(getattr(self, field) != getattr(stored, field) for field in definition_fields)
+        # Only the publisher can clear a dirty draft or move the published pointer.
+        self.is_draft = bool(not stored or stored.is_draft or changed or self.is_draft)
+        if stored:
+            self.published_revision_id = stored.published_revision_id
+            self.version = stored.version
+        else:
+            self.published_revision_id = None
+        _include_secured_field(kwargs, 'is_draft')
+        return super().save(*args, **kwargs)
+
+    @transaction.atomic
+    def delete(self, *args, **kwargs):
+        type(self).objects.select_for_update().get(pk=self.pk)
+        return super().delete(*args, **kwargs)
+
     def clone(self, new_name=None, user=None):
         """Create a copy of this workflow."""
         new_workflow = Workflow.objects.create(
@@ -245,6 +334,8 @@ class Workflow(models.Model):
             version=1,
             created_by=user or self.created_by,
             tags=self.tags.copy() if self.tags else [],
+            variables=deepcopy(self.variables),
+            secret_variables=deepcopy(self.secret_variables),
         )
 
         # Clone all steps
@@ -264,6 +355,23 @@ class Workflow(models.Model):
             )
 
         return new_workflow
+
+
+class WorkflowRevision(models.Model):
+    """Published definitions; ordinary edits never rewrite these snapshots."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='revisions')
+    version = models.PositiveIntegerField()
+    manifest = models.JSONField()
+    published_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ['workflow', 'version']
+        constraints = [
+            models.UniqueConstraint(fields=['workflow', 'version'], name='uniq_workflow_revision'),
+            models.CheckConstraint(condition=models.Q(version__gte=1), name='workflow_revision_positive_version'),
+        ]
 
 
 class TicketWorkflowBinding(models.Model):
@@ -438,10 +546,25 @@ class WorkflowStep(models.Model):
     def __str__(self):
         return f"{self.workflow.name} - Step {self.order}: {self.name}"
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
+        Workflow.objects.select_for_update().get(pk=self.workflow_id)
+        previous = type(self).objects.filter(pk=self.pk).values_list('workflow_id', flat=True).first()
+        if previous is not None and previous != self.workflow_id:
+            from django.core.exceptions import ValidationError
+            raise ValidationError('A step cannot be moved to another workflow.')
         if _secure_action_config(self, "action_config", self.action_type):
             _include_secured_field(kwargs, "action_config")
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+        Workflow.objects.filter(pk=self.workflow_id).update(is_draft=True, updated_at=timezone.now())
+        return result
+
+    @transaction.atomic
+    def delete(self, *args, **kwargs):
+        Workflow.objects.select_for_update().get(pk=self.workflow_id)
+        result = super().delete(*args, **kwargs)
+        Workflow.objects.filter(pk=self.workflow_id).update(is_draft=True, updated_at=timezone.now())
+        return result
 
 
 class SavedWorkflowNode(models.Model):
@@ -772,13 +895,6 @@ class StepExecution(models.Model):
         return 0
 
 
-class WorkflowSchedule(models.Model):
-    """Execution schedules for workflows (cron/interval)."""
-
-    SCHEDULE_TYPES = [
-        ('cron', 'Cron'),
-        ('interval', 'Interval (seconds)'),
-    ]
 class WorkflowEventCheckpoint(models.Model):
     """Durable replay position for the Django Prefect event consumer."""
 
@@ -786,6 +902,13 @@ class WorkflowEventCheckpoint(models.Model):
     occurred = models.DateTimeField()
 
 
+class WorkflowSchedule(models.Model):
+    """Execution schedules for workflows (cron/interval)."""
+
+    SCHEDULE_TYPES = [
+        ('cron', 'Cron'),
+        ('interval', 'Interval (seconds)'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workflow = models.ForeignKey(
@@ -806,6 +929,13 @@ class WorkflowEventCheckpoint(models.Model):
     is_active = models.BooleanField(default=True)
     trigger_source = models.CharField(max_length=200, default='schedule')
     trigger_data = models.JSONField(default=dict, blank=True)
+    sync_status = models.CharField(
+        max_length=16, default='pending',
+        choices=[('pending', 'Pending'), ('synced', 'Synced'), ('failed', 'Failed')],
+    )
+    synced_version = models.PositiveIntegerField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default='')
+    last_synced_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,

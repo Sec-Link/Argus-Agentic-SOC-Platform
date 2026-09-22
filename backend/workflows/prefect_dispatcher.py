@@ -56,6 +56,10 @@ def build_run_envelope(
 
 def submit(execution: WorkflowExecution) -> WorkflowExecution:
     try:
+        from .deployment_registry import require_deployment
+
+        execution.workflow = Workflow.objects.get(pk=execution.workflow_id)
+        deployment_id = require_deployment(execution.workflow.prefect_deployment_id)
         run, pointer, definition = build_run_envelope(
             execution.workflow,
             execution_id=str(execution.id),
@@ -67,10 +71,10 @@ def submit(execution: WorkflowExecution) -> WorkflowExecution:
             parameters={'run': run},
             name=f"{execution.workflow.name} :: {execution.id}",
             tags=['soar', f'workflow:{execution.workflow.id}'],
-            deployment_id=(execution.workflow.prefect_deployment_id or '').strip() or None,
+            deployment_id=deployment_id,
             idempotency_key=str(execution.id),
         )
-    except (OSError, ValueError, TypeError, KeyError, prefect_client.PrefectAPIError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:
         logger.exception('Failed to dispatch workflow execution %s', execution.id)
         with transaction.atomic():
             execution = WorkflowExecution.objects.select_for_update().get(pk=execution.pk)
@@ -304,34 +308,65 @@ def _schedule_definition(schedule: WorkflowSchedule) -> Dict[str, Any]:
     return {'cron': schedule.cron or '', 'timezone': schedule.timezone or 'UTC'}
 
 
-def sync_schedule(schedule: WorkflowSchedule) -> Dict[str, Any]:
-    workflow = schedule.workflow
-    if workflow.execution_engine != 'prefect':
-        return {}
-    deployment_override = (workflow.prefect_deployment_id or '').strip() or None
-    if not prefect_client.is_configured(deployment_override):
-        return {}
-    deployment_id = prefect_client.resolve_deployment_id(deployment_override)
-    run, _, _ = build_run_envelope(
-        workflow,
-        execution_id=None,
-        trigger_source=schedule.trigger_source or 'schedule',
-        trigger_data=schedule.trigger_data or {},
-    )
-    return prefect_client.upsert_deployment_schedule(
-        deployment_id=deployment_id,
-        slug=schedule_slug(schedule),
-        schedule=_schedule_definition(schedule),
-        is_active=bool(schedule.is_active),
-        parameters={'run': run},
-    )
+def sync_schedule(schedule: WorkflowSchedule | str) -> Dict[str, Any]:
+    """Sync the latest committed plan; persist failures before raising them."""
+    from .deployment_registry import require_deployment
+
+    schedule_id = getattr(schedule, 'pk', schedule)
+    error = None
+    result = {}
+    with transaction.atomic():
+        workflow_id = WorkflowSchedule.objects.filter(pk=schedule_id).values_list('workflow_id', flat=True).first()
+        if workflow_id is None:
+            return result
+        workflow = Workflow.objects.select_for_update().filter(pk=workflow_id).first()
+        if workflow is None or workflow.execution_engine != 'prefect':
+            return result
+        schedule = WorkflowSchedule.objects.select_for_update().filter(pk=schedule_id).first()
+        if schedule is None:
+            return result
+        schedule.workflow = workflow
+        # ponytail: hold the workflow lock during HTTP; use remote revision checks if waits become costly.
+        try:
+            deployment_id = require_deployment(workflow.prefect_deployment_id)
+            run, pointer, _ = build_run_envelope(
+                workflow,
+                execution_id=None,
+                trigger_source=schedule.trigger_source or 'schedule',
+                trigger_data=schedule.trigger_data or {},
+            )
+            result = prefect_client.upsert_deployment_schedule(
+                deployment_id=deployment_id,
+                slug=schedule_slug(schedule),
+                schedule=_schedule_definition(schedule),
+                is_active=bool(schedule.is_active),
+                parameters={'run': run},
+            )
+        except (OSError, ValueError, TypeError, KeyError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:
+            error = exc
+            schedule.sync_status = 'failed'
+            schedule.last_error = str(exc)
+            schedule.save(update_fields=['sync_status', 'last_error'])
+        else:
+            schedule.sync_status = 'synced'
+            schedule.synced_version = int(pointer['current_version'])
+            schedule.last_error = ''
+            schedule.last_synced_at = timezone.now()
+            schedule.save(update_fields=['sync_status', 'synced_version', 'last_error', 'last_synced_at'])
+    if error is not None:
+        raise error
+    return result
 
 
 def delete_schedule(schedule: WorkflowSchedule) -> None:
     workflow = schedule.workflow
-    if workflow.execution_engine != 'prefect' or not prefect_client.is_configured((workflow.prefect_deployment_id or '').strip() or None):
+    if workflow.execution_engine != 'prefect':
         return
-    prefect_client.delete_deployment_schedule_by_slug(
-        deployment_id=prefect_client.resolve_deployment_id((workflow.prefect_deployment_id or '').strip() or None),
-        slug=schedule_slug(schedule),
-    )
+    # A deleted/unavailable deployment must still allow its local plans to be removed.
+    try:
+        prefect_client.delete_deployment_schedule_by_slug(
+            deployment_id=prefect_client.resolve_deployment_id(workflow.prefect_deployment_id),
+            slug=schedule_slug(schedule),
+        )
+    except prefect_client.PrefectDeploymentNotFound:
+        pass

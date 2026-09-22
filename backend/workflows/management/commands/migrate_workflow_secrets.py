@@ -1,18 +1,18 @@
-"""Encrypt or rotate sensitive workflow action configuration."""
+"""Encrypt or rotate workflow secret variables and sensitive action configuration."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 
-from workflows.models import ActionTemplate, SavedWorkflowNode, StepExecution, Workflow, WorkflowStep
-from workflows.publisher import GENERATED_FLOWS_DIR, _atomic_write_json, publish_workflow
+from workflows.models import ActionTemplate, SavedWorkflowNode, StepExecution, Workflow, WorkflowRevision, WorkflowStep
+from workflows.publisher import publish_workflow
+from workflows.prefect.secrets import decrypt_secret_variable, encrypt_payload
 from workflows.secret_config import (
     SecretConfigError,
     prepare_config_for_storage,
+    prepare_secret_variables,
     rotate_config,
 )
 
@@ -45,24 +45,43 @@ class Command(BaseCommand):
         secured = prepare_config_for_storage(action_type or "", config or {})
         return rotate_config(action_type or "", secured) if rotate else secured
 
+    @staticmethod
+    def _secure_variables(variables, rotate):
+        secured = prepare_secret_variables(variables or {})
+        if not rotate:
+            return secured
+        keys = getattr(settings, "WORKFLOW_ENCRYPTION_KEYS", None) or []
+        return {
+            name: encrypt_payload({
+                "version": 1, "kind": "workflow_variable", "name": name,
+                "value": decrypt_secret_variable(name, value, keys),
+            }, keys)
+            for name, value in secured.items()
+        }
+
     def _collect_database_changes(self, rotate):
         changes = []
-        for item in ActionTemplate.objects.all().iterator():
+        for item in Workflow.objects.select_for_update().order_by('pk').iterator():
+            secured = self._secure_variables(item.secret_variables, rotate)
+            if secured != (item.secret_variables or {}):
+                changes.append((Workflow, item.pk, "secret_variables", secured))
+
+        for item in ActionTemplate.objects.select_for_update().iterator():
             secured = self._secure(item.action_type, item.default_config, rotate)
             if secured != (item.default_config or {}):
                 changes.append((ActionTemplate, item.pk, "default_config", secured))
 
-        for item in WorkflowStep.objects.all().iterator():
+        for item in WorkflowStep.objects.select_for_update().iterator():
             secured = self._secure(item.action_type, item.action_config, rotate)
             if secured != (item.action_config or {}):
                 changes.append((WorkflowStep, item.pk, "action_config", secured))
 
-        for item in SavedWorkflowNode.objects.all().iterator():
+        for item in SavedWorkflowNode.objects.select_for_update().iterator():
             secured = self._secure(item.action_type, item.action_config, rotate)
             if secured != (item.action_config or {}):
                 changes.append((SavedWorkflowNode, item.pk, "action_config", secured))
 
-        for item in StepExecution.objects.all().iterator():
+        for item in StepExecution.objects.select_for_update().iterator():
             current = item.input_data or {}
             if not isinstance(current, dict):
                 continue
@@ -79,18 +98,15 @@ class Command(BaseCommand):
 
     def _collect_manifest_changes(self, rotate):
         changes = []
-        if not GENERATED_FLOWS_DIR.exists():
-            return changes
-        for path in sorted(GENERATED_FLOWS_DIR.glob("*/v*.json")):
-            try:
-                with path.open("r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-            except (OSError, json.JSONDecodeError) as exc:
-                raise CommandError(f"Cannot read workflow manifest {path}: {exc}") from exc
-
+        for revision in WorkflowRevision.objects.select_for_update().iterator():
+            payload = revision.manifest
             secured_payload = dict(payload)
             secured_steps = []
-            changed = False
+            variables = payload.get("secret_variables") or {}
+            secured_variables = self._secure_variables(variables, rotate)
+            changed = secured_variables != variables
+            if "secret_variables" in payload:
+                secured_payload["secret_variables"] = secured_variables
             for step in payload.get("steps") or []:
                 secured_step = dict(step)
                 config = step.get("action_config") or {}
@@ -100,9 +116,10 @@ class Command(BaseCommand):
                 changed = changed or secured_config != config
             secured_payload["steps"] = secured_steps
             if changed:
-                changes.append((path, secured_payload))
+                changes.append((revision.pk, secured_payload))
         return changes
 
+    @transaction.atomic
     def handle(self, *args, **options):
         apply_changes = bool(options["apply"])
         rotate = bool(options["rotate"])
@@ -113,11 +130,11 @@ class Command(BaseCommand):
             raise CommandError(str(exc)) from exc
 
         published_workflows = list(
-            Workflow.objects.filter(execution_engine="prefect", is_draft=False)
+            Workflow.objects.filter(execution_engine="prefect", is_draft=False, published_revision__isnull=False)
         ) if (database_changes or manifest_changes) else []
         self.stdout.write(
             f"Database rows to rewrite: {len(database_changes)}; "
-            f"manifest files to rewrite: {len(manifest_changes)}; "
+            f"published snapshots to rewrite: {len(manifest_changes)}; "
             f"workflows to republish: {0 if options['skip_publish'] else len(published_workflows)}"
         )
 
@@ -125,18 +142,15 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Dry-run only; no data was changed."))
             return
 
-        try:
-            with transaction.atomic():
-                for model, pk, field, value in database_changes:
-                    model.objects.filter(pk=pk).update(**{field: value})
-                for path, payload in manifest_changes:
-                    _atomic_write_json(Path(path), payload)
-        except OSError as exc:
-            raise CommandError(f"Failed to atomically rewrite a workflow manifest: {exc}") from exc
+        for model, pk, field, value in database_changes:
+            model.objects.filter(pk=pk).update(**{field: value})
+        for pk, payload in manifest_changes:
+            WorkflowRevision.objects.filter(pk=pk).update(manifest=payload)
 
         republished = 0
         if not options["skip_publish"]:
             for workflow in published_workflows:
+                workflow.refresh_from_db()
                 publish_workflow(workflow, register_deployment=False)
                 republished += 1
 

@@ -6,9 +6,8 @@ REST API. It is intentionally self-contained: configuration is read directly
 from environment variables here so that wiring up Prefect does not require
 edits to ``settings.py``, ``requirements.txt``, or ``env.example``.
 
-Environment variables (all optional except the first two when Prefect is in use):
+Environment variables (all optional except PREFECT_API_URL when Prefect is in use):
     PREFECT_API_URL          Base URL of Prefect API, e.g. http://prefect-server:4200/api
-    PREFECT_DEPLOYMENT_ID    UUID of the generic SOAR deployment registered on Prefect.
     PREFECT_API_KEY          Optional bearer token for Prefect Cloud / secured server.
     PREFECT_TIMEOUT_SECONDS  HTTP timeout for individual calls (default 10).
 
@@ -72,20 +71,11 @@ def _api_base() -> str:
     return url
 
 
-def _deployment_id() -> str:
-    deployment_id = os.getenv('PREFECT_DEPLOYMENT_ID', '').strip()
-    if not deployment_id:
-        raise PrefectConfigError(
-            'PREFECT_DEPLOYMENT_ID is not set; register the generic SOAR '
-            'deployment on Prefect first.'
-        )
-    return deployment_id
-
-
 def resolve_deployment_id(override: Optional[str] = None) -> str:
-    if override:
-        return str(override).strip()
-    return _deployment_id()
+    deployment_id = str(override).strip() if override else ''
+    if not deployment_id:
+        raise PrefectConfigError('Select a Prefect deployment for this workflow before execution.')
+    return deployment_id
 
 
 def _headers() -> Dict[str, str]:
@@ -133,12 +123,8 @@ def _request(
 
 
 def is_configured(deployment_id: Optional[str] = None) -> bool:
-    """Cheap pre-flight check used by callers that want to fall back gracefully."""
-    if not os.getenv('PREFECT_API_URL'):
-        return False
-    if deployment_id:
-        return True
-    return bool(os.getenv('PREFECT_DEPLOYMENT_ID'))
+    """Dispatch requires both a Prefect API and an explicitly selected deployment."""
+    return has_api() and bool(str(deployment_id).strip() if deployment_id else '')
 
 
 def map_state_to_status(state_type: Optional[str]) -> str:
@@ -225,9 +211,17 @@ def list_deployment_schedules(deployment_id: str) -> list[Dict[str, Any]]:
         'get',
         f"/deployments/{deployment_id}/schedules",
         operation='list schedules',
+        allowed_statuses=(404,),
     )
+    if resp.status_code == 404:
+        raise PrefectDeploymentNotFound(f'Deployment {deployment_id} not found on Prefect.')
     data = resp.json()
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list) or any(
+        not isinstance(item, dict) or not isinstance(item.get('id'), str) or not item['id']
+        for item in data
+    ):
+        raise PrefectAPIError('Prefect returned an invalid schedule list; cannot confirm schedule removal.')
+    return data
 
 
 def create_deployment_schedule(
@@ -321,17 +315,26 @@ def delete_deployment_schedule_by_slug(*, deployment_id: str, slug: str) -> None
 
 
 def list_deployments(limit: int = 200) -> list[Dict[str, Any]]:
-    """List Prefect deployments for UI sync."""
-    resp = _request(
-        'post',
-        '/deployments/filter',
-        operation='list_deployments',
-        json={'limit': max(int(limit), 1)},
-    )
-    data = resp.json()
-    if isinstance(data, dict) and 'deployments' in data:
-        return data.get('deployments') or []
-    return data if isinstance(data, list) else []
+    """Fetch every page; partial or malformed lists must never imply deletion."""
+    page_size = max(int(limit), 1)
+    deployments = []
+    seen = set()
+    while True:
+        data = _request(
+            'post', '/deployments/filter', operation='list_deployments',
+            json={'limit': page_size, 'offset': len(deployments), 'sort': 'NAME_ASC'},
+        ).json()
+        if not isinstance(data, list) or len(data) > page_size:
+            raise PrefectAPIError('Prefect returned an invalid deployment page.')
+        for deployment in data:
+            if not isinstance(deployment, dict) or not isinstance(deployment.get('id'), str) or not deployment['id']:
+                raise PrefectAPIError('Prefect returned an invalid deployment record.')
+            if deployment['id'] in seen:
+                raise PrefectAPIError('Prefect deployment pages contained duplicate IDs; retry the snapshot.')
+            seen.add(deployment['id'])
+        deployments.extend(data)
+        if len(data) < page_size:
+            return deployments
 
 
 def get_deployment(deployment_id: str) -> Dict[str, Any]:

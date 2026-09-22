@@ -178,6 +178,10 @@ https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/docs/api-overvi
 
 ## 8. Deployment
 
+Deployments register automatically from Prefect events. Select the execution deployment on each workflow; existing installations must follow the [deployment binding rollout](docs/workflow-deployments.zh-CN.md) before upgrading.
+
+For local VS Code debugging with two deployment/worker groups, see the [Windows Prefect debugging guide](docs/development-windows-uv.zh-CN.md).
+
 ### Docker Compose
 - `docker-compose.dev.yml`: local development
 - `docker-compose.prod.yml`: production container setup

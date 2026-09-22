@@ -21,6 +21,9 @@ from .prefect.secrets import (
     RuntimeSecretError,
     decrypt_payload,
     encrypt_payload,
+    decrypt_secret_variable,
+    validate_secret_context_path,
+    validate_secret_variable_references,
 )
 
 
@@ -30,6 +33,79 @@ HEADER_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 class SecretConfigError(ValidationError):
     """Raised when a sensitive action configuration cannot be handled safely."""
+
+
+def prepare_secret_variables(incoming, *, existing=None, encrypted_only=False):
+    """Store authenticated ciphertext; blank values preserve a saved secret."""
+    if not isinstance(incoming, dict):
+        raise SecretConfigError('Secret variables must be an object.')
+    existing = existing or {}
+    keys = getattr(settings, 'WORKFLOW_ENCRYPTION_KEYS', None) or []
+    result = {}
+    for name, value in incoming.items():
+        if not isinstance(name, str) or not name.isascii() or not name.isidentifier():
+            raise SecretConfigError('Secret variable names must be ASCII identifiers.')
+        if not isinstance(value, str):
+            raise SecretConfigError('Secret variable values must be strings.')
+        if value == '' and not encrypted_only:
+            value = existing.get(name)
+        if not isinstance(value, str) or not value:
+            raise SecretConfigError('A new secret variable requires a value.')
+        try:
+            if is_encrypted(value):
+                decrypt_secret_variable(name, value, keys=keys)
+                result[name] = value
+            elif encrypted_only:
+                raise SecretConfigError('Stored secret variables must be encrypted.')
+            else:
+                result[name] = encrypt_payload({
+                    'version': 1, 'kind': 'workflow_variable', 'name': name, 'value': value,
+                }, keys)
+        except RuntimeSecretError as exc:
+            message = (
+                'Secret variable could not be decrypted with this environment\'s encryption key, or its encrypted value/name is invalid. Re-enter the value or use the original encryption key.'
+                if is_encrypted(value) else
+                'Secret variable could not be encrypted; configure a valid workflow encryption key.'
+            )
+            raise SecretConfigError(message) from exc
+    return result
+
+
+def validate_workflow_secret_references(variables, secret_variables, steps, *, removed_names=()):
+    """Validate references before persistence/publication without exposing values."""
+    names = set(secret_variables)
+    if names.intersection(variables):
+        raise SecretConfigError('Ordinary and secret variable names must be distinct.')
+    if not names and not removed_names:
+        return
+    try:
+        validate_secret_variable_references('', variables, names | set(removed_names))
+        for step in steps:
+            action_type = step.get('action_type') or ''
+            config = decrypt_config_for_execution(action_type, step.get('action_config') or {})
+            validate_secret_variable_references(action_type, config, names)
+            if removed_names:
+                validate_secret_variable_references('', config, removed_names)
+            condition = step.get('condition') or {}
+            validate_secret_variable_references('', condition, names | set(removed_names))
+            def check_condition_fields(value):
+                if isinstance(value, dict):
+                    if isinstance(value.get('field'), str):
+                        validate_secret_context_path(value['field'], names | set(removed_names))
+                    for item in value.values():
+                        check_condition_fields(item)
+                elif isinstance(value, list):
+                    for item in value:
+                        check_condition_fields(item)
+            check_condition_fields(condition)
+    except RuntimeSecretError as exc:
+        # These validators emit fixed messages and never include submitted data.
+        message = str(exc)
+        if 'fixed action target' in message:
+            message += ' URLs and authentication settings must not contain variable references.'
+        if removed_names:
+            message += ' Remove stale references before deleting or renaming a secret.'
+        raise SecretConfigError(message) from exc
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,7 @@ node_modules/
 
 # Tooling
 .claude/
+.run/
 
 # Runtime-generated workflow manifests
 backend/workflows/flows/generated/
@@ -56,6 +57,12 @@ db.sqlite3
 *.swp
 *.swo
 *~
+
+# Local workflow debugging
+/scripts/check-prefect-debug.py
+/scripts/debug-prefect-worker.py
+/scripts/prepare-prefect-debug.ps1
+/docs/development-windows-uv.zh-CN.md
 
 # OS
 .DS_Store

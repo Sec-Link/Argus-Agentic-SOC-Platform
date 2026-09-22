@@ -25,6 +25,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
+  ConfigProvider,
   Card,
   Form,
   Input,
@@ -63,6 +64,8 @@ import {
   getWorkflow,
   createWorkflow,
   updateWorkflow,
+  listPrefectDeployments,
+  deleteWorkflowSchedule,
   getAvailableActions,
   executeWorkflow,
   listSavedWorkflowNodes,
@@ -78,6 +81,8 @@ import { fetchSlaTicketFieldChoices } from 'services/tickets';
 import { listInterfaceEndpoints } from 'services/interfaces';
 import type {
   Workflow,
+  PrefectDeployment,
+  WorkflowSchedule,
   WorkflowStep,
   ActionInfo,
   WorkflowEdge,
@@ -89,6 +94,10 @@ import { nodeTypes } from './CustomNodes';
 import ActionPalette from './ActionPalette';
 import ConditionBuilder from './ConditionBuilder';
 import ActionConfigBuilder from './ActionConfigBuilder';
+import WorkflowVariablesPanel, { VariableReference } from './WorkflowVariablesPanel';
+import { declarationsToPayload, getWorkflowVariableOptions, variablesToDeclarations } from '../variables';
+import type { VariableDeclaration } from '../variables';
+import { clampSidebarWidth, getSidebarFontSize } from '../sidebar';
 
 const { Text } = Typography;
 
@@ -374,6 +383,9 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const [saving, setSaving] = useState(false);
   const [availableActions, setAvailableActions] = useState<ActionInfo[]>([]);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
+  const [deployments, setDeployments] = useState<PrefectDeployment[]>([]);
+  const [deploymentsLoading, setDeploymentsLoading] = useState(true);
+  const [deletingScheduleId, setDeletingScheduleId] = useState<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -390,6 +402,10 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const [nodeForm] = Form.useForm();
   const [savedNodeForm] = Form.useForm();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const sidebarFontSize = getSidebarFontSize(sidebarWidth);
+  const [sidebarBounds, setSidebarBounds] = useState({ min: 240, max: 600 });
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [ticketBinding, setTicketBinding] = useState<TicketWorkflowBinding | null>(null);
@@ -397,6 +413,42 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const [bindingSaving, setBindingSaving] = useState(false);
 
   const isNew = !workflowId;
+  const variableDeclarations: VariableDeclaration[] = Form.useWatch('variableDeclarations', form) || [];
+  const triggerType = Form.useWatch('trigger_type', form) || 'manual';
+  const deploymentId = Form.useWatch('prefect_deployment_id', form);
+  const selectedDeployment = deployments.find(item => item.id === deploymentId);
+  const schedules = workflow?.schedules || [];
+  const deploymentOptions = deployments.map(item => ({
+    value: item.id,
+    label: `${item.name}${item.work_pool_name || item.work_queue_name ? ` (${[item.work_pool_name, item.work_queue_name].filter(Boolean).join(' / ')})` : ''}${item.is_available ? '' : ' — unavailable'}`,
+    disabled: !item.is_available,
+  }));
+  if (deploymentId && !selectedDeployment) {
+    deploymentOptions.push({ value: deploymentId, label: `${deploymentId} — unavailable`, disabled: true });
+  }
+  const variableOptions = getWorkflowVariableOptions(
+    Object.fromEntries(variableDeclarations.filter(row => row.type !== 'secret').map(row => [row.name, row.value])),
+    triggerType,
+    variableDeclarations.filter(row => row.type === 'secret').map(row => row.name),
+  );
+
+  const resizeSidebar = (width: number) => {
+    const available = sidebarRef.current?.parentElement?.clientWidth || 0;
+    setSidebarWidth(clampSidebarWidth(width, available));
+  };
+
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+    const observer = new ResizeObserver(() => {
+      const available = sidebar.parentElement?.clientWidth || 0;
+      setSidebarWidth(sidebar.getBoundingClientRect().width);
+      setSidebarBounds({ min: clampSidebarWidth(0, available), max: clampSidebarWidth(Infinity, available) });
+    });
+    observer.observe(sidebar);
+    if (sidebar.parentElement) observer.observe(sidebar.parentElement);
+    return () => observer.disconnect();
+  }, []);
 
   const onNodesDelete = useCallback(
     (deleted: Node[]) => {
@@ -596,6 +648,37 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
     } as Record<string, Array<{ value: string; label: string }>>;
   }, [ticketFieldChoices]);
 
+  const loadDeployments = useCallback(async () => {
+    setDeploymentsLoading(true);
+    try {
+      setDeployments(await listPrefectDeployments());
+    } catch (err) {
+      message.error(getApiErrorMessage(err, 'Failed to load deployments'));
+    } finally {
+      setDeploymentsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadDeployments(); }, [loadDeployments]);
+
+  const handleDeleteSchedule = async (schedule: WorkflowSchedule) => {
+    setDeletingScheduleId(schedule.id);
+    try {
+      await deleteWorkflowSchedule(schedule.id);
+      setWorkflow(current => current ? {
+        ...current,
+        schedules: current.schedules?.filter(item => item.id !== schedule.id),
+        schedule_cron: schedule.name === 'default' ? null : current.schedule_cron,
+      } : current);
+      if (schedule.name === 'default') form.setFieldValue('schedule_cron', undefined);
+      message.success('Schedule deleted');
+    } catch (err) {
+      message.error(getApiErrorMessage(err, 'Failed to delete schedule'));
+    } finally {
+      setDeletingScheduleId(null);
+    }
+  };
+
   // Load available actions
   useEffect(() => {
     const loadActions = async () => {
@@ -655,7 +738,9 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         ticket_filter_logic: 'AND',
         is_active: false,
         is_draft: true,
+        prefect_deployment_id: undefined,
         tags: [],
+        variableDeclarations: [],
       });
       // Add default start node
       setNodes([
@@ -672,11 +757,12 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
 
     const loadWorkflow = async () => {
       try {
-        const data = await getWorkflow(workflowId);
+        const data: Workflow = await getWorkflow(workflowId);
         setWorkflow(data);
         form.setFieldsValue({
           name: data.name,
           description: data.description,
+          prefect_deployment_id: data.prefect_deployment_id || undefined,
           trigger_type: data.trigger_type,
           webhook_source_id: data.trigger_conditions?.webhook_source_id,
           alert_filters: Array.isArray(data.trigger_conditions?.alert_filters) ? data.trigger_conditions.alert_filters : [],
@@ -687,6 +773,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
           is_active: data.is_active,
           is_draft: data.is_draft,
           tags: data.tags?.join(', ') || '',
+          variableDeclarations: variablesToDeclarations(data.variables, data.configured_secret_variables),
         });
 
         // Convert steps to nodes directly using backend IDs
@@ -1081,6 +1168,11 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const handleSave = async (activate: boolean = false) => {
     try {
       const values = await form.validateFields();
+      if ((activate || (values.is_active && !values.is_draft)) && !values.prefect_deployment_id) {
+        form.setFields([{ name: 'prefect_deployment_id', errors: ['Select an execution deployment before activating this workflow.'] }]);
+        message.error('Select an execution deployment before activating this workflow');
+        return;
+      }
       setSaving(true);
 
       const tags = normalizeTags(values.tags);
@@ -1093,18 +1185,20 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       const steps = nodesToSteps(nodes, sanitizedEdges);
       const workflowEdges = flowEdgesToWorkflowEdges(sanitizedEdges);
 
-      const payload: Partial<Workflow> = {
+      const payload = {
         name: values.name,
         description: values.description || '',
+        prefect_deployment_id: values.prefect_deployment_id || '',
         trigger_type: values.trigger_type,
         trigger_conditions: buildTriggerConditions(values),
         schedule_cron: values.schedule_cron || null,
         is_active: activate || values.is_active,
         is_draft: !activate && values.is_draft,
         tags,
+        ...declarationsToPayload(values.variableDeclarations),
         edges: workflowEdges,
         steps,
-      };
+      } satisfies Partial<Workflow>;
 
       let savedWorkflow: Workflow;
       if (isNew) {
@@ -1115,6 +1209,22 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         message.success('Workflow updated successfully');
       }
 
+      try {
+        savedWorkflow = await getWorkflow(savedWorkflow.id);
+      } catch {
+        message.warning('Workflow saved, but its schedules could not be refreshed. Reopen the editor before changing deployment.');
+        onSaved?.(savedWorkflow);
+        onBack();
+        return;
+      }
+      setWorkflow(savedWorkflow);
+      form.setFieldsValue({
+        prefect_deployment_id: savedWorkflow.prefect_deployment_id || undefined,
+        schedule_cron: savedWorkflow.schedule_cron || undefined,
+        is_active: savedWorkflow.is_active,
+        is_draft: savedWorkflow.is_draft,
+        variableDeclarations: variablesToDeclarations(savedWorkflow.variables, savedWorkflow.configured_secret_variables),
+      });
       onSaved?.(savedWorkflow);
       if (isNew) {
         onBack();
@@ -1123,7 +1233,21 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       if (err.errorFields) {
         message.error('Please fill in all required fields');
       } else {
+        const data = err?.response?.data;
+        if (data && typeof data === 'object') {
+          form.setFields(Object.entries(data)
+            .filter(([, errors]) => Array.isArray(errors) && errors.every(item => typeof item === 'string'))
+            .map(([name, errors]) => ({ name, errors: errors as string[] })));
+        }
         message.error(getApiErrorMessage(err, 'Failed to save workflow'));
+        if (workflowId) {
+          try {
+            const latest = await getWorkflow(workflowId);
+            setWorkflow(current => current ? { ...current, schedules: latest.schedules } : latest);
+          } catch {
+            message.warning('Could not refresh schedules. Reopen the editor before changing deployment.');
+          }
+        }
       }
     } finally {
       setSaving(false);
@@ -1349,10 +1473,10 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                   </span>
                 </Tooltip>
               )}
-              <Button icon={<SaveOutlined />} onClick={() => handleSave(false)} loading={saving}>
+              <Button icon={<SaveOutlined />} onClick={() => handleSave(false)} loading={saving} disabled={Boolean(deletingScheduleId)}>
                 Save Draft
               </Button>
-              <Button type="primary" icon={<CheckOutlined />} onClick={() => handleSave(true)} loading={saving}>
+              <Button type="primary" icon={<CheckOutlined />} onClick={() => handleSave(true)} loading={saving} disabled={Boolean(deletingScheduleId)}>
                 Save & Activate
               </Button>
             </Space>
@@ -1361,17 +1485,26 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       </Card>
 
       {/* Main Content */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
         {/* Left Sidebar - Settings & Actions */}
         <div
+          ref={sidebarRef}
+          id="workflow-sidebar"
           style={{
-            width: 280,
+            width: sidebarWidth,
+            minWidth: 'min(240px, 40%)',
+            maxWidth: 'min(600px, 60%)',
+            flexShrink: 0,
+            boxSizing: 'border-box',
             background: 'var(--workflow-sidebar-bg, #fafafa)',
             borderRight: '1px solid var(--workflow-border, #f0f0f0)',
             overflow: 'auto',
             padding: 16,
-          }}
+            fontSize: sidebarFontSize,
+            '--workflow-sidebar-font-size': `${sidebarFontSize}px`,
+          } as React.CSSProperties}
         >
+          <ConfigProvider theme={{ token: { fontSize: sidebarFontSize, controlHeight: 32 * sidebarFontSize / 14 } }}>
           <Card title="Workflow Settings" size="small" style={{ marginBottom: 16 }}>
             <Form form={form} layout="vertical" size="small">
               <Form.Item name="name" label="Name" rules={[{ required: true }]}>
@@ -1380,6 +1513,67 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
               <Form.Item name="description" label="Description">
                 <Input.TextArea rows={2} placeholder="Description..." />
               </Form.Item>
+              <Form.Item
+                name="prefect_deployment_id"
+                label="Execution deployment"
+                extra={schedules.length
+                  ? 'Delete all schedules, including paused schedules, before changing deployment.'
+                  : 'Choose where this workflow runs. Drafts may be saved without a deployment.'}
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Select deployment"
+                  options={deploymentOptions}
+                  loading={deploymentsLoading}
+                  disabled={schedules.length > 0 || saving || Boolean(deletingScheduleId)}
+                  notFoundContent="No registered deployments"
+                  onDropdownVisibleChange={open => { if (open) void loadDeployments(); }}
+                />
+              </Form.Item>
+              {deploymentId && !deploymentsLoading && !selectedDeployment?.is_available && (
+                <Text type="warning" style={{ display: 'block', marginBottom: 12 }}>
+                  The selected deployment is unavailable. Choose an available deployment before running this workflow.
+                </Text>
+              )}
+              {schedules.length > 0 && (
+                <List
+                  size="small"
+                  header="Schedules"
+                  dataSource={schedules}
+                  style={{ marginBottom: 12 }}
+                  renderItem={schedule => (
+                    <List.Item actions={[
+                      <Popconfirm
+                        key="delete"
+                        title={`Delete schedule "${schedule.name}"?`}
+                        description={schedule.name === 'default' ? 'This also clears the workflow Cron setting.' : undefined}
+                        onConfirm={() => handleDeleteSchedule(schedule)}
+                        okText="Delete"
+                        okButtonProps={{ danger: true }}
+                      >
+                        <Button
+                          danger
+                          type="text"
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          aria-label={`Delete schedule ${schedule.name}`}
+                          loading={deletingScheduleId === schedule.id}
+                          disabled={saving || Boolean(deletingScheduleId)}
+                        />
+                      </Popconfirm>,
+                    ]}>
+                      <List.Item.Meta
+                        title={<>{schedule.name} <Tag>{schedule.is_active ? 'Active' : 'Paused'}</Tag></>}
+                        description={schedule.schedule_type === 'cron'
+                          ? `${schedule.cron} (${schedule.timezone})`
+                          : `Every ${schedule.interval_seconds} seconds`}
+                      />
+                    </List.Item>
+                  )}
+                />
+              )}
               <Form.Item name="trigger_type" label="Trigger" rules={[{ required: true }]}>
                 <Select
                   options={triggerTypes}
@@ -1426,6 +1620,15 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                   </Form.Item>
                 </Col>
               </Row>
+              <Form.Item
+                name="variableDeclarations"
+                label={<Text strong>Variables</Text>}
+                rules={[{
+                  validator: async (_, rows) => { declarationsToPayload(rows); },
+                }]}
+              >
+                <WorkflowVariablesPanel options={variableOptions} />
+              </Form.Item>
             </Form>
           </Card>
 
@@ -1468,14 +1671,13 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                           }}
                         >
                           <Form.Item
-                            {...field}
                             name={[field.name, 'label_name']}
                             rules={[{ required: true, message: 'Required' }]}
                             style={{ marginBottom: 8 }}
                           >
                             <Input placeholder="label_name" />
                           </Form.Item>
-                          <Form.Item {...field} name={[field.name, 'label_value']} style={{ marginBottom: 8 }}>
+                          <Form.Item name={[field.name, 'label_value']} style={{ marginBottom: 8 }}>
                             <Input placeholder="label_value" />
                           </Form.Item>
                           <Button danger size="small" block onClick={() => remove(field.name)}>
@@ -1515,10 +1717,45 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
             savedNodes={savedNodes}
             onManageSavedNodes={() => setSavedNodesManagerVisible(true)}
           />
+          </ConfigProvider>
         </div>
 
+        <div
+          role="separator"
+          aria-label="Resize workflow sidebar"
+          aria-controls="workflow-sidebar"
+          aria-orientation="vertical"
+          aria-valuenow={Math.round(sidebarWidth)}
+          aria-valuemin={Math.round(sidebarBounds.min)}
+          aria-valuemax={Math.round(sidebarBounds.max)}
+          aria-valuetext={`${Math.round(sidebarWidth)} pixels`}
+          tabIndex={0}
+          title="Drag to resize; use Left/Right arrow keys when focused"
+          style={{ flex: '0 0 8px', cursor: 'col-resize', touchAction: 'none', userSelect: 'none', background: 'var(--workflow-border, #f0f0f0)' }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.currentTarget.focus();
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId) && sidebarRef.current) {
+              resizeSidebar(event.clientX - sidebarRef.current.getBoundingClientRect().left);
+            }
+          }}
+          onPointerUp={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              resizeSidebar(sidebarWidth + (event.key === 'ArrowRight' ? 16 : -16));
+            }
+          }}
+        />
+
         {/* Canvas */}
-        <div ref={reactFlowWrapper} style={{ flex: 1 }}>
+        <div ref={reactFlowWrapper} style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -1777,6 +2014,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                   <Input value={selectedNode.data.actionType} disabled />
                 </Form.Item>
                 <Divider>Action Configuration</Divider>
+                <div style={{ marginBottom: 16 }}><VariableReference options={variableOptions} /></div>
                 <ActionConfigBuilder
                   actionType={selectedNode.data.actionType || ''}
                   actionInfo={availableActions.find(
@@ -1860,6 +2098,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       <ConditionBuilder
         visible={conditionModalVisible}
         condition={selectedNode?.data?.condition}
+        variableOptions={variableOptions}
         onSave={saveCondition}
         onCancel={() => setConditionModalVisible(false)}
       />

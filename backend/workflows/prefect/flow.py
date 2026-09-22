@@ -11,8 +11,9 @@ from prefect.runtime import flow_run
 
 from .actions import ActionRegistry
 from .client import BackendAPIError, get_runtime_policy
-from .conditions import evaluate_condition_object, resolve_context_path
+from .conditions import evaluate_condition_object, extract_condition_fields, resolve_context_path
 from .executor import execute_action
+from .secrets import validate_secret_context_path, validate_secret_variable_references
 
 
 @task(name="execute-action")
@@ -28,6 +29,10 @@ def _validated_run(run: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any],
     if not isinstance(workflow, dict) or not isinstance(workflow.get("definition"), dict):
         raise ValueError("run.workflow.definition must be an object")
     definition = workflow["definition"]
+    if not isinstance(definition.get("variables", {}), dict):
+        raise ValueError("workflow definition variables must be an object")
+    if not isinstance(definition.get("secret_variables", {}), dict):
+        raise ValueError("workflow definition secret_variables must be an object")
     if str(workflow.get("id") or "") != str(definition.get("id") or ""):
         raise ValueError("run workflow id does not match definition id")
     steps = definition.get("steps") or []
@@ -69,7 +74,8 @@ def run_soar_workflow(run: Dict[str, Any], worker_credential_block: str = '') ->
         "workflow_id": workflow["id"],
         "workflow_name": definition.get("name"),
         "workflow_version": workflow.get("version"),
-        "variables": {},
+        "variables": {name: deepcopy(value) for name, value in definition.get("variables", {}).items() if name not in definition.get("secret_variables", {})},
+        "_secret_variables": deepcopy(definition.get("secret_variables", {})),
         "step_results": {},
         "previous_step": {},
         "ticket": trigger.get("data") or {},
@@ -167,6 +173,9 @@ def run_soar_workflow(run: Dict[str, Any], worker_credential_block: str = '') ->
             result = {"step_id": step["id"], "status": "skipped", "attempt_number": 1, "input_data": {}, "output_data": {}, "error_message": "", "logs": f"skipped {node_type} node"}
         elif node_type == "condition":
             try:
+                validate_secret_variable_references("", step.get("condition") or {}, context["_secret_variables"])
+                for field in extract_condition_fields(step.get("condition") or {}):
+                    validate_secret_context_path(field, context["_secret_variables"])
                 condition_result = evaluate_condition_object(step.get("condition") or {}, lambda path: resolve_context_path(context, path), context)
                 output = {"condition_matched": condition_result}
                 result = {"step_id": step["id"], "status": "completed", "attempt_number": 1, "input_data": step.get("condition") or {}, "output_data": output, "error_message": "", "logs": f"Condition evaluated: {condition_result}"}

@@ -303,7 +303,5 @@ EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '15'))
 # Prefect Workflow Engine
 # PREFECT_API_URL: Prefect Server API endpoint (required for Prefect execution engine)
 PREFECT_API_URL = os.getenv('PREFECT_API_URL', 'http://127.0.0.1:4200/api')
-# PREFECT_DEPLOYMENT_ID: Default shared deployment ID for generic SOAR workflows
-PREFECT_DEPLOYMENT_ID = os.getenv('PREFECT_DEPLOYMENT_ID', '')
 # PREFECT_API_KEY: Optional API key for authentication with Prefect Cloud or self-hosted server
 PREFECT_API_KEY = os.getenv('PREFECT_API_KEY', '')
