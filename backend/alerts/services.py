@@ -38,6 +38,23 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# Alert list scope: return every cached alert within a time window (default the
+# past 90 days) rather than truncating by count. ALERT_LIST_MAX is only a safety
+# ceiling to guard against unbounded result sets. The frontend paginates the
+# returned set client-side.
+ALERT_LIST_WINDOW_DAYS = int(os.environ.get('ALERT_LIST_WINDOW_DAYS', '90'))
+ALERT_LIST_MAX = int(os.environ.get('ALERT_LIST_MAX', '20000'))
+
+
+def _windowed_alerts_queryset():
+    """Active-index alerts within the configured time window, newest first."""
+    cutoff = timezone.now() - timedelta(days=ALERT_LIST_WINDOW_DAYS)
+    return (
+        _alerts_queryset_for_active_index()
+        .filter(timestamp__gte=cutoff)
+        .order_by('-timestamp')
+    )
+
 
 SEVERITY_ALIASES = {
     'critical': 'critical',
@@ -839,7 +856,7 @@ class AlertService:
         if force_db:
             try:
                 cached = list(
-                    _alerts_queryset_for_active_index().order_by('-timestamp')[:100]
+                    _windowed_alerts_queryset()[:ALERT_LIST_MAX]
                 )
                 elapsed_ms = int((time.time() - start_time) * 1000)
                 logger.info('list_alerts force_db cached_count=%d elapsed_ms=%d', len(cached), elapsed_ms)
@@ -852,7 +869,7 @@ class AlertService:
         if not force_es:
             try:
                 cached = list(
-                    _alerts_queryset_for_active_index().order_by('-timestamp')[:100]
+                    _windowed_alerts_queryset()[:ALERT_LIST_MAX]
                 )
                 if cached:
                     elapsed_ms = int((time.time() - start_time) * 1000)

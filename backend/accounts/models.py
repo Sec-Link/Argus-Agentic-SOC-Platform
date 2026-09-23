@@ -120,6 +120,12 @@ class AuditLog(models.Model):
         ADMIN_REJECT = "admin_reject", "Admin reject"
         REGISTRATION = "registration", "Registration"
         EMAIL_SENT = "email_sent", "Email sent"
+        ACTIVITY = "activity", "Activity"
+
+    class ActionType(models.TextChoices):
+        AUTH = "auth", "Auth"
+        PAGE_VIEW = "page_view", "Page view"
+        FEATURE_EXEC = "feature_exec", "Feature exec"
 
     class Status(models.TextChoices):
         SUCCESS = "success", "Success"
@@ -127,6 +133,10 @@ class AuditLog(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event_type = models.CharField(max_length=32, choices=EventType.choices, db_index=True)
+    action_type = models.CharField(max_length=16, choices=ActionType.choices, default=ActionType.AUTH, db_index=True)
+    path = models.CharField(max_length=512, blank=True, default="")
+    method = models.CharField(max_length=8, blank=True, default="")
+    details = models.JSONField(default=dict, blank=True)
     user_email = models.EmailField(null=True, blank=True, db_index=True)
     admin_email = models.EmailField(null=True, blank=True, db_index=True)
     ip_address = models.CharField(max_length=64, blank=True, default="")

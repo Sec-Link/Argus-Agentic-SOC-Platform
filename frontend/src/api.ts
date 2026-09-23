@@ -82,10 +82,20 @@ const client = axios.create({
   xsrfCookieName: 'csrftoken',
   xsrfHeaderName: 'X-CSRFToken',
 });
+
+const publicReportClient = axios.create({
+  baseURL: resolveApiBase(),
+  withCredentials: false,
+});
+
+export async function fetchReport(range: '24h' | '7d' | '30d' = '7d') {
+  const r = await publicReportClient.post('/reports/generate/', { time_range: range });
+  return r.data as { markdown_content: string; raw_stats: Record<string, any> };
+}
 const addAuthHeader = (config: InternalAxiosRequestConfig) => {
   const method = String(config.method || 'get').toUpperCase();
   const url = String(config.url || '');
-  const readonlyAllowedPaths = ['/accounts/auth/logout/', '/accounts/auth/otp/request/', '/accounts/auth/otp/verify/'];
+  const readonlyAllowedPaths = ['/accounts/auth/logout/', '/accounts/auth/otp/request/', '/accounts/auth/otp/verify/', '/reports/generate/'];
   if (typeof window !== 'undefined') {
     let isReadonly = false;
     try {
@@ -1286,7 +1296,7 @@ export async function getWorkflow(id: string): Promise<Workflow> {
 }
 
 // Create workflow
-type WorkflowWritePayload = Omit<Partial<Workflow>, 'execution_engine'> & {
+export type WorkflowWritePayload = Omit<Partial<Workflow>, 'execution_engine'> & {
   execution_engine?: 'prefect';
 };
 

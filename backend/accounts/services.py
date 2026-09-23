@@ -701,5 +701,7 @@ def should_deny_write_for_readonly_user(user: User, path: str, method: str) -> b
         "/api/v1/accounts/auth/otp/verify",
         "/api/v1/accounts/auth/logout/",
         "/api/v1/accounts/auth/logout",
+        "/api/v1/reports/generate/",
+        "/api/v1/reports/generate",
     }
     return path not in allowed
