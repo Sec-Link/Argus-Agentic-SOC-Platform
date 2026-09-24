@@ -15,6 +15,7 @@ from .prefect.actions import (
     LogAction,
     ReleaseIPAction,
     SendEmailAction,
+    SendNotificationAction,
     UpdateTicketAction,
 )
 
@@ -33,5 +34,6 @@ __all__ = [
     "LogAction",
     "ReleaseIPAction",
     "SendEmailAction",
+    "SendNotificationAction",
     "UpdateTicketAction",
 ]
