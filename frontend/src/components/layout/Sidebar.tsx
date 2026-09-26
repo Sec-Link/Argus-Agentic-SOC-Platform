@@ -23,6 +23,7 @@ import {
   Bot,
   UserCheck,
   ScrollText,
+  FileText,
   SlidersHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -45,6 +46,8 @@ function iconByKey(key: RouteKey): React.ReactNode {
       return Ic(LayoutDashboard); // Overview
     case 'alerts':
       return Ic(Bell);
+    case 'reports':
+      return Ic(FileText);
     case 'tickets':
       return Ic(Ticket);
     case 'assets':
@@ -109,6 +112,7 @@ export default function Sidebar({
   const routeLabel: Record<RouteKey, string> = {
     dashboard: 'Overview',
     alerts: 'Alerts',
+    reports: 'Reports',
     tickets: 'Tickets',
     assets: 'Assets',
     integrations: labelOverrides.integrations || 'Integrations',
@@ -128,7 +132,7 @@ export default function Sidebar({
 
   // Group icons are distinct from their children (Monitoring ≠ Overview, etc.).
   const navGroups: Array<{ key: string; title: string; icon: React.ReactNode; items: RouteKey[] }> = [
-    { key: 'monitorGroup', title: 'Monitoring', icon: Ic(Gauge), items: ['dashboard', 'alerts'] },
+    { key: 'monitorGroup', title: 'Monitoring', icon: Ic(Gauge), items: ['dashboard', 'alerts', 'reports'] },
     { key: 'investigationGroup', title: 'Investigation', icon: Ic(Search), items: ['tickets', 'assets'] },
     {
       key: 'dataPipelineGroup',

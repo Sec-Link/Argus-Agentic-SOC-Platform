@@ -1,6 +1,7 @@
 export {
   // types
   type Workflow,
+  type WorkflowWritePayload,
   type WorkflowStep,
   type WorkflowEdge,
   type WorkflowExecution,

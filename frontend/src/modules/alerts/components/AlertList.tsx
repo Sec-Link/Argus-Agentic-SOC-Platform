@@ -66,7 +66,7 @@ const formatTime = (value: any) => {
 const getId = (row: any) => normalizeText(pick(row, ['alert_id', '_id']));
 const getTime = (row: any) => pick(row, ['timestamp', '@timestamp', 'event_time', 'time']);
 const getSeverity = (row: any) => String(pick(row, ['severity', 'level', 'log.level']) || 'unknown');
-const getMessage = (row: any) => normalizeText(pick(row, ['message', 'title', 'event.original', 'log.message', 'summary']));
+const getMessage = (row: any) => normalizeText(pick(row, ['description', 'body.description', 'details', 'message', 'title', 'event.original', 'log.message', 'summary']));
 const getDetails = (row: any) => normalizeText(pick(row, ['description', 'details', 'event.reason', 'raw_message']));
 const getHost = (row: any) => normalizeText(pick(row, ['host_name', 'body.host_name', 'host.name', 'host', 'hostname', 'agent.name']));
 const getSourceIp = (row: any) => normalizeText(pick(row, ['source_ip', 'body.source_ip', 'source.ip', 'src_ip', 'client.ip']));
@@ -114,12 +114,13 @@ const AlertList: React.FC = () => {
   const [detailOpen, setDetailOpen] = useState<boolean>(false);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
 
-  // Backend caps the list at ~100 rows and ignores filter/sort params, so we
-  // fetch the full capped set once and do filtering/sorting/paging client-side.
+  // Backend returns every alert within its time window (default past 90 days),
+  // bounded by ALERT_LIST_MAX. We fetch that whole window once and
+  // filter/sort/page client-side. page_size is large to pull the full window.
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetchAlerts(1, 100);
+      const res = await fetchAlerts(1, 20000);
       setAlerts(res.alerts || []);
     } catch (err) {
       console.error('Failed to load alerts', err);
@@ -253,32 +254,6 @@ const AlertList: React.FC = () => {
           >
             {String(row.rule_name || detectionId)}
           </Link>
-        );
-      },
-    },
-    {
-      title: 'Host Name',
-      key: 'host_name',
-      width: widths.host_name,
-      ellipsis: true,
-      sorter: (a: any, b: any) => getHost(a).localeCompare(getHost(b)),
-      render: (_: any, row: any) => {
-        const host = getHost(row);
-        return host === '-' ? <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span> : <Text>{host}</Text>;
-      },
-    },
-    {
-      title: 'Source IP',
-      key: 'source_ip',
-      width: widths.source_ip,
-      ellipsis: true,
-      sorter: (a: any, b: any) => getSourceIp(a).localeCompare(getSourceIp(b)),
-      render: (_: any, row: any) => {
-        const ip = getSourceIp(row);
-        return ip === '-' ? (
-          <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>
-        ) : (
-          <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}>{ip}</span>
         );
       },
     },

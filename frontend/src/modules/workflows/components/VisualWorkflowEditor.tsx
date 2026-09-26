@@ -63,6 +63,7 @@ import {
   getWorkflow,
   createWorkflow,
   updateWorkflow,
+  WorkflowWritePayload,
   getAvailableActions,
   executeWorkflow,
   listSavedWorkflowNodes,
