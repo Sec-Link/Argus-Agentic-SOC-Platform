@@ -111,6 +111,12 @@ class ActionTemplateViewSet(viewsets.ModelViewSet):
                 'category': 'notification',
             },
             {
+                'action_type': 'send_notification',
+                'name': 'Slack / Feishu / Wecom Notification',
+                'description': 'Send a security notification to Slack, Feishu, or Wecom',
+                'category': 'notification',
+            },
+            {
                 'action_type': 'api_call',
                 'name': 'API Call',
                 'description': 'Call an HTTP API with configurable request data',

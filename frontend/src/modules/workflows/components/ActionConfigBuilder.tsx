@@ -45,6 +45,7 @@ type JsonSchemaProperty = {
   writeOnly?: boolean;
   items?: JsonSchemaProperty;
   properties?: Record<string, JsonSchemaProperty>;
+  'x-enum-labels'?: Record<string, string> | string[];
   'x-sensitive'?: boolean;
 };
 
@@ -97,8 +98,49 @@ const formatLabel = (name: string): string => (
 
 const formatOptionLabel = (value: unknown): string => {
   const raw = String(value);
+  if (raw === 'wechat_work' || raw === 'wechat' || raw === 'enterprise_wechat' || raw === 'wecom') {
+    return 'Wecom';
+  }
   if (raw && raw === raw.toUpperCase()) return raw;
   return formatLabel(raw.replace(/-/g, '_'));
+};
+
+const optionLabelFromSchema = (
+  value: unknown,
+  labels?: Record<string, string> | string[],
+  values?: unknown[],
+): string => {
+  const raw = String(value);
+  if (raw === 'wechat_work' || raw === 'wechat' || raw === 'enterprise_wechat' || raw === 'wecom') {
+    return 'Wecom';
+  }
+  if (Array.isArray(labels)) {
+    return labels[values?.indexOf(value) || 0] || formatOptionLabel(value);
+  }
+  return labels?.[raw] || formatOptionLabel(value);
+};
+
+const normalizeProviderForAction = (actionType: string, provider: unknown): string => {
+  const value = String(provider || 'generic').toLowerCase();
+  if (
+    actionType === 'send_notification'
+    && ['wechat_work', 'wechat', 'enterprise_wechat', 'wecom'].includes(value)
+  ) {
+    return 'wecom';
+  }
+  return value;
+};
+
+const normalizeProviderOptionValue = (fieldName: string, value: unknown): string | number => {
+  if (typeof value === 'number') return value;
+  const raw = String(value);
+  if (
+    fieldName === 'provider'
+    && ['wechat_work', 'wechat', 'enterprise_wechat', 'wecom'].includes(raw.toLowerCase())
+  ) {
+    return 'wecom';
+  }
+  return raw;
 };
 
 const isMultilineField = (name: string): boolean => (
@@ -129,15 +171,24 @@ const fieldsFromSchema = (schema?: ActionConfigSchema): FieldDef[] => {
   const required = new Set(schema?.required || []);
   return Object.entries(schema?.properties || {}).map(([name, property]) => {
     const sensitive = Boolean(property.writeOnly || property['x-sensitive']);
+    const seenOptions = new Set<string>();
+    const options = property.enum
+      ?.map((value) => ({
+        value: normalizeProviderOptionValue(name, value),
+        label: optionLabelFromSchema(value, property['x-enum-labels'], property.enum),
+      }))
+      .filter((option) => {
+        const key = String(option.value);
+        if (seenOptions.has(key)) return false;
+        seenOptions.add(key);
+        return true;
+      });
     return {
       name,
       label: property.title || formatLabel(name),
       type: resolveFieldType(name, property, sensitive),
       required: required.has(name),
-      options: property.enum?.map((value) => ({
-        value: typeof value === 'number' ? value : String(value),
-        label: formatOptionLabel(value),
-      })),
+      options,
       default: property.default,
       description: property.description,
       sensitive,
@@ -278,7 +329,8 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
   const [form] = Form.useForm();
   const loadedConfigKey = useRef<string | null>(null);
   const initialTargets = useRef<Record<string, any>>({});
-  const provider = Form.useWatch('provider', form) || config?.provider || 'generic';
+  const watchedProvider = Form.useWatch('provider', form) || config?.provider || 'generic';
+  const provider = normalizeProviderForAction(actionType, watchedProvider);
 
   const schema = actionInfo?.config_schema as ActionConfigSchema | undefined;
   const fields = fieldsFromSchema(schema);
@@ -298,7 +350,7 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
     if (loadedConfigKey.current === nextConfigKey) return;
     loadedConfigKey.current = nextConfigKey;
     initialTargets.current = {
-      provider: String(config?.provider || 'generic').toLowerCase(),
+      provider: normalizeProviderForAction(actionType, config?.provider),
       api_url: normalizeTargetValue(config?.api_url),
       url: normalizeTargetValue(config?.url),
       alias_name: String(config?.alias_name || 'ARGUS_BLOCKLIST').trim(),
@@ -312,6 +364,9 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
         && !(typeof value === 'string' && value.startsWith('enc:v1:'))
       )),
     );
+    if (actionType === 'send_notification' && safeConfig.provider) {
+      safeConfig.provider = normalizeProviderForAction(actionType, safeConfig.provider);
+    }
     form.resetFields();
     form.setFieldsValue(safeConfig);
     setJsonValue(JSON.stringify(safeConfig, null, 2));
@@ -321,12 +376,16 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
     const values = { ...inputValues };
     const initial = initialTargets.current;
     const apiUrlChanged = normalizeTargetValue(values.api_url) !== initial.api_url;
+    if (actionType === 'send_notification' && values.provider) {
+      values.provider = normalizeProviderForAction(actionType, values.provider);
+    }
     const providerChanged = (
-      String(values.provider || 'generic').toLowerCase() !== initial.provider
+      normalizeProviderForAction(actionType, values.provider) !== initial.provider
     );
     const isOPNsenseAction = actionType === 'block_ip' || actionType === 'release_ip';
+    const providerBoundSecretAction = actionType === 'send_notification';
     const protectedChanged = configuredSecretFields.length > 0
-      && (apiUrlChanged || (isOPNsenseAction && providerChanged));
+      && (apiUrlChanged || ((isOPNsenseAction || providerBoundSecretAction) && providerChanged));
     const nextAliasChanged = (
       isOPNsenseAction
       && configuredSecretFields.some((field) => field === 'api_key' || field === 'api_secret')
@@ -465,7 +524,7 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
               showIcon
               style={{ marginBottom: 16 }}
               message="Credential re-entry required"
-              description="The Provider or API URL changed. Re-enter the API Key and, for OPNsense, the API Secret before saving."
+              description="A credential binding field changed. Re-enter the protected credential before saving."
             />
           )}
 

@@ -135,11 +135,33 @@ def _get_active_index_name() -> str | None:
         return None
 
 
+def _get_active_source_indexes() -> List[str]:
+    indexes: List[str] = []
+    es_index = _get_active_index_name()
+    if es_index:
+        indexes.append(es_index)
+    try:
+        from integrations.models import Integration
+
+        for cfg in (
+            Integration.objects.filter(type__in=['splunk_search', 'splunk'])
+            .order_by('-updated_at', '-created_at')
+            .values_list('config', flat=True)
+        ):
+            if isinstance(cfg, dict):
+                idx = str(cfg.get('index') or '').strip()
+                if idx:
+                    indexes.append(idx)
+    except Exception:
+        logger.exception('Failed to resolve Splunk source indexes for alert queries')
+    return list(dict.fromkeys(indexes))
+
+
 def _alerts_queryset_for_active_index():
     qs = Alert.objects.all()
-    active_index = _get_active_index_name()
-    if active_index:
-        qs = qs.filter(source_index=active_index)
+    active_indexes = _get_active_source_indexes()
+    if active_indexes:
+        qs = qs.filter(source_index__in=active_indexes)
     # Guard dashboard/list APIs from legacy/broken rows that were inserted
     # without a stable identity.
     qs = qs.exclude(alert_id__isnull=True).exclude(alert_id='')
@@ -1076,7 +1098,7 @@ class AlertService:
             cache_key = None
             cached_summary = None
             if all_time:
-                active_idx = _get_active_index_name() or 'all'
+                active_idx = ','.join(_get_active_source_indexes()) or 'all'
                 cache_key = f"alerts:dashboard:alltime:summary:{active_idx}"
                 cached_summary = cache.get(cache_key)
 
