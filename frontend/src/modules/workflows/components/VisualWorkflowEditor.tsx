@@ -84,6 +84,7 @@ import type {
   WorkflowEdge,
   SavedWorkflowNode,
   TicketWorkflowBinding,
+  WorkflowWritePayload,
 } from 'services/workflows';
 import type { InterfaceEndpoint } from 'services/interfaces';
 import { nodeTypes } from './CustomNodes';

@@ -11,6 +11,7 @@ from .log import LogAction
 from .registry import ActionRegistry
 from .release_ip import ReleaseIPAction
 from .send_email import SendEmailAction
+from .send_notification import SendNotificationAction
 from .update_ticket import UpdateTicketAction
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     "LogAction",
     "ReleaseIPAction",
     "SendEmailAction",
+    "SendNotificationAction",
     "UpdateTicketAction",
 ]

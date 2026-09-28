@@ -21,6 +21,7 @@ import {
   SearchOutlined,
   LockOutlined,
   UnlockOutlined,
+  NotificationOutlined,
 } from '@ant-design/icons';
 
 const { Text } = Typography;
@@ -45,6 +46,7 @@ const nodeColors: Record<string, { bg: string; border: string; icon: string }> =
 // Icon mapping for known action types
 const actionIcons: Record<string, React.ReactNode> = {
   send_email:   <MailOutlined />,
+  send_notification: <NotificationOutlined />,
   api_call:     <ApiOutlined />,
   ip_lookup:    <SearchOutlined />,
   hash_lookup:  <SearchOutlined />,
