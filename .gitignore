@@ -13,6 +13,7 @@ node_modules/
 
 # Tooling
 .claude/
+.dev/
 .run/
 
 # Runtime-generated workflow manifests
