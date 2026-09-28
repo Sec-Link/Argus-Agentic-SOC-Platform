@@ -88,6 +88,7 @@ import type {
   WorkflowEdge,
   SavedWorkflowNode,
   TicketWorkflowBinding,
+  WorkflowWritePayload,
 } from 'services/workflows';
 import type { InterfaceEndpoint } from 'services/interfaces';
 import { nodeTypes } from './CustomNodes';
@@ -1185,7 +1186,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       const steps = nodesToSteps(nodes, sanitizedEdges);
       const workflowEdges = flowEdgesToWorkflowEdges(sanitizedEdges);
 
-      const payload = {
+      const payload: WorkflowWritePayload = {
         name: values.name,
         description: values.description || '',
         prefect_deployment_id: values.prefect_deployment_id || '',

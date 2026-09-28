@@ -154,6 +154,33 @@ def _build_alias_map(aliases: list) -> dict[str, str]:
     return result
 
 
+def _canonical_rule_uuid(rule_id: str) -> str:
+    """Map an alert's rule_id to the local LocalDetectionRule.rule_uuid.
+
+    Alerts may carry the Kibana-assigned rule id (payload.kibana_rule_id /
+    kibana_metadata.remote_id) instead of the local rule_uuid that
+    RiskRuleConfig and scoring are keyed on. Resolve back to the local uuid so
+    rule-level config and aliases apply. Falls back to the given id unchanged.
+    """
+    rule_id = (rule_id or '').strip()
+    if not rule_id:
+        return rule_id
+    try:
+        if LocalDetectionRule.objects.filter(rule_uuid=rule_id, is_deleted=False).exists():
+            return rule_id
+        match = (
+            LocalDetectionRule.objects.filter(payload__kibana_rule_id=rule_id, is_deleted=False).first()
+            or LocalDetectionRule.objects.filter(
+                payload__kibana_metadata__remote_id=rule_id, is_deleted=False
+            ).first()
+        )
+        if match:
+            return match.rule_uuid
+    except Exception as exc:
+        logger.warning('RBA: rule id canonicalization failed for %s: %s', rule_id, exc)
+    return rule_id
+
+
 def _resolve_field_config(rule_uuid: str) -> tuple[list[dict] | None, dict[str, str]]:
     """Return (field_configs, alias_map) for this rule.
 
@@ -276,6 +303,10 @@ def process_alert_for_risk(alert_doc: dict) -> list[RiskEvent]:
 
     if not rule_uuid or not alert_id:
         return []
+
+    # Alerts may carry the Kibana rule id; map it to the local rule_uuid so
+    # rule-level config, aliases, and scoring all resolve correctly.
+    rule_uuid = _canonical_rule_uuid(rule_uuid)
 
     field_configs, alias_map = _resolve_field_config(rule_uuid)
     if not field_configs:

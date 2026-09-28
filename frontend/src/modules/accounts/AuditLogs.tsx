@@ -6,7 +6,11 @@ import { listAuditLogs } from 'services/accounts';
 
 type AuditLogItem = {
   id: string;
-  event_type: 'otp_request' | 'otp_verify' | 'admin_approve' | 'admin_reject' | 'registration' | 'email_sent';
+  event_type: string;
+  action_type?: 'page_view' | 'feature_exec' | 'auth' | string;
+  path?: string;
+  method?: string;
+  details?: Record<string, any>;
   user_email?: string | null;
   admin_email?: string | null;
   ip_address?: string;
@@ -42,6 +46,23 @@ const eventLabel = (value: string) =>
     registration: 'Registration',
     email_sent: 'Email Sent',
   }[value] || value);
+
+const actionLabel = (row: AuditLogItem) => {
+  const service = String(row.details?.service || '').trim();
+  if (service) {
+    const colors: Record<string, string> = {
+      'Alerts Service': 'blue', 'Detection Rules': 'purple', 'Risk (RBA)': 'geekblue',
+      'Reports Generator': 'green', 'Report Generator': 'green', 'Audit Logs': 'cyan',
+      'Tickets Service': 'orange',
+    };
+    return { label: service, color: colors[service] || 'blue' };
+  }
+  const action = String(row.action_type || '').toLowerCase();
+  if (action === 'page_view') return { label: 'Page View', color: 'purple' };
+  if (action === 'feature_exec') return { label: 'Action', color: 'orange' };
+  if (action === 'auth') return { label: 'Auth', color: 'cyan' };
+  return { label: eventLabel(row.event_type), color: 'blue' };
+};
 
 const AuditLogs: React.FC = () => {
   const [rows, setRows] = useState<AuditLogItem[]>([]);
@@ -96,7 +117,7 @@ const AuditLogs: React.FC = () => {
       {
         title: 'Event',
         dataIndex: 'event_type',
-        render: (v: string) => <Tag color="blue">{eventLabel(v)}</Tag>,
+        render: (_v: string, row) => { const action = actionLabel(row); return <Tag color={action.color}>{action.label}</Tag>; },
       },
       {
         title: 'Email',
@@ -199,10 +220,17 @@ const AuditLogs: React.FC = () => {
                   <strong>Admin:</strong> {row.admin_email || '-'}
                 </Typography.Text>
                 <Typography.Text>
+                  <strong>Service:</strong>{' '}
+                  <span style={{ color: '#58a6ff', fontWeight: 600 }}>{row.details?.service || row.path || '-'}</span>
+                </Typography.Text>
+                <Typography.Text>
+                  <strong>Endpoint:</strong> [{row.details?.method || row.method || '-'}] {row.details?.path || row.path || '-'}
+                </Typography.Text>
+                <Typography.Text>
                   <strong>Details:</strong>
                 </Typography.Text>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                  {JSON.stringify(row.metadata || {}, null, 2)}
+                  {JSON.stringify(row.details || row.metadata || {}, null, 2)}
                 </pre>
               </Space>
             ),

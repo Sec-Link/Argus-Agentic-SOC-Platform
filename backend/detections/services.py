@@ -6,7 +6,8 @@ import re
 import uuid
 from itertools import zip_longest
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.db.models import Max
 
 from .models import (
     LocalDetectionDeployment,
@@ -58,15 +59,44 @@ def append_rule_version(
     changed_by: str,
     change_type: str,
     change_summary=None,
-) -> None:
-    LocalDetectionRuleVersion.objects.create(
-        rule=rule,
-        version=version,
-        payload=payload,
-        change_summary=change_summary or [],
-        changed_by=changed_by,
-        change_type=change_type,
-    )
+) -> int:
+    """Append a version row, self-correcting the version number.
+
+    The caller's ``rule.version`` counter can drift out of sync with the
+    version table (e.g. a prior append failed after the counter was bumped),
+    which used to raise a unique-constraint (rule_id, version) collision.
+    We derive the real next version from the table's max, honour the caller's
+    value if it's already higher, and retry on the rare concurrent conflict.
+    ``rule.version`` is synced to the value actually used and returned.
+    """
+    for _ in range(20):
+        current_max = LocalDetectionRuleVersion.objects.filter(rule=rule).aggregate(
+            m=Max('version')
+        )['m'] or 0
+        next_version = max(current_max + 1, int(version or 0))
+        try:
+            with transaction.atomic():
+                LocalDetectionRuleVersion.objects.create(
+                    rule=rule,
+                    version=next_version,
+                    payload=payload,
+                    change_summary=change_summary or [],
+                    changed_by=changed_by,
+                    change_type=change_type,
+                )
+            break
+        except IntegrityError:
+            # Another writer took this version; recompute and retry.
+            version = next_version + 1
+    else:
+        raise IntegrityError(
+            f"could not allocate a free version for rule {rule.pk} after retries"
+        )
+
+    if rule.version != next_version:
+        rule.version = next_version
+        rule.save(update_fields=['version'])
+    return next_version
 
 
 def _truncate(value, limit: int = 140) -> str:
@@ -165,9 +195,13 @@ def summarize_payload_changes(previous_payload: dict | None, next_payload: dict 
 
 
 def serialize_legacy_rule(rule: LocalDetectionRule) -> dict:
-    payload = dict(rule.payload or {})
-    yaml_text = payload.get("yaml") or ""
-    meta = extract_rule_meta(yaml_text)
+    payload = rule.payload if isinstance(rule.payload, dict) else {}
+    # List views must not parse the full YAML document for every rule.  Metadata
+    # is materialized when a rule is saved/imported; retain the fallback for
+    # older rows until the one-time backfill has completed.
+    meta = payload.get("list_meta") if isinstance(payload.get("list_meta"), dict) else None
+    if meta is None:
+        meta = extract_rule_meta(str(payload.get("yaml") or ""))
     kibana_meta = payload.get("kibana_metadata") if isinstance(payload.get("kibana_metadata"), dict) else {}
     return {
         "id": rule.rule_uuid,
@@ -238,6 +272,14 @@ def build_local_rule_payload(
 
     payload["yaml"] = yaml_text
     payload["tags"] = sigma_tags
+    payload["list_meta"] = {
+        "title": str(meta.get("title") or "").strip(),
+        "level": str(meta.get("level") or "").strip(),
+        "status": str(meta.get("status") or "").strip(),
+        "logsource": meta.get("logsource") or "",
+        "profile": str(meta.get("profile") or "").strip(),
+        "tags": sigma_tags,
+    }
     payload["mitre_attack"] = mitre_attack
     if elastic_actions is not None:
         payload["elastic_actions"] = elastic_actions

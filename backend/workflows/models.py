@@ -895,13 +895,6 @@ class StepExecution(models.Model):
         return 0
 
 
-class WorkflowEventCheckpoint(models.Model):
-    """Durable replay position for the Django Prefect event consumer."""
-
-    name = models.CharField(max_length=64, primary_key=True)
-    occurred = models.DateTimeField()
-
-
 class WorkflowSchedule(models.Model):
     """Execution schedules for workflows (cron/interval)."""
 
@@ -953,3 +946,10 @@ class WorkflowSchedule(models.Model):
 
     def __str__(self):
         return f"{self.workflow.name} - {self.name}"
+
+
+class WorkflowEventCheckpoint(models.Model):
+    """Durable replay position for the Django Prefect event consumer."""
+
+    name = models.CharField(max_length=64, primary_key=True)
+    occurred = models.DateTimeField()

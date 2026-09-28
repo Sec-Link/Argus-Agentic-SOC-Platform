@@ -35,6 +35,7 @@ import {
   Workflow,
   WorkflowStep,
   ActionInfo,
+  WorkflowWritePayload,
 } from 'services/workflows';
 import { listInterfaceEndpoints } from 'services/interfaces';
 import type { InterfaceEndpoint } from 'services/interfaces';
@@ -199,7 +200,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
 
       const tags = normalizeTags(values.tags);
 
-      const payload = {
+      const payload: WorkflowWritePayload = {
         name: values.name,
         description: values.description || '',
         trigger_type: values.trigger_type,
@@ -736,4 +737,3 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflowId, onBack, onS
 };
 
 export default WorkflowEditor;
-
