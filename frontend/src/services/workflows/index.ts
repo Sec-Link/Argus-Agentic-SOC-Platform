@@ -8,7 +8,6 @@ export {
   type StepExecution,
   type ActionInfo,
   type WorkflowStats,
-  type WorkflowWritePayload,
   type SavedWorkflowNode,
   type TicketWorkflowBinding,
 
