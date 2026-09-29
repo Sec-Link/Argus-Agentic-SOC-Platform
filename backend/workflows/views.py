@@ -79,6 +79,17 @@ def _sync_saved_schedule(schedule_id):
         }) from exc
 
 
+def _sync_saved_schedules(schedule_ids):
+    errors = []
+    for schedule_id in schedule_ids:
+        try:
+            _sync_saved_schedule(schedule_id)
+        except ValidationError as exc:
+            errors.append(str(exc.detail['schedule']))
+    if errors:
+        raise ValidationError({'schedule': errors})
+
+
 class StaffTokenAuthentication(TokenAuthentication):
     """Keep internal endpoint authentication failures consistently at 403."""
 
@@ -215,6 +226,38 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         workflow = self.get_object().clone(new_name=name, user=request.user)
         return Response(WorkflowDetailSerializer(workflow).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'], url_path='set-schedule-active')
+    @transaction.atomic
+    def set_schedule_active(self, request, pk=None):
+        if not isinstance(request.data, dict):
+            raise ValidationError({'error': 'Expected an object.'})
+        active = request.data.get('is_active')
+        if not isinstance(active, bool):
+            raise ValidationError({'error': 'is_active must be a boolean.'})
+        workflow = Workflow.objects.select_for_update().get(pk=self.get_object().pk)
+        if workflow.trigger_type != 'scheduled':
+            raise ValidationError({'error': 'Only scheduled workflows can use this switch.'})
+        if active:
+            if workflow.execution_engine != 'prefect':
+                return Response({'error': 'Scheduled workflows require Prefect execution.'}, status=409)
+            if not workflow.published_revision_id:
+                return Response({'error': 'Publish the workflow once before enabling its schedule.'}, status=409)
+            try:
+                require_deployment(workflow.prefect_deployment_id)
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=409)
+            if not workflow.schedule_cron and not workflow.schedules.filter(is_active=True).exists():
+                return Response({'error': 'Configure and enable a schedule before enabling this workflow.'}, status=409)
+        if workflow.is_active != active:
+            workflow.is_active = active
+            workflow.save(update_fields=['is_active'])
+        self._sync_default_schedule(workflow, sync=False)
+        if active and not workflow.schedules.filter(is_active=True).exists():
+            raise ValidationError({'error': 'No enabled schedule is available for this workflow.'})
+        schedule_ids = list(workflow.schedules.values_list('pk', flat=True))
+        transaction.on_commit(lambda: _sync_saved_schedules(schedule_ids))
+        return Response(WorkflowListSerializer(workflow).data)
+
     @action(detail=True, methods=['post'], url_path='execute')
     def execute(self, request, pk=None):
         workflow = self.get_object()
@@ -301,8 +344,16 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
+        serializer.instance = Workflow.objects.select_for_update().get(pk=serializer.instance.pk)
+        active_changed = (
+            'is_active' in serializer.validated_data
+            and serializer.validated_data['is_active'] != serializer.instance.is_active
+        )
         workflow = serializer.save()
-        self._sync_default_schedule(workflow)
+        self._sync_default_schedule(workflow, sync=not active_changed)
+        if active_changed:
+            schedule_ids = list(workflow.schedules.values_list('pk', flat=True))
+            transaction.on_commit(lambda: _sync_saved_schedules(schedule_ids))
 
 
 class PrefectDeploymentListView(APIView):
@@ -524,7 +575,7 @@ class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
             execution = register_runtime_execution(serializer.data)
         except Workflow.DoesNotExist:
             return Response(
-                {'error': 'Active Prefect workflow not found.'},
+                {'error': 'Prefect workflow not found.'},
                 status=status.HTTP_409_CONFLICT,
             )
         except ValueError as exc:

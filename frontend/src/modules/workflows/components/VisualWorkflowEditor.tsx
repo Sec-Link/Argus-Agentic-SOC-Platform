@@ -1170,7 +1170,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   const handleSave = async (activate: boolean = false) => {
     try {
       const values = await form.validateFields();
-      if ((activate || (values.is_active && !values.is_draft)) && !values.prefect_deployment_id) {
+      if (values.trigger_type !== 'scheduled' && (activate || (values.is_active && !values.is_draft)) && !values.prefect_deployment_id) {
         form.setFields([{ name: 'prefect_deployment_id', errors: ['Select an execution deployment before activating this workflow.'] }]);
         message.error('Select an execution deployment before activating this workflow');
         return;
@@ -1194,7 +1194,9 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         trigger_type: values.trigger_type,
         trigger_conditions: buildTriggerConditions(values),
         schedule_cron: values.schedule_cron || null,
-        is_active: activate || values.is_active,
+        ...(values.trigger_type === 'scheduled'
+          ? (isNew || workflow?.trigger_type !== 'scheduled' ? { is_active: false } : {})
+          : { is_active: activate || values.is_active }),
         is_draft: !activate && values.is_draft,
         tags,
         ...declarationsToPayload(values.variableDeclarations),
@@ -1450,7 +1452,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
           </Col>
           <Col>
             <Space>
-              {!isNew && (
+              {!isNew && triggerType !== 'scheduled' && (
                 <Tooltip
                   title={
                     workflow?.execution_engine === 'local'
@@ -1478,9 +1480,11 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
               <Button icon={<SaveOutlined />} onClick={() => handleSave(false)} loading={saving} disabled={Boolean(deletingScheduleId)}>
                 Save Draft
               </Button>
-              <Button type="primary" icon={<CheckOutlined />} onClick={() => handleSave(true)} loading={saving} disabled={Boolean(deletingScheduleId)}>
-                Save & Activate
-              </Button>
+              {triggerType !== 'scheduled' && (
+                <Button type="primary" icon={<CheckOutlined />} onClick={() => handleSave(true)} loading={saving} disabled={Boolean(deletingScheduleId)}>
+                  Save & Activate
+                </Button>
+              )}
             </Space>
           </Col>
         </Row>
@@ -1595,19 +1599,21 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
                 Trigger details are configured in Start Node {'->'} Configure Node.
               </Text>
               <Row gutter={8}>
-                <Col span={12}>
-                  <Form.Item noStyle shouldUpdate={(prev, curr) => prev.is_active !== curr.is_active}>
-                    {({ getFieldValue, setFieldValue }) => (
-                      <Form.Item label="Active">
-                        <Switch
-                          size="small"
-                          checked={Boolean(getFieldValue('is_active'))}
-                          onChange={(checked) => setFieldValue('is_active', checked)}
-                        />
-                      </Form.Item>
-                    )}
-                  </Form.Item>
-                </Col>
+                {triggerType !== 'scheduled' && (
+                  <Col span={12}>
+                    <Form.Item noStyle shouldUpdate={(prev, curr) => prev.is_active !== curr.is_active}>
+                      {({ getFieldValue, setFieldValue }) => (
+                        <Form.Item label="Active">
+                          <Switch
+                            size="small"
+                            checked={Boolean(getFieldValue('is_active'))}
+                            onChange={(checked) => setFieldValue('is_active', checked)}
+                          />
+                        </Form.Item>
+                      )}
+                    </Form.Item>
+                  </Col>
+                )}
                 <Col span={12}>
                   <Form.Item noStyle shouldUpdate={(prev, curr) => prev.is_draft !== curr.is_draft}>
                     {({ getFieldValue, setFieldValue }) => (

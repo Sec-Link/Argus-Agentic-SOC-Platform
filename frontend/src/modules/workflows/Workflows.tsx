@@ -13,6 +13,7 @@ import {
   Statistic,
   Modal,
   Popconfirm,
+  Switch,
   Tooltip,
   Badge,
 } from 'antd';
@@ -32,6 +33,13 @@ import {
   DownloadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import type { ResizeCallbackData } from 'react-resizable';
+import { ResizableTitle } from 'components/table/resizableColumns';
+import {
+  DEFAULT_WORKFLOW_COLUMN_WIDTHS,
+  fitWorkflowColumnWidths,
+  resizeWorkflowColumnPair,
+} from './workflowColumnSizing';
 import {
   listWorkflows,
   subscribeWorkflowProgress,
@@ -41,6 +49,7 @@ import {
   getWorkflowStats,
   publishWorkflow,
   cancelWorkflowExecution,
+  setWorkflowScheduleActive,
   exportWorkflow,
   // Server-manifest recovery is intentionally disabled; see the commented
   // handler and toolbar button below for the retained rationale/source.
@@ -129,6 +138,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(false);
   const [exportingWorkflowId, setExportingWorkflowId] = useState<string | null>(null);
+  const [togglingScheduleId, setTogglingScheduleId] = useState<string | null>(null);
   const [stats, setStats] = useState<WorkflowStats | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -136,6 +146,30 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   const [bindings, setBindings] = useState<TicketWorkflowBinding[]>([]);
   const workflowRequestId = useRef(0);
   const workflowRequestInFlight = useRef<Promise<Workflow[]> | null>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [tableSizing, setTableSizing] = useState({
+    containerWidth: 0,
+    widths: DEFAULT_WORKFLOW_COLUMN_WIDTHS,
+  });
+
+  useEffect(() => {
+    const element = tableContainerRef.current;
+    if (!element) return;
+    const updateWidth = () => {
+      const containerWidth = element.clientWidth;
+      if (!containerWidth) return;
+      setTableSizing((previous) => {
+        const widths = fitWorkflowColumnWidths(containerWidth, previous.widths);
+        return previous.containerWidth === containerWidth && widths === previous.widths
+          ? previous
+          : { containerWidth, widths };
+      });
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const fetchWorkflows = useCallback(async (silent = false) => {
     const requestId = ++workflowRequestId.current;
@@ -270,6 +304,22 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       fetchWorkflows();
     } catch (err: any) {
       message.error('Failed to clone workflow');
+    }
+  };
+
+  const handleScheduleToggle = async (workflow: Workflow, isActive: boolean) => {
+    setTogglingScheduleId(workflow.id);
+    try {
+      await setWorkflowScheduleActive(workflow.id, isActive);
+      message.success(`Schedule ${isActive ? 'enabled' : 'disabled'}`);
+    } catch (err: any) {
+      const data = err?.response?.data;
+      const detail = data?.error ?? data?.detail ?? data?.schedule;
+      message.error(typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.join('; ') : 'Failed to update schedule');
+    } finally {
+      await fetchWorkflows(true);
+      void fetchStats();
+      setTogglingScheduleId(null);
     }
   };
 
@@ -441,7 +491,6 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       title: 'Trigger',
       dataIndex: 'trigger_type',
       key: 'trigger_type',
-      width: 110,
       render: (type: string) => (
         <Tag>{triggerTypeLabels[type] || type}</Tag>
       ),
@@ -450,7 +499,6 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       title: 'Steps',
       dataIndex: 'step_count',
       key: 'step_count',
-      width: 70,
       align: 'center',
       render: (count: number) => count || 0,
     },
@@ -460,7 +508,6 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       // fits within common desktop widths without horizontal scrolling.
       title: 'Status',
       key: 'status',
-      width: 240,
       render: (_: any, record: Workflow) => {
         const runInfo = getRunStatusInfo(record);
         return (
@@ -490,7 +537,6 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     {
       title: 'Ticket Labels',
       key: 'ticket_binding',
-      width: 260,
       render: (_: any, record: Workflow) => {
         const rows = getWorkflowBindings(record.id);
         const labels = rows.flatMap((item) => item.label_filters || []);
@@ -513,7 +559,6 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     {
       title: 'Last Execution',
       key: 'last_execution',
-      width: 150,
       render: (_: any, record: Workflow) => {
         if (!record.last_execution) {
           return <span style={{ color: '#999' }}>Never</span>;
@@ -536,19 +581,28 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       title: 'Executions',
       dataIndex: 'execution_count',
       key: 'execution_count',
-      width: 90,
       align: 'center',
       render: (count: number) => count || 0,
     },
     {
       title: 'Actions',
       key: 'actions',
-      width: 230,
+      onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
       render: (_: any, record: Workflow) => {
         const running = isWorkflowRunning(record);
         const isLegacyLocal = record.execution_engine === 'local';
         const hasPublishedManifest = Boolean(record.published_version);
         const canExecute = !isLegacyLocal && record.is_active && hasPublishedManifest;
+        const canEnableSchedule = !isLegacyLocal && hasPublishedManifest && Boolean(record.prefect_deployment_id);
+        const scheduleTooltip = isLegacyLocal
+          ? 'Legacy Local execution is unavailable. Publish this workflow to use Prefect.'
+          : !hasPublishedManifest
+            ? record.is_active
+              ? 'Configured on, but publish this workflow before its schedule can run. You can switch it off now.'
+              : 'Publish this workflow before enabling its schedule'
+            : !record.prefect_deployment_id
+              ? 'Select an execution deployment before enabling its schedule'
+              : record.is_active ? 'Disable schedule' : 'Enable schedule';
         const executeTooltip = isLegacyLocal
           ? 'Legacy Local execution is unavailable. Publish this workflow to use Prefect.'
           : !record.is_active
@@ -559,8 +613,20 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
               ? `Execute the last published version (v${record.published_version})`
               : `Execute published version v${record.published_version}`;
         return (
-          <Space size="small" wrap>
-            {running ? (
+          <Space size="small">
+            {record.trigger_type === 'scheduled' ? (
+              <Tooltip title={scheduleTooltip}>
+                <span>
+                  <Switch
+                    aria-label={`${record.is_active ? 'Disable' : 'Enable'} schedule for ${record.name}`}
+                    checked={record.is_active}
+                    loading={togglingScheduleId === record.id}
+                    disabled={Boolean(togglingScheduleId) || (!record.is_active && !canEnableSchedule)}
+                    onChange={(checked) => void handleScheduleToggle(record, checked)}
+                  />
+                </span>
+              </Tooltip>
+            ) : running ? (
               // While an execution is in-flight the Execute button is
               // replaced with a Stop button regardless of active/draft state.
               <Tooltip title="Stop running execution">
@@ -640,6 +706,22 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       },
     },
   ];
+  const resizableColumns = columns.map((column, index) => ({
+    ...column,
+    width: tableSizing.widths[index],
+    onHeaderCell: () => index === columns.length - 1
+      ? {}
+      : {
+          width: tableSizing.widths[index],
+          onResize: (_event: React.SyntheticEvent, data: ResizeCallbackData) => {
+            setTableSizing((previous) => {
+              const widths = resizeWorkflowColumnPair(previous.widths, index, data.size.width);
+              return widths === previous.widths ? previous : { ...previous, widths };
+            });
+          },
+        },
+  }));
+  const tableWidth = tableSizing.widths.reduce((total, width) => total + width, 0);
 
   return (
     <div style={{ padding: 24 }}>
@@ -768,14 +850,19 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
 
       {/* Workflows Table */}
       <Card title="Workflows" extra={<span>{workflows.length} items</span>}>
-        <Table
-          columns={columns}
-          dataSource={workflows}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 'max-content' }}
-        />
+        <div ref={tableContainerRef}>
+          <Table
+            className="workflow-resizable-table"
+            columns={resizableColumns as ColumnsType<Workflow>}
+            components={{ header: { cell: ResizableTitle } }}
+            dataSource={workflows}
+            rowKey="id"
+            loading={loading}
+            pagination={{ pageSize: 10 }}
+            tableLayout="fixed"
+            scroll={tableSizing.containerWidth && tableWidth > tableSizing.containerWidth ? { x: tableWidth } : undefined}
+          />
+        </div>
       </Card>
     </div>
   );
