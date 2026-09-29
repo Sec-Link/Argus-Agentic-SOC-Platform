@@ -25,6 +25,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
+  App,
   ConfigProvider,
   Card,
   Form,
@@ -36,7 +37,6 @@ import {
   Row,
   Col,
   Switch,
-  message,
   Modal,
   InputNumber,
   Drawer,
@@ -378,6 +378,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
   onBack,
   onSaved,
 }) => {
+  const { message } = App.useApp();
   const [modal, modalContextHolder] = Modal.useModal();
   const [form] = Form.useForm();
   const [bindingForm] = Form.useForm();
@@ -1828,7 +1829,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         }
       >
         {selectedNode && (
-          <Form form={nodeForm} layout="vertical">
+          <Form form={nodeForm} layout="vertical" component={false}>
             <Form.Item name="name" label="Node Name" rules={[{ required: true }]}>
               <Input />
             </Form.Item>

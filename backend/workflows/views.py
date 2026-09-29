@@ -203,6 +203,18 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    @action(detail=True, methods=['post'])
+    def clone(self, request, pk=None):
+        if not isinstance(request.data, dict):
+            raise ValidationError({'name': 'Expected an object.'})
+        name = request.data.get('name')
+        if name is not None:
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 200:
+                raise ValidationError({'name': 'Enter a name of 1 to 200 characters.'})
+            name = name.strip()
+        workflow = self.get_object().clone(new_name=name, user=request.user)
+        return Response(WorkflowDetailSerializer(workflow).data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=['post'], url_path='execute')
     def execute(self, request, pk=None):
         workflow = self.get_object()

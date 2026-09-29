@@ -321,36 +321,60 @@ class Workflow(models.Model):
         type(self).objects.select_for_update().get(pk=self.pk)
         return super().delete(*args, **kwargs)
 
+    @transaction.atomic
     def clone(self, new_name=None, user=None):
         """Create a copy of this workflow."""
+        steps = list(self.steps.all())
+        step_ids = {str(step.id): uuid.uuid4() for step in steps}
+        edges = deepcopy(self.edges)
+        for edge in edges:
+            for field in ('source', 'target'):
+                old_id = str(edge.get(field))
+                if old_id in step_ids:
+                    edge[field] = str(step_ids[old_id])
+
         new_workflow = Workflow.objects.create(
-            name=new_name or f"{self.name} (Copy)",
+            name=new_name or f"{self.name[:193]} (Copy)",
             description=self.description,
+            execution_engine=self.execution_engine,
+            prefect_deployment_id=self.prefect_deployment_id,
             trigger_type=self.trigger_type,
-            trigger_conditions=self.trigger_conditions,
+            trigger_conditions=deepcopy(self.trigger_conditions),
+            inputs_schema=deepcopy(self.inputs_schema),
+            is_callable_from_ticket=self.is_callable_from_ticket,
+            allowed_invoker_roles=deepcopy(self.allowed_invoker_roles),
             schedule_cron=self.schedule_cron,
             is_active=False,
             is_draft=True,
             version=1,
             created_by=user or self.created_by,
-            tags=self.tags.copy() if self.tags else [],
+            tags=deepcopy(self.tags),
+            edges=edges,
             variables=deepcopy(self.variables),
             secret_variables=deepcopy(self.secret_variables),
         )
 
-        # Clone all steps
-        for step in self.steps.all():
+        for step in steps:
             WorkflowStep.objects.create(
+                id=step_ids[str(step.id)],
                 workflow=new_workflow,
                 order=step.order,
                 name=step.name,
+                node_type=step.node_type,
                 node_category=step.node_category,
+                position_x=step.position_x,
+                position_y=step.position_y,
+                action_template_id=step.action_template_id,
                 action_type=step.action_type,
-                action_config=step.action_config.copy() if step.action_config else {},
+                action_config=deepcopy(step.action_config),
                 timeout_seconds=step.timeout_seconds,
                 on_failure=step.on_failure,
                 retry_count=step.retry_count,
-                condition=step.condition,
+                retry_delay_seconds=step.retry_delay_seconds,
+                condition=deepcopy(step.condition),
+                next_step_true=step_ids.get(str(step.next_step_true)),
+                next_step_false=step_ids.get(str(step.next_step_false)),
+                connections=[str(step_ids[str(target)]) for target in step.connections if str(target) in step_ids],
                 is_active=step.is_active,
             )
 

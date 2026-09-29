@@ -36,6 +36,58 @@ class WorkflowDefinitionWriteTests(TestCase):
                 'action_config': {'message': 'edited'}}
         return {**data, **changes}
 
+    def test_clone_api_copies_graph_as_inactive_draft(self):
+        target = WorkflowStep.objects.create(workflow=self.workflow, name='Target', action_type='log')
+        self.step.node_type = 'condition'
+        self.step.action_type = 'condition'
+        self.step.action_config = {}
+        self.step.position_x = 123
+        self.step.retry_delay_seconds = 45
+        self.step.next_step_true = target.id
+        self.step.connections = [str(target.id)]
+        self.step.save()
+        self.workflow.prefect_deployment_id = str(uuid4())
+        self.workflow.inputs_schema = [{'name': 'ticket_id', 'type': 'string'}]
+        self.workflow.is_callable_from_ticket = True
+        self.workflow.allowed_invoker_roles = ['analyst']
+        self.workflow.edges = [
+            {'id': 'start-edge', 'source': 'start', 'target': str(self.step.id)},
+            {'id': 'branch-edge', 'source': str(self.step.id), 'target': str(target.id)},
+            {'id': 'end-edge', 'source': str(target.id), 'target': 'end-1'},
+        ]
+        self.workflow.is_active = True
+        self.workflow.save()
+
+        url = f'{self.workflow_url}clone/'
+        response = self.client.post(url, {}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        clone = Workflow.objects.get(pk=response.data['id'])
+        copied = {step.name: step for step in clone.steps.all()}
+        self.assertEqual(set(copied), {'Original step', 'Target'})
+        self.assertNotEqual(copied['Original step'].id, self.step.id)
+        self.assertEqual(copied['Original step'].node_type, 'condition')
+        self.assertEqual(copied['Original step'].position_x, 123)
+        self.assertEqual(copied['Original step'].retry_delay_seconds, 45)
+        self.assertEqual(copied['Original step'].next_step_true, copied['Target'].id)
+        self.assertEqual(copied['Original step'].connections, [str(copied['Target'].id)])
+        self.assertEqual([(edge['source'], edge['target']) for edge in clone.edges], [
+            ('start', str(copied['Original step'].id)),
+            (str(copied['Original step'].id), str(copied['Target'].id)),
+            (str(copied['Target'].id), 'end-1'),
+        ])
+        self.assertEqual(clone.prefect_deployment_id, self.workflow.prefect_deployment_id)
+        self.assertEqual(clone.inputs_schema, self.workflow.inputs_schema)
+        self.assertEqual(clone.allowed_invoker_roles, ['analyst'])
+        self.assertTrue(clone.is_callable_from_ticket)
+        self.assertFalse(clone.is_active)
+        self.assertTrue(clone.is_draft)
+        self.assertIsNone(clone.published_revision_id)
+        self.assertFalse(clone.schedules.exists())
+
+        invalid = self.client.post(url, {'name': '   '}, format='json')
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(Workflow.objects.count(), 2)
+
     def test_empty_step_replacement_remains_dirty_and_keeps_published_export(self):
         response = self.client.patch(self.workflow_url, {'steps': [], 'is_draft': False}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
