@@ -42,6 +42,7 @@ def execute_workflow(
     executed_by=None,
 ) -> WorkflowExecution:
     """Create an execution and submit its published snapshot to Prefect."""
+    workflow = Workflow.objects.get(pk=workflow.pk)
     workflow_version, total_steps = ensure_workflow_is_runnable(workflow)
     execution = WorkflowExecution.objects.create(
         workflow=workflow,
@@ -54,11 +55,15 @@ def execute_workflow(
     )
 
     from . import prefect_client, prefect_dispatcher
+    from .deployment_registry import require_deployment
 
-    deployment_id = workflow.prefect_deployment_id or None
-    if not prefect_client.is_configured(deployment_id):
+    try:
+        deployment_id = require_deployment(workflow.prefect_deployment_id)
+        if not prefect_client.is_configured(deployment_id):
+            raise ValueError('PREFECT_API_URL is required to execute workflows.')
+    except ValueError as exc:
         execution.status = 'failed'
-        execution.error_message = 'Prefect not configured (PREFECT_API_URL / PREFECT_DEPLOYMENT_ID missing).'
+        execution.error_message = str(exc)
         execution.completed_at = timezone.now()
         execution.save(update_fields=['status', 'error_message', 'completed_at'])
         return execution

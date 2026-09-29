@@ -1,12 +1,11 @@
 """Publish the system-managed API credential through Prefect's Secret store."""
 
-import os
 import logging
 
 from prefect.blocks.system import Secret
 
 from . import prefect_client
-from .models import Workflow
+from .models import PrefectDeployment
 from .worker_auth import ensure_worker_credential
 
 logger = logging.getLogger(__name__)
@@ -30,11 +29,9 @@ def bootstrap_worker_credentials():
     block_name = sync_worker_credential()
     # Deployment defaults also cover schedules published before automatic auth.
     # Only a Secret reference is stored in parameters; workers load it per run.
-    deployment_ids = set(Workflow.objects.filter(execution_engine='prefect', is_active=True).exclude(
-        prefect_deployment_id='',
-    ).values_list('prefect_deployment_id', flat=True))
-    deployment_ids.add(os.getenv('PREFECT_DEPLOYMENT_ID', '').strip())
-    for deployment_id in sorted(value for value in deployment_ids if value):
+    deployment_ids = PrefectDeployment.objects.filter(is_available=True).values_list('id', flat=True)
+    for registered_id in deployment_ids:
+        deployment_id = str(registered_id)
         try:
             deployment = prefect_client.get_deployment(deployment_id)
         except prefect_client.PrefectDeploymentNotFound:
