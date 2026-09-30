@@ -293,12 +293,12 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     }
   };
 
-  // Publish workflow to Prefect (persistent flow files + deployment)
+  // Publish the workflow manifest.
   const handlePublish = async (id: string) => {
     try {
       const result = await publishWorkflow(id);
-      if (result.deployment_registered) {
-        message.success(`Workflow "${result.workflow_name}" manifest published and registered`);
+      if (result.schedule_errors?.length) {
+        message.warning(`Workflow "${result.workflow_name}" manifest published, but schedule synchronization failed: ${result.schedule_errors.join('; ')}`);
       } else {
         message.success(`Workflow "${result.workflow_name}" manifest published`);
       }

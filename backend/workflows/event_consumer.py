@@ -7,12 +7,15 @@ from functools import partial
 from asgiref.sync import ThreadSensitiveContext, sync_to_async
 from django.db import DatabaseError, connection, connections, transaction
 
+from . import prefect_client
+from .deployment_registry import DEPLOYMENT_EVENT_NAMES, apply_deployment_snapshot
 from .models import WorkflowEventCheckpoint
 from .prefect_events import CHECKPOINT, EVENT_NAMES, consume_event, replay_events
 from .worker_credentials import bootstrap_worker_credentials
 
 logger = logging.getLogger(__name__)
 CONSUMER_LOCK = 90817264
+DEPLOYMENT_REFRESH_SECONDS = 60
 
 
 def _acquire_leadership():
@@ -55,10 +58,31 @@ async def run_forever(*, reset_checkpoint=False):
 
 
 async def consume(leader):
+    refresh = asyncio.Event()
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(provision_worker())
+        tasks.create_task(refresh_deployments(leader, refresh))
         tasks.create_task(watch_connection(leader))
-        await subscribe(leader)
+        await subscribe(leader, refresh)
+
+
+async def refresh_deployments(leader, refresh):
+    while True:
+        try:
+            await asyncio.wait_for(refresh.wait(), timeout=DEPLOYMENT_REFRESH_SECONDS)
+        except TimeoutError:
+            pass
+        refresh.clear()
+        try:
+            # Fetch every page outside the progress consumer's ORM thread/transaction.
+            snapshot = await sync_to_async(prefect_client.list_deployments, thread_sensitive=False)()
+            await sync_to_async(_guarded_call)(leader, apply_deployment_snapshot, snapshot)
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            logger.error('Prefect deployment refresh failed (%s); retaining the previous registry.', type(exc).__name__)
+        # ponytail: snapshots can lag until the next successful 60-second refresh;
+        # use a durable change stream if stricter freshness becomes necessary.
 
 
 async def provision_worker():
@@ -72,7 +96,7 @@ async def provision_worker():
         try:
             # Secret network calls must not occupy the event consumer's ORM thread.
             await sync_to_async(provision, thread_sensitive=False)()
-            return
+            await asyncio.sleep(DEPLOYMENT_REFRESH_SECONDS)
         except Exception as exc:
             logger.error('Worker credential setup failed (%s); retrying in 3 seconds.', type(exc).__name__)
             await asyncio.sleep(3)
@@ -84,7 +108,7 @@ async def watch_connection(leader):
         await sync_to_async(_guarded_call)(leader, lambda: None)
 
 
-async def subscribe(leader):
+async def subscribe(leader, refresh):
     from prefect.events.clients import get_events_subscriber
     from prefect.events.filters import EventFilter, EventNameFilter
 
@@ -92,12 +116,16 @@ async def subscribe(leader):
     while True:
         try:
             async with get_events_subscriber(
-                filter=EventFilter(event=EventNameFilter(name=EVENT_NAMES)),
+                filter=EventFilter(event=EventNameFilter(name=EVENT_NAMES + DEPLOYMENT_EVENT_NAMES)),
                 reconnection_attempts=0,
             ) as subscriber:
+                refresh.set()
                 # Subscribe before replaying the durable cursor after every disconnect.
                 await sync_to_async(replay_events)(handler=handle_event)
                 async for event in subscriber:
+                    if event.event in DEPLOYMENT_EVENT_NAMES:
+                        refresh.set()
+                        continue
                     await sync_to_async(handle_event)(event)
         except DatabaseError:
             # Stop this subscription; a fresh connection must acquire the lock again.
