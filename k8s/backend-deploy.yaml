@@ -46,6 +46,21 @@ spec:
       containers:
       - name: django
         image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-backend:v0.72
+        args:
+        - gunicorn
+        - siem_project.wsgi:application
+        - --bind
+        - 0.0.0.0:8000
+        - --workers
+        - "2"
+        - --worker-class
+        - gthread
+        - --threads
+        - "8"
+        - --log-level
+        - info
+        - --access-logfile
+        - "-"
         ports:
         - containerPort: 8000
         securityContext:
