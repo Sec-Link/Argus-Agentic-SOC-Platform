@@ -21,8 +21,9 @@ import threading
 import requests
 
 from django.db import DatabaseError, IntegrityError, transaction
-from django.db.models import Case, CharField, Count, IntegerField, Q, Sum, Value, When
-from django.db.models.functions import TruncHour, TruncDate
+from django.core.paginator import Paginator
+from django.db.models import Case, CharField, Count, IntegerField, Q, Sum, TextField, Value, When
+from django.db.models.functions import Cast, TruncHour, TruncDate
 from django.utils import timezone
 from django.core.cache import cache
 
@@ -781,6 +782,58 @@ class AlertService:
         with open(MOCK_FILE) as f:
             data = json.load(f)
         return data
+
+    @staticmethod
+    def paginate_alerts(
+        page: int = 1,
+        page_size: int = 20,
+        query: str = '',
+        severity: str = '',
+        ordering: str = '-timestamp',
+    ) -> Dict:
+        """Return one filtered DB page without materializing the complete alert window."""
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or 20), 100))
+        queryset = _windowed_alerts_queryset()
+
+        query = str(query or '').strip()
+        if query:
+            queryset = queryset.annotate(source_data_text=Cast('source_data', output_field=TextField())).filter(
+                Q(alert_id__icontains=query)
+                | Q(message__icontains=query)
+                | Q(description__icontains=query)
+                | Q(title__icontains=query)
+                | Q(rule_id__icontains=query)
+                | Q(source_index__icontains=query)
+                | Q(source_data_text__icontains=query)
+            )
+
+        severity = str(severity or '').strip().lower()
+        if severity:
+            aliases = [raw for raw, tier in SEVERITY_ALIASES.items() if tier == severity]
+            severity_filter = Q()
+            for alias in aliases or [severity]:
+                severity_filter |= Q(severity__iexact=alias)
+            queryset = queryset.filter(severity_filter)
+
+        allowed_ordering = {
+            'timestamp', '-timestamp', 'severity', '-severity',
+            'alert_id', '-alert_id', 'message', '-message',
+        }
+        ordering = ordering if ordering in allowed_ordering else '-timestamp'
+        queryset = queryset.order_by(ordering, '-id')
+
+        paginator = Paginator(queryset, page_size)
+        page_object = paginator.get_page(page)
+        rows = _enrich_rule_names([_serialize_alert_row(row) for row in page_object.object_list])
+        return {
+            'alerts': rows,
+            'page': page_object.number,
+            'page_size': page_size,
+            'total': paginator.count,
+            'total_pages': paginator.num_pages,
+            'source': 'db',
+        }
 
     @staticmethod
     def _build_es_client(cfg: ESIntegrationConfig):

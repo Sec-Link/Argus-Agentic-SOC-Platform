@@ -368,17 +368,44 @@ export default function BasicLayout({
           margin-bottom: 2px;
           border-bottom: 1px solid rgba(148, 163, 184, 0.16);
         }
-        /* Brand row divider separates the logo from the nav / toggle below */
+        /* The collapsed logo becomes the expand affordance on hover. */
         .sidebar-brand-row {
+          position: relative;
           border-bottom: 1px solid rgba(148, 163, 184, 0.16);
         }
-        /* Collapsed rail expand button: centered, compact rhythm with icons */
-        .sidebar-rail-toggle {
-          display: flex;
-          align-items: center;
+        .sidebar-brand-action {
+          position: relative;
+          min-width: 0;
+          border-radius: 10px;
+          outline: none;
+        }
+        .sidebar-brand-action:focus-visible {
+          box-shadow: 0 0 0 2px var(--menu-selected-edge);
+        }
+        .sidebar-brand-action.is-collapsed {
+          width: 44px;
+          height: 44px;
           justify-content: center;
-          height: 40px;
-          margin: 6px 0 2px;
+        }
+        .sidebar-brand-expand-icon {
+          position: absolute;
+          color: var(--text-primary);
+          opacity: 0;
+          transform: scale(.82);
+          transition: opacity 150ms ease, transform 180ms cubic-bezier(.22,1,.36,1);
+        }
+        .sidebar-brand-action.is-collapsed .sidebar-brand-logo {
+          transition: opacity 150ms ease, transform 180ms cubic-bezier(.22,1,.36,1);
+        }
+        .sidebar-brand-action.is-collapsed:hover .sidebar-brand-logo,
+        .sidebar-brand-action.is-collapsed:focus-visible .sidebar-brand-logo {
+          opacity: 0;
+          transform: scale(.82);
+        }
+        .sidebar-brand-action.is-collapsed:hover .sidebar-brand-expand-icon,
+        .sidebar-brand-action.is-collapsed:focus-visible .sidebar-brand-expand-icon {
+          opacity: .9;
+          transform: scale(1);
         }
         .sidebar-toggle-btn.ant-btn {
           color: var(--text-primary);
@@ -391,6 +418,17 @@ export default function BasicLayout({
         .sidebar-toggle-btn.ant-btn:hover {
           opacity: 1;
           background: var(--menu-hover-bg) !important;
+        }
+        .sidebar-collapse-btn.ant-btn {
+          position: absolute;
+          right: 2px;
+          width: 28px;
+          min-width: 28px;
+          opacity: .32;
+        }
+        .sidebar-brand-row:hover .sidebar-collapse-btn.ant-btn,
+        .sidebar-collapse-btn.ant-btn:focus-visible {
+          opacity: .78;
         }
         `}</style>
         <Sidebar
@@ -420,8 +458,8 @@ export default function BasicLayout({
               onLogout={handleLogout}
             />
           </Header>
-          <Content style={{ padding: 24, background: 'var(--bg-main)', color: 'var(--text-primary)' }}>
-            <div key={pathname} className="siem-page-transition">
+          <Content style={{ minWidth: 0, padding: 24, overflowX: 'hidden', background: 'var(--bg-main)', color: 'var(--text-primary)' }}>
+            <div key={pathname} className="siem-page-transition" style={{ minWidth: 0, maxWidth: '100%' }}>
               {content}
             </div>
           </Content>
