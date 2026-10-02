@@ -11,14 +11,16 @@ import {
   Row,
   Select,
   Space,
+  Switch,
   Typography,
   message,
 } from 'antd';
 import {
   createIntegration,
   deleteIntegration,
+  fetchSplunkIntegrationData,
   listIntegrations,
-  testEsIntegration,
+  testIntegrationConnection,
   updateIntegration,
 } from 'services/integrations';
 import { getIsReadonly } from 'lib/auth';
@@ -27,13 +29,15 @@ const { Title, Text } = Typography;
 
 type AuthType = 'none' | 'basic' | 'api_key';
 type ProtocolType = 'https' | 'http';
-type ConnectorKind = 'elasticsearch' | 'kibana';
+type ConnectorKind = 'elasticsearch' | 'kibana' | 'splunk_search' | 'splunk_rule_publisher';
+type SplunkRuleTarget = 'enterprise' | 'enterprise_security';
 
-type ElasticFormData = {
+type BaseFormData = {
   name: string;
   protocol: ProtocolType;
   host: string;
   port: number;
+  verifyCerts: boolean;
   authType: AuthType;
   username: string;
   password: string;
@@ -42,12 +46,27 @@ type ElasticFormData = {
   path: string;
 };
 
+type SplunkRulePublisherFields = {
+  splunkRuleTarget: SplunkRuleTarget;
+  splunkApp: string;
+  splunkOwner: string;
+};
+
+type ElasticFormData = BaseFormData & Partial<SplunkRulePublisherFields>;
+
+const parseBool = (value: any, fallback: boolean) => {
+  if (typeof value === 'boolean') return value;
+  if (value == null || value === '') return fallback;
+  return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
+};
+
 const CONNECTOR_DEFAULTS: Record<ConnectorKind, ElasticFormData> = {
   elasticsearch: {
     name: 'Elastic Stack (ELK)',
     protocol: 'https',
     host: '',
     port: 9200,
+    verifyCerts: true,
     authType: 'none',
     username: '',
     password: '',
@@ -60,12 +79,42 @@ const CONNECTOR_DEFAULTS: Record<ConnectorKind, ElasticFormData> = {
     protocol: 'https',
     host: '',
     port: 5601,
+    verifyCerts: true,
     authType: 'none',
     username: '',
     password: '',
     apiKey: '',
     index: '',
     path: '/api/status',
+  },
+  splunk_search: {
+    name: 'Splunk Data Source',
+    protocol: 'https',
+    host: '',
+    port: 8089,
+    verifyCerts: false,
+    authType: 'basic',
+    username: '',
+    password: '',
+    apiKey: '',
+    index: 'main',
+    path: '/services/server/info?output_mode=json',
+  },
+  splunk_rule_publisher: {
+    name: 'Splunk Rule Publisher',
+    protocol: 'https',
+    host: '',
+    port: 8089,
+    verifyCerts: false,
+    splunkRuleTarget: 'enterprise',
+    splunkApp: 'search',
+    splunkOwner: 'nobody',
+    authType: 'basic',
+    username: '',
+    password: '',
+    apiKey: '',
+    index: '',
+    path: '/services/server/info?output_mode=json',
   },
 };
 
@@ -80,6 +129,7 @@ const Integrations: React.FC = () => {
   const [formData, setFormData] = useState<ElasticFormData>(CONNECTOR_DEFAULTS.elasticsearch);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [fetchingData, setFetchingData] = useState(false);
   const [hostTouched, setHostTouched] = useState(false);
   // Dynamic index fetching lifecycle states:
   // - indicesLoading: async in-flight state for "Fetch Indices"
@@ -104,6 +154,14 @@ const Integrations: React.FC = () => {
   );
   const kibanaItems = useMemo(
     () => (Array.isArray(items) ? items.filter((item: any) => item?.type === 'kibana') : []),
+    [items]
+  );
+  const splunkSearchItems = useMemo(
+    () => (Array.isArray(items) ? items.filter((item: any) => item?.type === 'splunk_search' || item?.type === 'splunk') : []),
+    [items]
+  );
+  const splunkRulePublisherItems = useMemo(
+    () => (Array.isArray(items) ? items.filter((item: any) => item?.type === 'splunk_rule_publisher') : []),
     [items]
   );
 
@@ -149,16 +207,24 @@ const Integrations: React.FC = () => {
     }
 
     const authType: AuthType = cfg.auth_type === 'basic' || cfg.auth_type === 'api_key' ? cfg.auth_type : 'none';
+    const splunkRuleTarget: SplunkRuleTarget =
+      cfg.rule_target === 'enterprise_security' || cfg.splunk_rule_target === 'enterprise_security'
+        ? 'enterprise_security'
+        : 'enterprise';
 
     return {
       name: item?.name || defaults.name,
       protocol,
       host,
       port: port >= 1 && port <= 65535 ? port : defaults.port,
+      verifyCerts: parseBool(cfg.verify_certs, defaults.verifyCerts),
+      splunkRuleTarget,
+      splunkApp: String(cfg.splunk_app || defaults.splunkApp || 'search'),
+      splunkOwner: String(cfg.splunk_owner || defaults.splunkOwner || 'nobody'),
       authType,
       username: String(cfg.username || ''),
       password: String(cfg.password || ''),
-      apiKey: String(cfg.api_key || ''),
+      apiKey: String(cfg.api_key || cfg.token || ''),
       index: String(cfg.index || defaults.index),
       path: String(cfg.path || defaults.path),
     };
@@ -171,6 +237,7 @@ const Integrations: React.FC = () => {
     setHostTouched(false);
     setTesting(false);
     setSaving(false);
+    setFetchingData(false);
   };
 
   // Clicking a connector card opens modal with existing values if available.
@@ -203,6 +270,9 @@ const Integrations: React.FC = () => {
   const buildHostUrl = () => `${formData.protocol}://${formData.host.trim()}:${formData.port}`;
   const hostValid = HOST_PATTERN.test(formData.host.trim());
   const portValid = Number.isFinite(formData.port) && formData.port >= 1 && formData.port <= 65535;
+  const isSplunkConnector = connectorKind === 'splunk_search' || connectorKind === 'splunk_rule_publisher';
+  const isSplunkSearch = connectorKind === 'splunk_search';
+  const isSplunkRulePublisher = connectorKind === 'splunk_rule_publisher';
 
   const validateForm = (forTesting = false) => {
     const host = formData.host.trim();
@@ -219,8 +289,16 @@ const Integrations: React.FC = () => {
       return false;
     }
     if (!forTesting) {
-      if (connectorKind === 'elasticsearch' && !formData.index.trim()) {
+      if ((connectorKind === 'elasticsearch' || isSplunkSearch) && !formData.index.trim()) {
         message.warning('Target index is required.');
+        return false;
+      }
+      if (isSplunkRulePublisher && !(formData.splunkApp || '').trim()) {
+        message.warning('Splunk app is required.');
+        return false;
+      }
+      if (isSplunkRulePublisher && !(formData.splunkOwner || '').trim()) {
+        message.warning('Splunk owner is required.');
         return false;
       }
       // Conditional auth validation is driven by selected authType.
@@ -252,9 +330,21 @@ const Integrations: React.FC = () => {
       protocol: formData.protocol,
       port: formData.port,
       auth_type: formData.authType,
-      verify_certs: formData.protocol === 'https',
+      verify_certs: formData.protocol === 'https' && formData.verifyCerts,
     };
-    if (connectorKind === 'elasticsearch') {
+    if (isSplunkSearch) {
+      cfg.capability = 'search';
+    }
+    if (isSplunkRulePublisher) {
+      const splunkApp = (formData.splunkApp || defaults.splunkApp || 'search').trim();
+      const splunkOwner = (formData.splunkOwner || defaults.splunkOwner || 'nobody').trim();
+      cfg.capability = 'rule_publisher';
+      cfg.rule_target = formData.splunkRuleTarget || defaults.splunkRuleTarget || 'enterprise';
+      cfg.splunk_app = splunkApp || 'search';
+      cfg.splunk_owner = splunkOwner || 'nobody';
+      cfg.saved_searches_path = `/servicesNS/${encodeURIComponent(cfg.splunk_owner)}/${encodeURIComponent(cfg.splunk_app)}/saved/searches`;
+    }
+    if (connectorKind === 'elasticsearch' || isSplunkSearch) {
       cfg.index = formData.index.trim() || defaults.index;
     }
 
@@ -262,14 +352,17 @@ const Integrations: React.FC = () => {
       cfg.username = formData.username.trim();
       cfg.password = formData.password;
       cfg.api_key = '';
+      cfg.token = '';
     } else if (formData.authType === 'api_key') {
       cfg.username = '';
       cfg.password = '';
       cfg.api_key = formData.apiKey.trim();
+      cfg.token = isSplunkConnector ? formData.apiKey.trim() : '';
     } else {
       cfg.username = '';
       cfg.password = '';
       cfg.api_key = '';
+      cfg.token = '';
     }
 
     return {
@@ -286,16 +379,20 @@ const Integrations: React.FC = () => {
     try {
       const payload = toIntegrationPayload();
       const testPayload: any = {
+        integration_type: connectorKind,
         host: payload.config.host,
         path: payload.config.path,
         auth_type: payload.config.auth_type,
         api_key: payload.config.api_key,
+        token: payload.config.token,
+        connection_mode: payload.config.connection_mode,
+        verify_certs: payload.config.verify_certs,
       };
       if (formData.authType === 'basic') {
         testPayload.username = payload.config.username;
         testPayload.password = payload.config.password;
       }
-      const res = await testEsIntegration(testPayload);
+      const res = await testIntegrationConnection(testPayload);
       setTestResult({
         open: true,
         ok: true,
@@ -319,21 +416,58 @@ const Integrations: React.FC = () => {
     setSaving(true);
     try {
       const payload = toIntegrationPayload();
+      let savedItem: any;
       if (editingItem?.id) {
-        await updateIntegration(editingItem.id, payload);
+        savedItem = await updateIntegration(editingItem.id, payload);
       } else {
-        await createIntegration(payload);
+        savedItem = await createIntegration(payload);
       }
       message.success('Integration saved.');
       try {
         window.dispatchEvent(new Event('siem_es_connector_switched'));
       } catch {}
-      closeModal();
-      fetchList();
+      if (isSplunkSearch && savedItem?.id) {
+        setEditingItem(savedItem);
+        await fetchList();
+      } else {
+        closeModal();
+        fetchList();
+      }
     } catch (e: any) {
       message.error(`Save failed: ${getErrorText(e)}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleFetchData = async () => {
+    if (!editingItem?.id) {
+      message.warning('Save configuration before fetching data.');
+      return;
+    }
+    setFetchingData(true);
+    try {
+      const res = await fetchSplunkIntegrationData(editingItem.id, { size: 1000 });
+      const inserted = Number(res?.inserted || 0);
+      const updated = Number(res?.updated || 0);
+      const skipped = Number(res?.skipped || 0);
+      const errors = Array.isArray(res?.errors) ? res.errors : [];
+      setTestResult({
+        open: true,
+        ok: errors.length === 0,
+        title: errors.length === 0 ? 'Fetch data completed' : 'Fetch data completed with warnings',
+        detail: JSON.stringify(res, null, 2),
+      });
+      message.success(`Splunk data fetched. Inserted ${inserted}, updated ${updated}, skipped ${skipped}.`);
+    } catch (e: any) {
+      setTestResult({
+        open: true,
+        ok: false,
+        title: 'Fetch data failed',
+        detail: getErrorText(e),
+      });
+    } finally {
+      setFetchingData(false);
     }
   };
 
@@ -352,12 +486,11 @@ const Integrations: React.FC = () => {
         testPayload.username = payload.config.username;
         testPayload.password = payload.config.password;
       }
-      // API-key auth depends on backend proxy support; included for forward compatibility.
       if (formData.authType === 'api_key') {
         testPayload.api_key = payload.config.api_key;
       }
 
-      const res = await testEsIntegration(testPayload);
+      const res = await testIntegrationConnection(testPayload);
       let parsed: any = res?.body ?? res;
       if (typeof parsed === 'string') {
         try {
@@ -397,12 +530,8 @@ const Integrations: React.FC = () => {
     }
   };
 
-  const handleSplunkSetup = () => {
-    message.info('Splunk Integration is currently in our development backlog and will be available in a future version update.');
-  };
-
   type IntegrationCardConfig = {
-    key: 'elastic' | 'kibana' | 'splunk';
+    key: 'elastic' | 'kibana' | 'splunk_search' | 'splunk_rule_publisher';
     title: string;
     subtitle: string;
     description: string;
@@ -410,11 +539,21 @@ const Integrations: React.FC = () => {
     isInstalled: boolean;
     onConfigure: () => void;
     onUninstall?: () => void;
-    onUnavailable?: () => void;
   };
 
   const elasticInstalled = Boolean(elkItems[0]?.id && elkItems[0]?.config?.host);
   const kibanaInstalled = Boolean(kibanaItems[0]?.id && kibanaItems[0]?.config?.host);
+  const splunkSearchInstalled = Boolean(splunkSearchItems[0]?.id && splunkSearchItems[0]?.config?.host);
+  const splunkRulePublisherInstalled = Boolean(splunkRulePublisherItems[0]?.id && splunkRulePublisherItems[0]?.config?.host);
+  const connectorTitle =
+    connectorKind === 'kibana'
+      ? 'Kibana'
+      : connectorKind === 'splunk_search'
+        ? 'Splunk Data Source'
+        : connectorKind === 'splunk_rule_publisher'
+          ? 'Splunk Rule Publisher'
+          : 'Elasticsearch';
+  const connectorLogo = isSplunkConnector ? '/splunk-logo.svg' : '/elastic-logo.png';
   const integrationCards: IntegrationCardConfig[] = [
     {
       key: 'elastic',
@@ -437,14 +576,24 @@ const Integrations: React.FC = () => {
       onUninstall: kibanaItems[0]?.id ? () => handleDelete(kibanaItems[0]) : undefined,
     },
     {
-      key: 'splunk',
-      title: 'Splunk',
-      subtitle: 'SIEM Sync Connector',
-      description: 'Synchronize raw log indices and complex correlation findings directly from Splunk deployments.',
+      key: 'splunk_search',
+      title: 'Splunk Data Source',
+      subtitle: 'Search API Connector',
+      description: 'Pull raw events, notable events, and security search results from Splunk through the Search API.',
       logo: '/splunk-logo.svg',
-      isInstalled: false,
-      onConfigure: handleSplunkSetup,
-      onUnavailable: handleSplunkSetup,
+      isInstalled: splunkSearchInstalled,
+      onConfigure: () => openFromCard('splunk_search', splunkSearchItems[0]),
+      onUninstall: splunkSearchItems[0]?.id ? () => handleDelete(splunkSearchItems[0]) : undefined,
+    },
+    {
+      key: 'splunk_rule_publisher',
+      title: 'Splunk Rule Publisher',
+      subtitle: 'Saved Search / ES Correlation',
+      description: 'Publish Sigma-converted SPL as Splunk saved searches or Enterprise Security correlation searches.',
+      logo: '/splunk-logo.svg',
+      isInstalled: splunkRulePublisherInstalled,
+      onConfigure: () => openFromCard('splunk_rule_publisher', splunkRulePublisherItems[0]),
+      onUninstall: splunkRulePublisherItems[0]?.id ? () => handleDelete(splunkRulePublisherItems[0]) : undefined,
     },
   ];
 
@@ -465,7 +614,7 @@ const Integrations: React.FC = () => {
       <Card
         key={card.key}
         hoverable
-        onClick={card.key === 'splunk' ? card.onUnavailable : card.onConfigure}
+        onClick={card.onConfigure}
         style={{
           width: '100%',
           maxWidth: 440,
@@ -600,20 +749,30 @@ const Integrations: React.FC = () => {
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src="/elastic-logo.png" alt="Elastic logo" style={{ width: 22, height: 22, objectFit: 'contain' }} />
-            <span>{connectorKind === 'kibana' ? 'Configure Kibana' : 'Configure Elasticsearch'}</span>
+            <img src={connectorLogo} alt={`${connectorTitle} logo`} style={{ width: 22, height: 22, objectFit: 'contain' }} />
+            <span>{`Configure ${connectorTitle}`}</span>
           </div>
         }
         open={modalOpen && !isReadonly}
         onCancel={closeModal}
         footer={[
-          <Button key="cancel" onClick={closeModal} disabled={testing || saving}>
+          <Button key="cancel" onClick={closeModal} disabled={testing || saving || fetchingData}>
             Cancel
           </Button>,
-          <Button key="test" onClick={handleTestConnection} loading={testing} disabled={saving}>
+          <Button key="test" onClick={handleTestConnection} loading={testing} disabled={saving || fetchingData}>
             Test Connection
           </Button>,
-          <Button key="save" type="primary" onClick={handleSave} loading={saving} disabled={testing}>
+          isSplunkSearch ? (
+            <Button
+              key="fetch-data"
+              onClick={handleFetchData}
+              loading={fetchingData}
+              disabled={testing || saving || !editingItem?.id}
+            >
+              Fetch Data
+            </Button>
+          ) : null,
+          <Button key="save" type="primary" onClick={handleSave} loading={saving} disabled={testing || fetchingData}>
             Save Configuration
           </Button>,
         ]}
@@ -637,12 +796,62 @@ const Integrations: React.FC = () => {
             />
           </div>
 
+          {isSplunkRulePublisher && (
+            <Row gutter={12}>
+              <Col xs={24} md={12}>
+                <Text strong>Splunk Target</Text>
+                <Select
+                  value={formData.splunkRuleTarget || 'enterprise'}
+                  onChange={(target) => {
+                    const nextTarget = target as SplunkRuleTarget;
+                    setFormData((prev) => ({
+                      ...prev,
+                      splunkRuleTarget: nextTarget,
+                      splunkApp: nextTarget === 'enterprise_security' ? 'SplunkEnterpriseSecuritySuite' : 'search',
+                    }));
+                  }}
+                  options={[
+                    { label: 'Splunk Enterprise', value: 'enterprise' },
+                    { label: 'Splunk Enterprise Security', value: 'enterprise_security' },
+                  ]}
+                  disabled={testing || saving}
+                  style={{ width: '100%', marginTop: 6 }}
+                />
+              </Col>
+              <Col xs={24} md={6}>
+                <Text strong>App</Text>
+                <Input
+                  value={formData.splunkApp || ''}
+                  onChange={(e) => setField('splunkApp', e.target.value)}
+                  disabled={testing || saving}
+                  style={{ marginTop: 6, borderRadius: 10 }}
+                />
+              </Col>
+              <Col xs={24} md={6}>
+                <Text strong>Owner</Text>
+                <Input
+                  value={formData.splunkOwner || ''}
+                  onChange={(e) => setField('splunkOwner', e.target.value)}
+                  disabled={testing || saving}
+                  style={{ marginTop: 6, borderRadius: 10 }}
+                />
+              </Col>
+            </Row>
+          )}
+
           <Row gutter={12}>
             <Col xs={24} md={8}>
               <Text strong>Connection Protocol</Text>
               <Select
                 value={formData.protocol}
-                onChange={(v) => setField('protocol', v as ProtocolType)}
+                onChange={(v) => {
+                  const nextProtocol = v as ProtocolType;
+                  setFormData((prev) => ({
+                    ...prev,
+                    protocol: nextProtocol,
+                    verifyCerts: nextProtocol === 'https' ? prev.verifyCerts : false,
+                  }));
+                }}
                 options={[
                   { label: 'HTTPS', value: 'https' },
                   { label: 'HTTP', value: 'http' },
@@ -674,12 +883,27 @@ const Integrations: React.FC = () => {
                 min={1}
                 max={65535}
                 value={formData.port}
-                onChange={(v) => setField('port', Number(v || 9200))}
+                onChange={(v) => setField('port', Number(v || CONNECTOR_DEFAULTS[connectorKind].port))}
                 disabled={testing || saving}
                 style={{ width: '100%', marginTop: 6, borderRadius: 10 }}
               />
             </Col>
           </Row>
+
+          {formData.protocol === 'https' && (
+            <Row gutter={12}>
+              <Col xs={24} md={12}>
+                <Space align="center">
+                  <Switch
+                    checked={formData.verifyCerts}
+                    onChange={(checked) => setField('verifyCerts', checked)}
+                    disabled={testing || saving}
+                  />
+                  <Text strong>Verify TLS Certificate</Text>
+                </Space>
+              </Col>
+            </Row>
+          )}
 
           <Divider style={{ margin: '2px 0' }}>Authentication</Divider>
 
@@ -694,7 +918,7 @@ const Integrations: React.FC = () => {
                 options={[
                   { label: 'No Authentication', value: 'none' },
                   { label: 'Basic Authentication', value: 'basic' },
-                  { label: 'API Key', value: 'api_key' },
+                  { label: isSplunkConnector ? 'Splunk Token' : 'API Key', value: 'api_key' },
                 ]}
               />
             </Col>
@@ -726,45 +950,57 @@ const Integrations: React.FC = () => {
 
           {formData.authType === 'api_key' && (
             <div>
-              <Text strong>API Key Token</Text>
+              <Text strong>{isSplunkConnector ? 'Splunk Token' : 'API Key Token'}</Text>
               <Input.Password
                 value={formData.apiKey}
                 onChange={(e) => setField('apiKey', e.target.value)}
                 disabled={testing || saving}
-                placeholder="Paste API key token"
+                placeholder={isSplunkConnector ? 'Paste Splunk token' : 'Paste API key token'}
                 style={{ marginTop: 6, borderRadius: 10 }}
               />
             </div>
           )}
 
-          {connectorKind === 'elasticsearch' && (
+          {(connectorKind === 'elasticsearch' || isSplunkSearch) && (
             <>
-              <Divider style={{ margin: '2px 0' }}>Target Mapping</Divider>
+              <Divider style={{ margin: '2px 0' }}>
+                {isSplunkSearch ? 'Splunk Search Target' : 'Target Mapping'}
+              </Divider>
 
               <div style={{ maxWidth: 560 }}>
-                <Text strong>Target Index / Index Pattern</Text>
-                <Space.Compact style={{ width: '100%', marginTop: 6 }}>
-                  <Select
-                    showSearch
-                    allowClear
-                    value={formData.index || undefined}
-                    placeholder="e.g., alerts-linux-*"
+                <Text strong>{isSplunkSearch ? 'Default Splunk Index' : 'Target Index / Index Pattern'}</Text>
+                {connectorKind === 'elasticsearch' ? (
+                  <Space.Compact style={{ width: '100%', marginTop: 6 }}>
+                    <Select
+                      showSearch
+                      allowClear
+                      value={formData.index || undefined}
+                      placeholder="e.g., alerts-linux-*"
+                      disabled={testing || saving}
+                      loading={indicesLoading}
+                      style={{ width: '100%' }}
+                      options={indicesList.map((idx) => ({ label: idx, value: idx }))}
+                      onChange={(v) => setField('index', String(v || ''))}
+                      onSearch={(v) => setField('index', v)}
+                      filterOption={(input, option) =>
+                        String(option?.label || '')
+                          .toLowerCase()
+                          .includes(input.toLowerCase())
+                      }
+                    />
+                    <Button onClick={handleFetchIndices} loading={indicesLoading} disabled={testing || saving}>
+                      Fetch Indices
+                    </Button>
+                  </Space.Compact>
+                ) : (
+                  <Input
+                    value={formData.index}
+                    onChange={(e) => setField('index', e.target.value)}
+                    placeholder="e.g., main"
                     disabled={testing || saving}
-                    loading={indicesLoading}
-                    style={{ width: '100%' }}
-                    options={indicesList.map((idx) => ({ label: idx, value: idx }))}
-                    onChange={(v) => setField('index', String(v || ''))}
-                    onSearch={(v) => setField('index', v)}
-                    filterOption={(input, option) =>
-                      String(option?.label || '')
-                        .toLowerCase()
-                        .includes(input.toLowerCase())
-                    }
+                    style={{ marginTop: 6, borderRadius: 10 }}
                   />
-                  <Button onClick={handleFetchIndices} loading={indicesLoading} disabled={testing || saving}>
-                    Fetch Indices
-                  </Button>
-                </Space.Compact>
+                )}
               </div>
             </>
           )}
