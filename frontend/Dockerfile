@@ -1,12 +1,13 @@
 # ---------- 1. 依赖安装阶段 ----------
-FROM node:24-alpine AS deps
+ARG ALPINE_VERSION=3.24
+FROM node:24-alpine${ALPINE_VERSION} AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
 # ---------- 2. 构建阶段 ----------
-FROM node:24-alpine AS builder
+FROM node:24-alpine${ALPINE_VERSION} AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -14,16 +15,19 @@ COPY . .
 RUN npm run build
 
 # ---------- 3. 运行阶段 ----------
-FROM node:24-alpine AS runner
+FROM alpine:${ALPINE_VERSION} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV NEXT_OUTPUT_MODE=standalone
 
-# 安全加固：创建非 root 用户运行 Node.js 进程
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# 运行镜像不包含 npm；只保留 Node.js 运行时与所需系统库。
+RUN apk add --no-cache libstdc++ dumb-init \
+    && addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 --ingroup nodejs nextjs
+COPY --from=builder /usr/local/bin/node /usr/local/bin/node
+RUN node --version && test ! -e /usr/local/lib/node_modules/npm
 
 # 仅拷贝 standalone 模式必需的文件
 COPY --from=builder /app/public ./public
@@ -36,4 +40,4 @@ USER nextjs
 EXPOSE 3000
 ENV PORT 3000
 
-CMD ["node", "server.js"]
+CMD ["dumb-init", "node", "server.js"]
