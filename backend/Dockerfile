@@ -19,7 +19,8 @@ RUN apt-get update \
 # Install Python dependencies first to leverage layer caching
 COPY requirements.txt /app/
 RUN python -m pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && python -m pip uninstall -y pip
 
 # Create a non-root user and set permissions
 RUN groupadd -r app && useradd -r -g app -d /home/app -s /sbin/nologin app \

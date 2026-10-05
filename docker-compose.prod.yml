@@ -41,7 +41,7 @@ services:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
       - backend_app:/app
-    command: ["gunicorn","siem_project.wsgi:application","--bind","0.0.0.0:8000","--workers","4","--log-level","info","--access-logfile","-"]
+    command: ["gunicorn","siem_project.wsgi:application","--bind","0.0.0.0:8000","--workers","4","--worker-class","gthread","--threads","8","--log-level","info","--access-logfile","-"]
 
   frontend:
     build:
