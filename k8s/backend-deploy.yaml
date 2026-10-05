@@ -22,7 +22,7 @@ spec:
         fsGroup: 999
       initContainers:
       - name: backend-app-init
-        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-backend:v0.8
+        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-backend:v0.81
         securityContext:
           runAsUser: 0
           runAsNonRoot: false
@@ -45,7 +45,7 @@ spec:
           mountPath: /shared/app
       containers:
       - name: django
-        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-backend:v0.8
+        image: seclink-siem-cr-registry.cn-hangzhou.cr.aliyuncs.com/siem/siem-backend:v0.81
         args:
         - gunicorn
         - siem_project.wsgi:application
