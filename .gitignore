@@ -18,6 +18,7 @@ node_modules/
 
 # Runtime-generated workflow manifests
 backend/workflows/flows/generated/
+backend/workflows/tests/
 
 # Python
 __pycache__/

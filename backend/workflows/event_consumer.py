@@ -10,12 +10,14 @@ from django.db import DatabaseError, connection, connections, transaction
 from . import prefect_client
 from .deployment_registry import DEPLOYMENT_EVENT_NAMES, apply_deployment_snapshot
 from .models import WorkflowEventCheckpoint
+from .prefect_dispatcher import name_scheduled_flow_runs
 from .prefect_events import CHECKPOINT, EVENT_NAMES, consume_event, replay_events
 from .worker_credentials import bootstrap_worker_credentials
 
 logger = logging.getLogger(__name__)
 CONSUMER_LOCK = 90817264
 DEPLOYMENT_REFRESH_SECONDS = 60
+SCHEDULED_RUN_NAME_REFRESH_SECONDS = 5
 
 
 def _acquire_leadership():
@@ -62,6 +64,7 @@ async def consume(leader):
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(provision_worker())
         tasks.create_task(refresh_deployments(leader, refresh))
+        tasks.create_task(name_scheduled_runs())
         tasks.create_task(watch_connection(leader))
         await subscribe(leader, refresh)
 
@@ -83,6 +86,17 @@ async def refresh_deployments(leader, refresh):
             logger.error('Prefect deployment refresh failed (%s); retaining the previous registry.', type(exc).__name__)
         # ponytail: snapshots can lag until the next successful 60-second refresh;
         # use a durable change stream if stricter freshness becomes necessary.
+
+
+async def name_scheduled_runs():
+    while True:
+        try:
+            renamed = await sync_to_async(name_scheduled_flow_runs, thread_sensitive=False)()
+            if renamed:
+                logger.info('Named %s queued Prefect workflow runs.', renamed)
+        except Exception as exc:
+            logger.error('Prefect scheduled run naming failed (%s); retrying.', type(exc).__name__)
+        await asyncio.sleep(SCHEDULED_RUN_NAME_REFRESH_SECONDS)
 
 
 async def provision_worker():
