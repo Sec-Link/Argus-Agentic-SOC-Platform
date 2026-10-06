@@ -1,0 +1,178 @@
+/* Workspace surfaces are scoped to the authenticated application shell. */
+.argus-workspace.theme-light {
+  --bg-main: #faf9f6;
+  --bg-sidebar: #f0eee7;
+  --bg-header: #faf9f6;
+  --text-primary: #302f2b;
+  --text-muted: #6f6b63;
+  --surface: #fff;
+  --surface-subtle: #f5f4ef;
+  --surface-selected: #eee6dd;
+  --surface-selected-hover: #e7dccf;
+  --border: #e3e0d8;
+  --accent: #a45e3f;
+  --menu-hover-bg: #e8e5dd;
+  --menu-selected-bg: #e3dfd5;
+  --menu-selected-edge: #a45e3f;
+  --resizer-bg: transparent;
+  --avatar-bg: #e3d5c8;
+  --text-contrast: #584032;
+  --toggle-bg: transparent;
+  --toggle-border: #e3e0d8;
+  --workflow-border: #e3e0d8;
+  --workflow-sidebar-bg: #f5f4ef;
+  --workflow-minimap-bg: #f0eee7;
+  --workflow-muted-card-bg: #f5f4ef;
+  --workflow-palette-bg: #f5f4ef;
+  --workflow-palette-item-bg: #fff;
+  --workflow-palette-text: #302f2b;
+  --workflow-palette-icon: #6f6b63;
+  --access-list-selected-bg: #eee6dd;
+  --access-secondary-text: #6f6b63;
+  color-scheme: light;
+}
+
+.argus-workspace.theme-dark {
+  --bg-main: #20201e;
+  --bg-sidebar: #191918;
+  --bg-header: #20201e;
+  --text-primary: #eeece7;
+  --text-muted: #aaa79f;
+  --surface: #292927;
+  --surface-subtle: #30302c;
+  --surface-selected: #40352f;
+  --surface-selected-hover: #4b3d34;
+  --border: #41413b;
+  --accent: #d49a7b;
+  --menu-hover-bg: #2b2b27;
+  --menu-selected-bg: #34312c;
+  --menu-selected-edge: #d49a7b;
+  --resizer-bg: transparent;
+  --avatar-bg: #493c32;
+  --text-contrast: #ead6c7;
+  --toggle-bg: transparent;
+  --toggle-border: #41413b;
+  --workflow-border: #41413b;
+  --workflow-sidebar-bg: #252523;
+  --workflow-minimap-bg: #20201e;
+  --workflow-muted-card-bg: #30302c;
+  --workflow-palette-bg: #252523;
+  --workflow-palette-item-bg: #292927;
+  --workflow-palette-text: #eeece7;
+  --workflow-palette-icon: #aaa79f;
+  --access-list-selected-bg: #40352f;
+  --access-secondary-text: #aaa79f;
+}
+
+.argus-workspace {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.argus-workspace::before, .argus-workspace::after,
+.argus-workspace .ant-layout-content::before,
+.argus-workspace .ant-layout-content::after { display: none; }
+.argus-workspace .ant-layout-sider { border-right: 1px solid var(--border) !important; box-shadow: none !important; }
+.argus-workspace .ant-layout-header { border-bottom: 1px solid var(--border) !important; box-shadow: none !important; }
+.argus-workspace .sidebar-brand-row { height: 80px !important; border-bottom: 0; padding-inline: 18px !important; }
+.argus-workspace .ant-layout-sider-collapsed .sidebar-brand-row { padding-inline: 0 !important; }
+.argus-workspace .sidebar-brand-logo { filter: none; }
+.workspace-brand { display: flex; flex-direction: column; gap: 7px; }
+.argus-workspace .argus-brand-wordmark-sidebar { color: var(--text-primary); text-shadow: none; font-size: 19px; letter-spacing: .06em; }
+.workspace-brand-caption { color: var(--text-muted); font-size: 10px; font-weight: 400; letter-spacing: .03em; }
+.argus-workspace .siem-menu-pale { padding: 8px; }
+.argus-workspace .siem-menu-pale.ant-menu-inline-collapsed { padding-inline: 0; }
+.argus-workspace .siem-menu-pale .ant-menu-item,
+.argus-workspace .siem-menu-pale .ant-menu-submenu-title { height: 39px; line-height: 39px; border-radius: 7px; }
+.argus-workspace .siem-menu-pale .ant-menu-submenu-title { color: var(--text-muted); font-size: 12px; }
+.argus-workspace .siem-menu-pale .ant-menu-title-content { font-family: inherit; letter-spacing: 0; font-size: 13px; }
+.argus-workspace .siem-menu-pale .ant-menu-item::after { display: none; }
+.workspace-breadcrumb { display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.workspace-breadcrumb strong { font-weight: 500; color: var(--text-primary); }
+.workspace-profile.ant-btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; }
+.workspace-username { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.argus-workspace .ant-card,
+.argus-workspace .ant-table-wrapper,
+.argus-workspace .ant-descriptions {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+}
+.argus-workspace .ant-card { border-radius: 14px; }
+.argus-workspace .ant-card:hover { border-color: var(--border) !important; box-shadow: none !important; transform: none; }
+.argus-workspace .ant-card-head { background: transparent !important; color: var(--text-primary); border-bottom: 1px solid var(--border) !important; font-weight: 600; }
+.argus-workspace .ant-table-thead > tr > th { background: var(--surface-subtle) !important; color: var(--text-muted) !important; border-color: var(--border) !important; font-weight: 500; }
+.argus-workspace .ant-table-tbody > tr > td { border-bottom: 1px solid var(--border) !important; }
+.argus-workspace .ant-table-tbody > tr:hover > td { background: var(--surface-subtle) !important; box-shadow: none; }
+.argus-workspace .ant-table-tbody > tr.ant-table-row-selected > td { background: var(--surface-selected) !important; }
+.argus-workspace .ant-table-tbody > tr.ant-table-row-selected:hover > td { background: var(--surface-selected-hover) !important; }
+.argus-workspace .ant-table-tbody > tr.ant-table-expanded-row > td { background: var(--surface-subtle) !important; }
+.argus-workspace .ant-btn:hover, .argus-workspace .ant-btn:active { transform: none; box-shadow: none; }
+/* Inputs and buttons inherit ConfigProvider tokens so their validation, focus,
+   danger and disabled states remain under Ant Design's control. */
+.argus-workspace .ant-input::placeholder,
+.argus-workspace .ant-select-selection-placeholder { color: var(--text-muted) !important; }
+.argus-workspace :focus-visible,
+.login-refined :focus-visible { outline: 2px solid var(--accent, #a45e3f); outline-offset: 3px; }
+.argus-workspace .dashboard-time-trigger,
+.argus-workspace .dashboard-time-popover { background: var(--surface); color: var(--text-primary); border-color: var(--border); box-shadow: 0 4px 16px #00000008; }
+.argus-workspace .dashboard-time-trigger-label,
+.argus-workspace .dashboard-time-popover-header { color: var(--text-muted); }
+.argus-workspace .siem-page-transition { animation: workspaceFadeIn 160ms ease-out; }
+@keyframes workspaceFadeIn { from { opacity: .5; } to { opacity: 1; } }
+.argus-workspace .dashboard-toolbar-shell { align-items: center; margin-bottom: 28px; }
+.argus-workspace .dashboard-toolbar-title-shell { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.workspace-eyebrow { font-size: 10px; letter-spacing: .16em; font-weight: 600; color: var(--text-muted); }
+.argus-workspace .dashboard-toolbar-title { margin: 0; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(26px, 3vw, 36px); font-weight: 400; letter-spacing: -.035em; line-height: 1.2; color: var(--text-primary); }
+.workspace-page-description { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+
+/* The sign-in experience shares the warm palette without changing authentication. */
+.login-refined.login-cyber-wrap { background: #f5f3ed; padding: 32px 0; color: #302f2b; }
+.login-refined::before { display: none; }
+.login-refined .login-cyber-card { background: #fff !important; border: 1px solid #e3e0d8 !important; box-shadow: 0 12px 48px #302f2b08 !important; border-radius: 20px !important; backdrop-filter: none; }
+.login-refined .login-brand-wrap { gap: 12px; margin: 8px 0 20px; }
+.login-refined .login-brand-logo { width: 42px; filter: none; }
+.login-refined .argus-brand-wordmark { color: #302f2b; font-size: 22px; text-shadow: none; }
+.login-refined .login-welcome { font-family: Georgia, 'Times New Roman', serif; font-size: 32px; font-weight: 400; line-height: 1.2; letter-spacing: -.035em; text-align: center; color: #302f2b; margin: 0; }
+.login-description { color: #6f6b63; text-align: center; margin: 0 0 14px; font-size: 14px; }
+.login-refined .ant-input,
+.login-refined .ant-input-password,
+.login-refined .ant-input-affix-wrapper { background: #fff !important; border-color: #d9d5cb !important; color: #302f2b !important; }
+.login-refined .ant-input:focus,
+.login-refined .ant-input-affix-wrapper:focus-within { border-color: #a45e3f !important; }
+.login-refined .ant-input.ant-input-status-error,
+.login-refined .ant-input-affix-wrapper.ant-input-affix-wrapper-status-error { border-color: #d9363e !important; }
+.login-refined .ant-input.ant-input-status-warning,
+.login-refined .ant-input-affix-wrapper.ant-input-affix-wrapper-status-warning { border-color: #ad6800 !important; }
+.login-refined .ant-input:disabled,
+.login-refined .ant-input-affix-wrapper-disabled,
+.login-refined .ant-input-affix-wrapper-disabled .ant-input { background: #f0eee7 !important; color: #78756d !important; border-color: #e3e0d8 !important; }
+.login-refined .ant-input::placeholder,
+.login-refined .ant-input-password input::placeholder { color: #6f6b63 !important; }
+.login-refined .ant-form-item-label span,
+.login-refined .ant-input-prefix .anticon { color: #6f6b63 !important; }
+.login-refined .ant-segmented { background: #f0eee7 !important; border-color: #e3e0d8 !important; }
+.login-refined .ant-segmented-item-label { color: #6f6b63 !important; font-weight: 500; }
+.login-refined .ant-segmented-item-selected .ant-segmented-item-label { color: #302f2b !important; }
+.login-refined .ant-btn-primary:not(:disabled) { background: #a45e3f !important; border-color: #a45e3f !important; color: #fff !important; box-shadow: none !important; }
+.login-refined .ant-btn-primary:not(:disabled):hover { background: #8d4f34 !important; }
+.login-refined .otp-back-ghost.ant-btn { color: #6f6b63 !important; }
+.login-refined .otp-back-ghost.ant-btn:not(:disabled):hover { color: #302f2b !important; background: #f0eee7 !important; }
+.login-refined .otp-resend-link.ant-btn { color: #a45e3f !important; }
+.login-refined .otp-resend-link.ant-btn:not(:disabled):hover { color: #8d4f34 !important; }
+.login-refined .otp-inline-hint-info,
+.login-refined .otp-resend-countdown { color: #6f6b63; }
+.login-refined .otp-inline-hint-success { color: #26734d; }
+.login-refined .ant-form > .ant-typography { color: #6f6b63 !important; }
+@media (max-width: 900px) {
+  .workspace-breadcrumb > span, .workspace-username { display: none; }
+  .argus-workspace .workspace-content { padding: 16px !important; }
+  .argus-workspace .dashboard-toolbar-shell { align-items: stretch; }
+  .workspace-account-actions { gap: 6px !important; flex-wrap: wrap; }
+  .argus-workspace .ant-layout-header { height: auto; min-height: 64px; line-height: 1.5; }
+  .argus-workspace .ant-layout-header > div { min-height: 64px; padding: 12px !important; gap: 12px; flex-wrap: wrap; }
+  .login-refined .login-cyber-card .ant-card-body { padding: 28px 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .argus-workspace .siem-page-transition { animation: none; }
+}
