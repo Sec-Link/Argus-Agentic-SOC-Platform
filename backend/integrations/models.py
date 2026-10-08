@@ -1,7 +1,7 @@
 """
 integrations.models
 
-Stores Elasticsearch integration records and persisted ES mapping metadata.
+Stores integration records and persisted ES mapping metadata.
 """
 
 from django.db import models
@@ -15,7 +15,7 @@ class Integration(models.Model):
     Fields:
     - id: UUID primary key
     - name: human-readable integration name
-    - type: integration type; currently only 'elasticsearch' is supported
+    - type: integration type, for example 'elasticsearch', 'kibana', 'splunk_search', or 'splunk_rule_publisher'
     - config: connection settings and metadata
     - created_at / updated_at: managed timestamps
     """
