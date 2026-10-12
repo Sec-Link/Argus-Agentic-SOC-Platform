@@ -10,7 +10,6 @@ from typing import Any, Dict
 
 from django.db import transaction
 from django.db.models import Count, Q
-from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
@@ -53,7 +52,6 @@ from .serializers import (
 from . import prefect_client
 from .deployment_registry import require_deployment
 from .parameter_binder import bind_workflow_parameters
-from .progress import EventStreamRenderer
 from .ticket_invocation import dispatch_ticket_event, find_callable_workflows, get_ticket_workplan, invoke_workflow_from_ticket
 from .worker_auth import IsWorkflowWorkerOrAdmin, WorkflowWorkerAuthentication
 
@@ -460,15 +458,6 @@ class WorkflowStepViewSet(viewsets.ModelViewSet):
 class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = WorkflowExecution.objects.all()
     permission_classes = [permissions.IsAuthenticated]
-
-    @action(detail=False, methods=['get'], renderer_classes=[EventStreamRenderer])
-    def events(self, request):
-        from .progress import stream_progress
-
-        response = StreamingHttpResponse(stream_progress(), content_type='text/event-stream')
-        response['Cache-Control'] = 'no-cache, no-transform'
-        response['X-Accel-Buffering'] = 'no'
-        return response
 
     def get_serializer_class(self):
         if self.action == 'list':

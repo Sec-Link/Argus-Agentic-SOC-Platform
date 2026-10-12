@@ -34,7 +34,6 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   listWorkflows,
-  subscribeWorkflowProgress,
   deleteWorkflow,
   executeWorkflow,
   cloneWorkflow,
@@ -52,6 +51,7 @@ import {
   WorkflowStats,
   TicketWorkflowBinding,
 } from 'services/workflows';
+import { startWorkflowPolling } from 'services/workflows/polling';
 
 interface WorkflowsProps {
   onNavigate?: (path: string) => void;
@@ -136,8 +136,11 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
   const [bindings, setBindings] = useState<TicketWorkflowBinding[]>([]);
   const workflowRequestId = useRef(0);
   const workflowRequestInFlight = useRef<Promise<Workflow[]> | null>(null);
+  const statsRequestId = useRef(0);
+  const statsRequestInFlight = useRef<Promise<WorkflowStats> | null>(null);
 
   const fetchWorkflows = useCallback(async (silent = false) => {
+    if (silent && workflowRequestInFlight.current) return;
     const requestId = ++workflowRequestId.current;
     if (!silent) setLoading(true);
     const previousRequest = workflowRequestInFlight.current;
@@ -184,12 +187,21 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     }
   }, []);
 
-  const fetchStats = useCallback(async () => {
+  const fetchStats = useCallback(async (silent = false) => {
+    if (silent && statsRequestInFlight.current) return;
+    const requestId = ++statsRequestId.current;
+    const previousRequest = statsRequestInFlight.current;
+    if (previousRequest) await previousRequest.catch(() => {});
+    if (requestId !== statsRequestId.current) return;
+    const request = getWorkflowStats();
+    statsRequestInFlight.current = request;
     try {
-      const data = await getWorkflowStats();
-      setStats(data);
+      const data = await request;
+      if (requestId === statsRequestId.current) setStats(data);
     } catch (err) {
       // ignore stats error
+    } finally {
+      if (statsRequestInFlight.current === request) statsRequestInFlight.current = null;
     }
   }, []);
 
@@ -199,13 +211,13 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
     fetchBindings();
     return () => {
       workflowRequestId.current += 1;
+      statsRequestId.current += 1;
     };
   }, [fetchWorkflows, fetchStats, fetchBindings]);
 
-  useEffect(() => subscribeWorkflowProgress(() => {
-    void fetchWorkflows(true);
-    void fetchStats();
-  }), [fetchWorkflows, fetchStats]);
+  useEffect(() => startWorkflowPolling(() => Promise.all([
+    fetchWorkflows(true), fetchStats(true),
+  ])), [fetchWorkflows, fetchStats]);
 
   const getWorkflowBindings = useCallback((workflowId: string) => (
     bindings.filter((item) => item.workflow === workflowId)

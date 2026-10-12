@@ -38,8 +38,9 @@ import {
   FileTextOutlined,
   BugOutlined,
 } from '@ant-design/icons';
-import { getWorkflowExecution, subscribeWorkflowProgress } from 'services/workflows';
+import { getWorkflowExecution } from 'services/workflows';
 import type { WorkflowExecution, StepExecution } from 'services/workflows';
+import { startWorkflowPolling } from 'services/workflows/polling';
 
 const { Text, Paragraph } = Typography;
 const { Panel } = Collapse;
@@ -71,31 +72,36 @@ const ExecutionLogViewer: React.FC<ExecutionLogViewerProps> = ({
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('timeline');
   const executionRequestId = useRef(0);
+  const executionRequestInFlight = useRef<Promise<WorkflowExecution> | null>(null);
 
   const loadExecution = useCallback(async (silent = false) => {
-    if (!executionId) return;
+    if (!visible || !executionId || (silent && executionRequestInFlight.current)) return;
     const requestId = ++executionRequestId.current;
     if (!silent) setLoading(true);
+    const previousRequest = executionRequestInFlight.current;
+    if (previousRequest) await previousRequest.catch(() => {});
+    if (requestId !== executionRequestId.current) return;
+    const request = getWorkflowExecution(executionId);
+    executionRequestInFlight.current = request;
     try {
-      const data = await getWorkflowExecution(executionId);
+      const data = await request;
       if (requestId === executionRequestId.current) setExecution(data);
     } catch (err) {
       if (!silent && requestId === executionRequestId.current) message.error('Failed to load execution details');
     } finally {
+      if (executionRequestInFlight.current === request) executionRequestInFlight.current = null;
       if (requestId === executionRequestId.current) setLoading(false);
     }
-  }, [executionId]);
+  }, [visible, executionId]);
 
   useEffect(() => {
     setExecution(null);
     if (!visible || !executionId) return;
     void loadExecution();
-    const unsubscribe = subscribeWorkflowProgress(progress => {
-      if (!progress || progress.execution_id === executionId) void loadExecution(true);
-    });
+    const stopPolling = startWorkflowPolling(() => loadExecution(true));
     return () => {
       executionRequestId.current += 1;
-      unsubscribe();
+      stopPolling();
     };
   }, [visible, executionId, loadExecution]);
 
