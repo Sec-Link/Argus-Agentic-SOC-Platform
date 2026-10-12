@@ -9,7 +9,8 @@ import logging
 from typing import Any, Dict
 
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, OuterRef, Prefetch, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
@@ -57,6 +58,22 @@ from .worker_auth import IsWorkflowWorkerOrAdmin, WorkflowWorkerAuthentication
 
 
 logger = logging.getLogger(__name__)
+
+
+def _workflow_list_queryset(queryset):
+    # Separate counts avoid multiplying steps by executions in a joined aggregate.
+    step_counts = (WorkflowStep.objects.filter(workflow_id=OuterRef('pk')).order_by()
+                   .values('workflow_id').annotate(total=Count('pk')).values('total'))
+    execution_counts = (WorkflowExecution.objects.filter(workflow_id=OuterRef('pk')).order_by()
+                        .values('workflow_id').annotate(total=Count('pk')).values('total'))
+    latest_execution = WorkflowExecution.objects.order_by('-created_at').only(
+        'id', 'workflow_id', 'status', 'started_at', 'completed_at',
+    )[:1]
+    return (queryset.select_related('created_by', 'published_revision')
+            .defer('published_revision__manifest')
+            .annotate(_step_count=Coalesce(Subquery(step_counts), 0),
+                      _execution_count=Coalesce(Subquery(execution_counts), 0))
+            .prefetch_related(Prefetch('executions', queryset=latest_execution, to_attr='_latest_executions')))
 
 
 def _sync_schedule(schedule):
@@ -199,6 +216,8 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         if search:
             queryset = queryset.filter(Q(name__icontains=search) | Q(description__icontains=search))
 
+        if self.action == 'list':
+            queryset = _workflow_list_queryset(queryset)
         return queryset
 
     @action(detail=True, methods=['post'], url_path='execute')
@@ -811,7 +830,7 @@ class TicketCallablePlaybookSuggestView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        workflows = find_callable_workflows()
+        workflows = _workflow_list_queryset(find_callable_workflows())
         serializer = WorkflowListSerializer(workflows, many=True)
         return Response({'results': serializer.data, 'count': workflows.count()})
 
