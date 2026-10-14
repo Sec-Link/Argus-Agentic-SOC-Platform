@@ -32,25 +32,20 @@ class AlertListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        alerts, source = AlertService.list_alerts(force_db=True)
-        page = int(request.GET.get('page', 1))
-        page_size = int(request.GET.get('page_size', 20))
-        start = (page - 1) * page_size
-        end = start + page_size
-        resp = {
-            'alerts': alerts[start:end],
-            'page': page,
-            'page_size': page_size,
-            'total': len(alerts),
-            'source': source,
-        }
-        if source == 'mock' and len(alerts) == 0:
-            try:
-                sample_alerts = AlertService.load_mock_alerts()
-                resp['mock_total_available'] = len(sample_alerts)
-            except Exception:
-                pass
-        return Response(resp)
+        try:
+            data = AlertService.paginate_alerts(
+                page=request.GET.get('page', 1),
+                page_size=request.GET.get('page_size', 20),
+                query=request.GET.get('q', ''),
+                severity=request.GET.get('severity', ''),
+                ordering=request.GET.get('ordering', '-timestamp'),
+            )
+            return Response(data)
+        except (TypeError, ValueError):
+            return Response({'detail': 'Invalid pagination parameters.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception('Unable to paginate alerts: %s', exc)
+            return Response({'detail': 'Unable to load alerts.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class AlertDashboardView(APIView):

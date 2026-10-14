@@ -5,6 +5,7 @@ import base64
 import io
 import logging
 import os
+import re
 import struct
 import tempfile
 import zlib
@@ -12,12 +13,13 @@ from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
 from django.db.models import Avg, Count, Max, QuerySet, Sum
-from django.db.models.functions import TruncDate, TruncHour
+from django.db.models.functions import Lower, Trim, TruncDate, TruncHour
 from django.utils import timezone
 
 from alerts.models import Alert
 from correlation.models import CorrelationEvent
 from detections.models import LocalDetectionRule
+from detections.sigma import ATTACK_TACTIC_MAP
 from risk.models import RiskEvent
 from tickets.models import EventTicket
 
@@ -41,6 +43,45 @@ SEVERITY_COLORS = {
 }
 CATEGORY_COLORS = ("#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#f97316", "#fb923c", "#64748b", "#94a3b8")
 ALERT_TIME_FIELDS = ("timestamp", "event_time", "created_at")
+PLACEHOLDER_CATALOG = (
+    {"key": "company.name", "label": "Company name", "group": "Brand", "description": "Organization shown in the report header."},
+    {"key": "company.logo", "label": "Company logo", "group": "Brand", "description": "Uploaded logo rendered in preview and PDF."},
+    {"key": "report.title", "label": "Report title", "group": "Report", "description": "Display title for the report."},
+    {"key": "report.window", "label": "Reporting window", "group": "Report", "description": "Resolved start and end of the selected range."},
+    {"key": "report.generated_at", "label": "Generated at", "group": "Report", "description": "Time at which the report data was generated."},
+    {"key": "metrics.posture", "label": "Security posture", "group": "Metrics", "description": "Calculated posture for the selected range."},
+    {"key": "metrics.total_alerts", "label": "Total alerts", "group": "Metrics", "description": "Alerts in the selected reporting range."},
+    {"key": "metrics.critical_high_alerts", "label": "Critical + high alerts", "group": "Metrics", "description": "Combined critical and high severity alert count."},
+    {"key": "metrics.total_tickets", "label": "Total tickets", "group": "Metrics", "description": "Incident tickets created in the selected range."},
+    {"key": "metrics.resolved_tickets", "label": "Resolved tickets", "group": "Metrics", "description": "Resolved or closed incident tickets."},
+    {"key": "metrics.resolution_rate", "label": "Resolution rate", "group": "Metrics", "description": "Percentage of incident tickets resolved."},
+    {"key": "metrics.mttd", "label": "MTTD", "group": "Metrics", "description": "Mean time to detect."},
+    {"key": "metrics.mttr", "label": "MTTR", "group": "Metrics", "description": "Mean time to respond or resolve."},
+    {"key": "metrics.open_priority_incidents", "label": "Open priority incidents", "group": "Metrics", "description": "Open critical and high-priority incidents."},
+    {"key": "charts.category", "label": "Category breakdown", "group": "Charts", "description": "Generated alert category chart."},
+    {"key": "charts.severity", "label": "Severity distribution", "group": "Charts", "description": "Generated alert severity chart."},
+    {"key": "charts.alert_trend", "label": "Alert trend", "group": "Charts", "description": "Generated alert trend chart."},
+    {"key": "charts.score_trend", "label": "Score trend", "group": "Charts", "description": "Generated alert score trend chart."},
+    {"key": "charts.funnel", "label": "Alert funnel", "group": "Charts", "description": "Overview conversion funnel for alerts and incident handling."},
+    {"key": "charts.sankey", "label": "Detection pipeline", "group": "Charts", "description": "MITRE-to-event-level detection pipeline flow."},
+)
+
+TACTIC_TO_USE_CASE = {
+    "reconnaissance": "Behavior-Based Use Cases",
+    "resource-development": "Behavior-Based Use Cases",
+    "initial-access": "Behavior-Based Use Cases",
+    "execution": "Behavior-Based Use Cases",
+    "persistence": "Behavior-Based Use Cases",
+    "lateral-movement": "Behavior-Based Use Cases",
+    "collection": "Behavior-Based Use Cases",
+    "exfiltration": "Behavior-Based Use Cases",
+    "command-and-control": "Behavior-Based Use Cases",
+    "privilege-escalation": "Device-Based Use Cases",
+    "defense-evasion": "Device-Based Use Cases",
+    "discovery": "Device-Based Use Cases",
+    "credential-access": "Health-Based Use Cases",
+    "impact": "Health-Based Use Cases",
+}
 
 _PIXEL_FONT = {
     "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
@@ -308,6 +349,237 @@ def generate_trend_line_chart(trend_data: Sequence[Mapping[str, Any]] | Mapping[
     return _stacked_trend_chart(trend_data, None, "Alert Trend", "Alert count")
 
 
+def _conversion_stats(alerts: QuerySet, tickets: QuerySet) -> dict[str, int]:
+    """Use the same stage definitions as the Overview conversion funnel."""
+    return {
+        "alerts": alerts.count(),
+        "tickets": tickets.count(),
+        "true_positive": tickets.filter(
+            event_result__in=("true_positive", "true_positive_benign")
+        ).count(),
+        "security_events": tickets.filter(event_result="true_positive").count(),
+        "incidents": tickets.filter(
+            event_result="true_positive", priority__in=("critical", "high")
+        ).count(),
+    }
+
+
+def _funnel_chart(stats: Mapping[str, Any]) -> str:
+    labels = ("Alerts", "Tickets", "TP + TP-B", "Security Events", "Incidents")
+    keys = ("alerts", "tickets", "true_positive", "security_events", "incidents")
+    values = [max(0, int(stats.get(key) or 0)) for key in keys]
+    if not any(values):
+        return _empty_chart("Alert Conversion Funnel")
+    plt = _pyplot()
+    if plt is None:
+        return _fallback_png_data_uri("RENDER ERROR")
+    fig = None
+    try:
+        from matplotlib.patches import Polygon
+
+        colors = ("#2563eb", "#0891b2", "#16a34a", "#d97706", "#dc2626")
+        widths = (1.0, .84, .69, .55, .42, .32)
+        fig, ax = plt.subplots(figsize=(10.8, 5.3), facecolor=CHART_BACKGROUND)
+        ax.set_facecolor(CHART_BACKGROUND)
+        for index, (label, value, color) in enumerate(zip(labels, values, colors)):
+            top_width, bottom_width = widths[index], widths[index + 1]
+            y_top, y_bottom = 4.65 - index * .82, 3.98 - index * .82
+            points = [(-top_width / 2, y_top), (top_width / 2, y_top),
+                      (bottom_width / 2, y_bottom), (-bottom_width / 2, y_bottom)]
+            ax.add_patch(Polygon(points, closed=True, facecolor=color, edgecolor=CHART_BACKGROUND, linewidth=2))
+            rate = "100%" if index == 0 else (
+                f"{value / values[index - 1] * 100:.1f}%" if values[index - 1] else "—"
+            )
+            ax.text(0, (y_top + y_bottom) / 2 + .09, f"{value:,}", ha="center", va="center",
+                    color="#ffffff", fontsize=13, weight="bold")
+            ax.text(0, (y_top + y_bottom) / 2 - .16, f"{label}  ·  {rate}", ha="center", va="center",
+                    color="#ffffff", fontsize=8.5, weight="medium")
+        ax.set_xlim(-.65, .65)
+        ax.set_ylim(.25, 5.15)
+        ax.set_title("Alert Conversion Funnel", color=CHART_TEXT, fontsize=16, weight="semibold", loc="left", pad=14)
+        ax.text(-.64, 4.92, "Overview stage definitions · selected report window", color=CHART_MUTED, fontsize=8.5)
+        ax.set_axis_off()
+        fig.tight_layout()
+        return _png_data_uri(fig, plt)
+    except Exception:
+        if fig is not None:
+            plt.close(fig)
+        logger.exception("Failed to render Alert Conversion Funnel")
+        return _fallback_png_data_uri("RENDER ERROR")
+
+
+def _labelize(value: Any) -> str:
+    return str(value or "").strip().replace("_", " ").replace("-", " ").title()
+
+
+def _pipeline_stats(tickets: QuerySet) -> dict[str, Any]:
+    """Build the Overview Sankey stages from real records in the report window."""
+    stages = (
+        "MITRE ATT&CK Framework", "Developed Use Cases", "Alerts", "Resolution", "Event Level"
+    )
+    category_labels = dict(EventTicket.EVENT_CATEGORY_CHOICES)
+    result_labels = {
+        "true_positive": "True Positive", "false_positive": "False Positive",
+        "true_positive_benign": "TP - Benign", "duplicate": "Duplicate", "pending": "Pending",
+    }
+    priority_labels = {
+        "critical": "P1 - Critical", "high": "P2 - High",
+        "medium": "P3 - Medium", "low": "P4 - Low",
+    }
+    base = (
+        tickets.filter(is_deleted=False)
+        .annotate(
+            category_key=Lower(Trim("event_category")),
+            result_key=Lower(Trim("event_result")),
+            priority_key=Lower(Trim("priority")),
+        )
+        .exclude(category_key="").filter(category_key__isnull=False)
+    )
+    nodes: dict[str, dict[str, str]] = {}
+    links: dict[tuple[str, str, str], int] = {}
+
+    def add_link(source: str, target: str, value: int, stage: str, source_stage: str, target_stage: str) -> None:
+        if not source or not target or value <= 0:
+            return
+        nodes[source] = {"name": source, "stage": source_stage}
+        nodes[target] = {"name": target, "stage": target_stage}
+        key = (source, target, stage)
+        links[key] = links.get(key, 0) + value
+
+    category_result_rows = (
+        base.exclude(result_key="").filter(result_key__isnull=False)
+        .values("category_key", "result_key").annotate(count=Count("ticket_number"))
+    )
+    for row in category_result_rows:
+        category = category_labels.get(row["category_key"], _labelize(row["category_key"]))
+        result = result_labels.get(row["result_key"], _labelize(row["result_key"]))
+        add_link(category, result, int(row["count"] or 0), "Alerts -> Resolution", stages[2], stages[3])
+
+    result_priority_rows = (
+        base.exclude(result_key="").exclude(priority_key="")
+        .filter(result_key__isnull=False, priority_key__isnull=False)
+        .values("result_key", "priority_key").annotate(count=Count("ticket_number"))
+    )
+    for row in result_priority_rows:
+        result = result_labels.get(row["result_key"], _labelize(row["result_key"]))
+        priority = priority_labels.get(row["priority_key"], _labelize(row["priority_key"]))
+        add_link(result, priority, int(row["count"] or 0), "Resolution -> Event Level", stages[3], stages[4])
+
+    ticket_rows = list(base.values("ticket_number", "category_key").distinct())
+    ticket_categories = {row["ticket_number"]: row["category_key"] for row in ticket_rows if row["ticket_number"]}
+    ticket_rules: dict[str, set[str]] = {}
+    if ticket_categories:
+        for row in (
+            Alert.objects.filter(ticket_number__in=ticket_categories)
+            .exclude(rule_id__isnull=True).exclude(rule_id="")
+            .values("ticket_number", "rule_id").distinct()
+        ):
+            ticket_rules.setdefault(row["ticket_number"], set()).add(row["rule_id"])
+    rule_ids = {rule_id for values in ticket_rules.values() for rule_id in values}
+    rule_tags = {
+        row["rule_uuid"]: [str(tag).strip().lower() for tag in (row["payload"] or {}).get("tags", [])]
+        for row in LocalDetectionRule.objects.filter(rule_uuid__in=rule_ids, is_deleted=False).values("rule_uuid", "payload")
+    }
+    for ticket_number, rules in ticket_rules.items():
+        category_key = ticket_categories.get(ticket_number, "")
+        category = category_labels.get(category_key, _labelize(category_key))
+        tactics = {
+            tag[7:] for rule_id in rules for tag in rule_tags.get(rule_id, [])
+            if tag.startswith("attack.") and not re.fullmatch(r"attack\.t\d{4}(\.\d{3})?", tag)
+            and tag[7:] in ATTACK_TACTIC_MAP
+        }
+        for tactic in tactics:
+            tactic_label = ATTACK_TACTIC_MAP[tactic]["name"]
+            use_case = TACTIC_TO_USE_CASE.get(tactic, "Behavior-Based Use Cases")
+            add_link(tactic_label, use_case, 1, "MITRE -> Use Cases", stages[0], stages[1])
+            add_link(use_case, category, 1, "Use Cases -> Alerts", stages[1], stages[2])
+
+    return {
+        "nodes": list(nodes.values()),
+        "links": [
+            {"source": source, "target": target, "stage": stage, "value": value}
+            for (source, target, stage), value in links.items()
+        ],
+        "stages": list(stages),
+        "summary": {"tickets": base.count()},
+    }
+
+
+def _sankey_chart(data: Mapping[str, Any]) -> str:
+    links = [dict(link) for link in data.get("links", []) if int(link.get("value") or 0) > 0]
+    nodes = [dict(node) for node in data.get("nodes", [])]
+    stages = list(data.get("stages", []))
+    if not links or not nodes or not stages:
+        return _empty_chart("Alert Correlation — Detection Pipeline")
+    plt = _pyplot()
+    if plt is None:
+        return _fallback_png_data_uri("RENDER ERROR")
+    fig = None
+    try:
+        from matplotlib.path import Path
+        from matplotlib.patches import PathPatch, FancyBboxPatch
+
+        flow: dict[str, int] = {}
+        for link in links:
+            value = int(link["value"])
+            flow[link["source"]] = flow.get(link["source"], 0) + value
+            flow[link["target"]] = flow.get(link["target"], 0) + value
+        selected: dict[str, list[str]] = {}
+        for stage in stages:
+            names = [node["name"] for node in nodes if node.get("stage") == stage and node["name"] in flow]
+            selected[stage] = sorted(names, key=lambda name: flow[name], reverse=True)[:6]
+        allowed = {name for names in selected.values() for name in names}
+        links = [link for link in links if link["source"] in allowed and link["target"] in allowed]
+        if not links:
+            return _empty_chart("Alert Correlation — Detection Pipeline")
+
+        colors = ("#7c3aed", "#0891b2", "#2563eb", "#f97316", "#dc2626")
+        positions: dict[str, tuple[float, float, int]] = {}
+        for stage_index, stage in enumerate(stages):
+            stage_nodes = selected.get(stage, [])
+            count = len(stage_nodes)
+            for index, name in enumerate(stage_nodes):
+                positions[name] = (stage_index, 1 - (index + 1) / (count + 1), stage_index)
+
+        fig, ax = plt.subplots(figsize=(13.4, 6.2), facecolor=CHART_BACKGROUND)
+        ax.set_facecolor(CHART_BACKGROUND)
+        maximum = max(int(link["value"]) for link in links)
+        for link in sorted(links, key=lambda item: int(item["value"])):
+            x1, y1, source_stage = positions[link["source"]]
+            x2, y2, _ = positions[link["target"]]
+            value = int(link["value"])
+            path = Path(
+                [(x1 + .065, y1), (x1 + .42, y1), (x2 - .42, y2), (x2 - .065, y2)],
+                [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4],
+            )
+            ax.add_patch(PathPatch(path, facecolor="none", edgecolor=colors[source_stage],
+                                   linewidth=1.2 + 9 * (value / maximum) ** .55, alpha=.25, capstyle="round"))
+        for name, (x, y, stage_index) in positions.items():
+            ax.add_patch(FancyBboxPatch((x - .065, y - .028), .13, .056,
+                                        boxstyle="round,pad=0.008,rounding_size=0.012",
+                                        facecolor=colors[stage_index], edgecolor="white", linewidth=.7))
+            alignment = "right" if stage_index == len(stages) - 1 else "left"
+            offset = -.085 if alignment == "right" else .085
+            label = name if len(name) <= 24 else f"{name[:21]}…"
+            ax.text(x + offset, y, f"{label}  {flow[name]:,}", ha=alignment, va="center",
+                    color=CHART_TEXT, fontsize=7.2, weight="medium")
+        for index, stage in enumerate(stages):
+            ax.text(index, 1.07, stage.replace(" Framework", "\nFramework").replace("Developed ", "Developed\n"),
+                    ha="center", va="bottom", color=colors[index], fontsize=9, weight="bold")
+        ax.set_xlim(-.5, len(stages) - .5)
+        ax.set_ylim(-.04, 1.18)
+        ax.set_title("Alert Correlation — Detection Pipeline", color=CHART_TEXT, fontsize=16,
+                     weight="semibold", loc="left", pad=18)
+        ax.set_axis_off()
+        fig.tight_layout()
+        return _png_data_uri(fig, plt)
+    except Exception:
+        if fig is not None:
+            plt.close(fig)
+        logger.exception("Failed to render detection pipeline Sankey")
+        return _fallback_png_data_uri("RENDER ERROR")
+
+
 def _window(time_range: str, start_time: datetime | None, end_time: datetime | None) -> tuple[datetime, datetime]:
     anchor = end_time or _latest_telemetry_anchor()
     anchor = timezone.make_aware(anchor, timezone.get_current_timezone()) if timezone.is_naive(anchor) else anchor
@@ -541,7 +813,7 @@ def generate_soc_report_md(time_range: str = "7d", start_time: datetime | None =
     top_rules = list(dashboard.get("top_rules") or [])[:5]
     trend = _extract_trend(dashboard)
 
-    ticket_qs = EventTicket.objects.filter(created_time__gte=start, created_time__lte=end)
+    ticket_qs = EventTicket.objects.filter(created_time__gte=start, created_time__lte=end, is_deleted=False)
     real_ticket_count = ticket_qs.count()
     if real_ticket_count:
         resolved = ticket_qs.filter(status__in=("resolved", "closed")).count()
@@ -571,10 +843,17 @@ def generate_soc_report_md(time_range: str = "7d", start_time: datetime | None =
     severity_chart = generate_severity_pie_chart(severity)
     trend_chart = _stacked_trend_chart(alert_trend_series, alert_trend_map, "Alert Trend", "Alert count")
     score_chart = _score_trend_chart(score_trend_series, score_trend_map)
+    alert_qs = filter_alerts_by_time(Alert.objects.all(), start, end)
+    funnel_stats = _conversion_stats(alert_qs, ticket_qs)
+    pipeline_stats = _pipeline_stats(ticket_qs)
+    funnel_chart = _funnel_chart(funnel_stats)
+    sankey_chart = _sankey_chart(pipeline_stats)
     category_chart = category_chart or _fallback_png_data_uri("RENDER ERROR")
     severity_chart = severity_chart or _fallback_png_data_uri("RENDER ERROR")
     trend_chart = trend_chart or _fallback_png_data_uri("RENDER ERROR")
     score_chart = score_chart or _fallback_png_data_uri("RENDER ERROR")
+    funnel_chart = funnel_chart or _fallback_png_data_uri("RENDER ERROR")
+    sankey_chart = sankey_chart or _fallback_png_data_uri("RENDER ERROR")
     severity_rows = "\n".join(f"| {name.title()} | {severity.get(name, 0):,} | {severity.get(name, 0) / max(total_alerts, 1) * 100:.1f}% |" for name in SEVERITY_ORDER)
     rule_rows = "\n".join(f"| {index} | {_cell(rule.get('name', 'Unknown Rule'))} | {int(rule.get('count', 0)):,} |" for index, rule in enumerate(top_rules, 1)) or "| - | No data available in this time range | - |"
     ticket_rows = "\n".join(f"| `{_cell(row['ticket'])}` | **{_cell(row['priority'])}** | {_cell(row['title'])} | {_cell(row['status'])} |" for row in open_tickets) or "| - | No data available in this time range | - | - |"
@@ -586,22 +865,49 @@ def generate_soc_report_md(time_range: str = "7d", start_time: datetime | None =
     else:
         fallback_note = ""
     chart_style = "display:block; width:100%; max-width:none; height:auto; margin:16px 0 28px; border-radius:12px;"
-    category_section = f'<img src="{category_chart}" alt="Alert Category Breakdown" style="{chart_style}" />'
-    severity_section = f'<img src="{severity_chart}" alt="Alert Severity Distribution" style="{chart_style}" />'
-    trend_section = f'<img src="{trend_chart}" alt="Alert Trend" style="{chart_style}" />'
-    score_section = f'<img src="{score_chart}" alt="Alert Score Trend" style="{chart_style}" />'
+    category_section = f'<img src="{{{{charts.category}}}}" alt="Alert Category Breakdown" style="{chart_style}" />'
+    severity_section = f'<img src="{{{{charts.severity}}}}" alt="Alert Severity Distribution" style="{chart_style}" />'
+    trend_section = f'<img src="{{{{charts.alert_trend}}}}" alt="Alert Trend" style="{chart_style}" />'
+    score_section = f'<img src="{{{{charts.score_trend}}}}" alt="Alert Score Trend" style="{chart_style}" />'
+    funnel_section = f'<img src="{{{{charts.funnel}}}}" alt="Alert Conversion Funnel" style="{chart_style}" />'
+    sankey_section = f'<img src="{{{{charts.sankey}}}}" alt="Alert Correlation Detection Pipeline" style="{chart_style}" />'
+
+    report_window = f"{start.strftime('%Y-%m-%d %H:%M UTC')} — {end.strftime('%Y-%m-%d %H:%M UTC')}"
+    generated_at = timezone.now().strftime('%Y-%m-%d %H:%M UTC')
+    template_context = {
+        "company.name": "Argus",
+        "company.logo": "/seclink-logo.png",
+        "report.title": "SOC Security Operations Report",
+        "report.window": report_window,
+        "report.generated_at": generated_at,
+        "metrics.posture": posture,
+        "metrics.total_alerts": f"{total_alerts:,}",
+        "metrics.critical_high_alerts": f"{critical_high:,}",
+        "metrics.total_tickets": str(ticket_stats["total"]),
+        "metrics.resolved_tickets": str(ticket_stats["resolved"]),
+        "metrics.resolution_rate": f"{resolved_rate:.1f}%",
+        "metrics.mttd": _duration(ticket_stats["mttd_seconds"]),
+        "metrics.mttr": _duration(ticket_stats["mttr_seconds"]),
+        "metrics.open_priority_incidents": str(len(open_tickets)),
+        "charts.category": category_chart,
+        "charts.severity": severity_chart,
+        "charts.alert_trend": trend_chart,
+        "charts.score_trend": score_chart,
+        "charts.funnel": funnel_chart,
+        "charts.sankey": sankey_chart,
+    }
 
     markdown = f"""<div class="argus-report-header" style="display:flex; align-items:center; gap:14px; border-bottom:2px solid #3b82f6; padding-bottom:14px; margin-bottom:20px;">
-  <img src="/seclink-logo.png" alt="SecLink Argus logo" class="argus-report-logo" style="width:52px; height:52px; object-fit:contain; margin:0; border:0; background:transparent;" />
+  <img src="{{{{company.logo}}}}" alt="Company logo" class="argus-report-logo" style="width:52px; height:52px; object-fit:contain; margin:0; border:0; background:transparent;" />
   <div class="argus-report-title-group" style="display:flex; flex-direction:column; gap:5px;">
-    <span class="argus-brand-wordmark argus-report-wordmark" style="font-family:'Orbitron','Share Tech Mono',monospace; font-size:28px; font-weight:800; letter-spacing:.14em; line-height:1;">Argus</span>
-    <span class="argus-report-title" style="font-size:13px; font-weight:700; letter-spacing:.12em;">SOC SECURITY OPERATIONS REPORT</span>
+    <span class="argus-brand-wordmark argus-report-wordmark" style="font-family:'Orbitron','Share Tech Mono',monospace; font-size:28px; font-weight:800; letter-spacing:.08em; line-height:1;">{{{{company.name}}}}</span>
+    <span class="argus-report-title" style="font-size:13px; font-weight:700; letter-spacing:.12em;">{{{{report.title}}}}</span>
   </div>
 </div>
 
 > **Classification:** Internal — SOC Operations  
-> **Reporting Window:** {start.strftime('%Y-%m-%d %H:%M UTC')} — {end.strftime('%Y-%m-%d %H:%M UTC')}  
-> **Generated:** {timezone.now().strftime('%Y-%m-%d %H:%M UTC')}
+> **Reporting Window:** {{{{report.window}}}}<br />
+> **Generated:** {{{{report.generated_at}}}}
 
 ---
 
@@ -643,6 +949,14 @@ The environment's current security posture is **{posture}**. The SOC analyzed **
 
 {score_section}
 
+### Alert Conversion Funnel
+
+{funnel_section}
+
+### Detection Pipeline
+
+{sankey_section}
+
 ### Response Performance
 
 | Metric | Value |
@@ -650,8 +964,8 @@ The environment's current security posture is **{posture}**. The SOC analyzed **
 | Total Incident Tickets | **{ticket_stats['total']}** |
 | Resolved Tickets | **{ticket_stats['resolved']}** |
 | Resolution Rate | **{resolved_rate:.1f}%** |
-| Mean Time to Detect (MTTD) | **{_duration(ticket_stats['mttd_seconds'])}** |
-| Mean Time to Respond/Resolve (MTTR) | **{_duration(ticket_stats['mttr_seconds'])}** |
+| Mean Time to Detect (MTTD) | **{{{{metrics.mttd}}}}** |
+| Mean Time to Respond/Resolve (MTTR) | **{{{{metrics.mttr}}}}** |
 
 ### Open Critical and High-Priority Tickets
 
@@ -670,7 +984,7 @@ The environment's current security posture is **{posture}**. The SOC analyzed **
 1. **Accelerate priority incident handling:** Assign named owners and containment deadlines to the **{len(open_tickets)}** open critical/high-priority incidents; validate isolation, credential revocation, and evidence preservation.
 2. **Reduce concentrated detection risk:** {f"Hunt across the top RBA entities—beginning with `{_cell(entities[0].get('risk_object'))}`—and correlate identity, endpoint, network, and threat-intelligence telemetry." if entities else "No risk entities were returned for this time range; validate risk telemetry coverage."}
 3. **Tune high-volume detections:** {f"Review the top triggered rule, **{_cell(top_rules[0].get('name'))}**, for false-positive concentration while preserving coverage for confirmed malicious behavior." if top_rules else "No detection rules were returned for this time range; validate alert rule telemetry."}
-4. **Improve response efficiency:** Compare current MTTD (**{_duration(ticket_stats['mttd_seconds'])}**) and MTTR (**{_duration(ticket_stats['mttr_seconds'])}**) against SLA objectives and automate repetitive enrichment and containment steps.
+4. **Improve response efficiency:** Compare current MTTD (**{{{{metrics.mttd}}}}**) and MTTR (**{{{{metrics.mttr}}}}**) against SLA objectives and automate repetitive enrichment and containment steps.
 
 ---
 
@@ -688,15 +1002,32 @@ _This report is generated from the SOC platform's alert, incident, and risk aggr
         "category_breakdown": category, "top_rules": top_rules, "trend": trend,
         "tickets": {**ticket_stats, "mttd": _duration(ticket_stats["mttd_seconds"]), "mttr": _duration(ticket_stats["mttr_seconds"]), "resolve_rate": round(resolved_rate, 1), "open_critical": open_tickets},
         "top_risk_entities": entities,
+        "conversion_funnel": funnel_stats,
+        "detection_pipeline": pipeline_stats,
+        "data_provenance": {
+            "risk_entities": "risk.RiskEvent grouped by profile within the report window",
+            "conversion_funnel": "alerts.Alert and tickets.EventTicket using Overview stage definitions",
+            "detection_pipeline": "tickets.EventTicket joined to alerts.Alert and detections.LocalDetectionRule",
+        },
         "charts": {
             "category": category_chart,
             "severity": severity_chart,
             "alert_trend": trend_chart,
             "score_trend": score_chart,
+            "funnel": funnel_chart,
+            "sankey": sankey_chart,
             "trend": trend_chart,
         },
     }
-    return {"markdown_content": markdown, "raw_stats": raw_stats}
+    return {
+        "markdown_content": markdown,
+        "raw_stats": raw_stats,
+        "template_context": template_context,
+        "placeholder_catalog": [
+            {**item, "token": "{{" + item["key"] + "}}", "value": template_context[item["key"]]}
+            for item in PLACEHOLDER_CATALOG
+        ],
+    }
 
 
 build_report = generate_soc_report_md

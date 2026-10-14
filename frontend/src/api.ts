@@ -90,7 +90,19 @@ const publicReportClient = axios.create({
 
 export async function fetchReport(range: '24h' | '7d' | '30d' = '7d') {
   const r = await publicReportClient.post('/reports/generate/', { time_range: range });
-  return r.data as { markdown_content: string; raw_stats: Record<string, any> };
+  return r.data as {
+    markdown_content: string;
+    raw_stats: Record<string, any>;
+    template_context: Record<string, string>;
+    placeholder_catalog: Array<{
+      key: string;
+      token: string;
+      label: string;
+      group: string;
+      description: string;
+      value: string;
+    }>;
+  };
 }
 const addAuthHeader = (config: InternalAxiosRequestConfig) => {
   const method = String(config.method || 'get').toUpperCase();
