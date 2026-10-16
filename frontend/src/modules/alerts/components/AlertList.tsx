@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { SearchOutlined, FilterOutlined, ReloadOutlined, CopyOutlined } from '@ant-design/icons';
@@ -9,8 +9,6 @@ import type { Alert } from 'types';
 import { getRiskObjects, riskTagColor } from 'utils/riskObjects';
 
 const { Text } = Typography;
-
-const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
 
 const normalizeAlertSeverity = (sev?: string): 'critical' | 'high' | 'medium' | 'low' | 'unknown' => {
   const s = String(sev || '').trim().toLowerCase();
@@ -107,64 +105,65 @@ const DEFAULT_WIDTHS: Record<string, number> = {
 const AlertList: React.FC = () => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(20);
+  const [total, setTotal] = useState<number>(0);
   const [searchText, setSearchText] = useState<string>('');
   const [severityFilter, setSeverityFilter] = useState<string | undefined>(undefined);
+  const [ordering, setOrdering] = useState<string>('-timestamp');
   const [widths, setWidths] = useState<Record<string, number>>(DEFAULT_WIDTHS);
   const [detailOpen, setDetailOpen] = useState<boolean>(false);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
+  const requestId = useRef(0);
 
-  // Backend returns every alert within its time window (default past 90 days),
-  // bounded by ALERT_LIST_MAX. We fetch that whole window once and
-  // filter/sort/page client-side. page_size is large to pull the full window.
-  const load = async () => {
+  const load = useCallback(async () => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
     try {
-      const res = await fetchAlerts(1, 20000);
+      const res = await fetchAlerts(page, pageSize, undefined, {
+        q: searchText,
+        severity: severityFilter,
+        ordering,
+      });
+      if (currentRequest !== requestId.current) return;
       setAlerts(res.alerts || []);
+      setTotal(Math.max(0, Number(res.total) || 0));
+      const resolvedPage = Math.max(1, Number(res.page) || 1);
+      if (resolvedPage !== page) setPage(resolvedPage);
     } catch (err) {
+      if (currentRequest !== requestId.current) return;
       console.error('Failed to load alerts', err);
       setAlerts([]);
+      setTotal(0);
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
-  };
+  }, [ordering, page, pageSize, searchText, severityFilter]);
 
   useEffect(() => {
-    load();
-    const onConnectorSwitch = () => load();
+    // Invalidate an in-flight page immediately when query state changes;
+    // the replacement request may be intentionally delayed for typing debounce.
+    requestId.current += 1;
+    const timer = window.setTimeout(() => void load(), searchText.trim() ? 280 : 0);
+    return () => window.clearTimeout(timer);
+  }, [load, searchText]);
+
+  useEffect(() => {
+    const onConnectorSwitch = () => void load();
     window.addEventListener('siem_es_connector_switched', onConnectorSwitch as EventListener);
     return () => window.removeEventListener('siem_es_connector_switched', onConnectorSwitch as EventListener);
-  }, []);
-
-  // ---- Client-side filtering ----
-  const filtered = useMemo(() => {
-    const q = searchText.trim().toLowerCase();
-    const sev = severityFilter;
-    return (alerts || []).filter((row: any) => {
-      if (sev && normalizeAlertSeverity(getSeverity(row)) !== sev) return false;
-      if (q) {
-        const haystack = [
-          getId(row),
-          getMessage(row),
-          getDetails(row),
-          row.rule_name,
-          row.rule_id,
-          getHost(row),
-          getSourceIp(row),
-        ]
-          .map((v) => String(v ?? '').toLowerCase())
-          .join(' ');
-        if (!haystack.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [alerts, searchText, severityFilter]);
+  }, [load]);
 
   const resetFilters = () => {
     setSearchText('');
     setSeverityFilter(undefined);
+    setOrdering('-timestamp');
+    setPage(1);
   };
+
+  const sortOrderFor = (field: string) => (
+    ordering === field ? 'ascend' : ordering === `-${field}` ? 'descend' : null
+  );
 
   const copyId = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -184,16 +183,19 @@ const AlertList: React.FC = () => {
     {
       title: 'Severity',
       key: 'severity',
+      dataIndex: 'severity',
       width: widths.severity,
-      sorter: (a: any, b: any) =>
-        SEVERITY_RANK[normalizeAlertSeverity(getSeverity(a))] - SEVERITY_RANK[normalizeAlertSeverity(getSeverity(b))],
+      sorter: true,
+      sortOrder: sortOrderFor('severity'),
       render: (_: any, row: any) => renderSeverityTag(getSeverity(row)),
     },
     {
       title: 'ID',
       key: 'alert_id',
+      dataIndex: 'alert_id',
       width: widths.alert_id,
-      sorter: (a: any, b: any) => getId(a).localeCompare(getId(b)),
+      sorter: true,
+      sortOrder: sortOrderFor('alert_id'),
       render: (_: any, row: any) => {
         const id = getId(row);
         if (id === '-') return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
@@ -212,21 +214,20 @@ const AlertList: React.FC = () => {
     {
       title: 'Time',
       key: 'timestamp',
+      dataIndex: 'timestamp',
       width: widths.timestamp,
-      defaultSortOrder: 'descend' as const,
-      sorter: (a: any, b: any) => {
-        const ta = new Date(String(getTime(a) ?? '')).getTime() || 0;
-        const tb = new Date(String(getTime(b) ?? '')).getTime() || 0;
-        return ta - tb;
-      },
+      sorter: true,
+      sortOrder: sortOrderFor('timestamp'),
       render: (_: any, row: any) => <span style={{ whiteSpace: 'nowrap' }}>{formatTime(getTime(row))}</span>,
     },
     {
       title: 'Message',
       key: 'message',
+      dataIndex: 'message',
       width: widths.message,
       ellipsis: true,
-      sorter: (a: any, b: any) => getMessage(a).localeCompare(getMessage(b)),
+      sorter: true,
+      sortOrder: sortOrderFor('message'),
       render: (_: any, row: any) => {
         const msg = getMessage(row);
         return (
@@ -241,8 +242,6 @@ const AlertList: React.FC = () => {
       key: 'rule_name',
       width: widths.rule_name,
       ellipsis: true,
-      sorter: (a: any, b: any) =>
-        String(a?.rule_name || '').localeCompare(String(b?.rule_name || '')),
       render: (_: any, row: any) => {
         const detectionId = row.detection_rule_id;
         if (!detectionId) return <span style={{ color: 'rgba(127,127,127,0.6)' }}>—</span>;
@@ -303,7 +302,7 @@ const AlertList: React.FC = () => {
           placeholder="Filter by id / message / details / rule / host / ip"
           className="alerts-search"
           value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
+          onChange={(e) => { setSearchText(e.target.value); setPage(1); }}
         />
         <Select
           allowClear
@@ -311,7 +310,7 @@ const AlertList: React.FC = () => {
           placeholder="Severity"
           className="alerts-severity-select"
           value={severityFilter}
-          onChange={(v) => setSeverityFilter(v)}
+          onChange={(v) => { setSeverityFilter(v); setPage(1); }}
           options={[
             { label: 'Critical', value: 'critical' },
             { label: 'High', value: 'high' },
@@ -329,18 +328,34 @@ const AlertList: React.FC = () => {
         <Table
           className="alerts-resizable-table"
           rowKey="alert_id"
-          dataSource={filtered}
+          dataSource={alerts}
           loading={loading}
           size="middle"
           scroll={{ x: 1300 }}
           components={{ header: { cell: ResizableTitle } }}
           columns={columns as any}
           pagination={{
+            current: page,
             pageSize,
+            total,
             showSizeChanger: true,
             pageSizeOptions: ['10', '20', '50', '100'],
-            onShowSizeChange: (_c, size) => setPageSize(size),
             showTotal: (t) => `${t} alerts`,
+          }}
+          onChange={(pagination, _filters, sorter, extra) => {
+            const nextSize = Number(pagination.pageSize || pageSize);
+            setPageSize(nextSize);
+            setPage(nextSize !== pageSize ? 1 : Number(pagination.current || 1));
+            if (extra.action === 'sort') {
+              const activeSorter = Array.isArray(sorter) ? sorter[0] : sorter;
+              const field = String(activeSorter?.field || activeSorter?.columnKey || '');
+              if (activeSorter?.order && ['timestamp', 'severity', 'alert_id', 'message'].includes(field)) {
+                setOrdering(`${activeSorter.order === 'descend' ? '-' : ''}${field}`);
+              } else {
+                setOrdering('-timestamp');
+              }
+              setPage(1);
+            }
           }}
           onRow={(record: any) => ({
             onClick: () => {

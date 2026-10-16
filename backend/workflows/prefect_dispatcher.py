@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from typing import Any, Dict
 
 from django.db import IntegrityError, transaction
@@ -149,7 +150,7 @@ def register_runtime_execution(payload: Dict[str, Any]) -> WorkflowExecution:
 
     flow_run_id = str(payload['prefect_flow_run_id'])
     workflow_version = int(payload['workflow_version'])
-    workflow = Workflow.objects.get(id=payload['workflow_id'], execution_engine='prefect', is_active=True)
+    workflow = Workflow.objects.get(id=payload['workflow_id'], execution_engine='prefect')
     try:
         definition = load_published_manifest(workflow, workflow_version)
     except (OSError, TypeError, ValueError, KeyError) as exc:
@@ -302,6 +303,46 @@ def schedule_slug(schedule: WorkflowSchedule) -> str:
     return f'argus-workflow-{schedule.workflow_id}-{schedule.id}'
 
 
+def name_scheduled_flow_runs() -> int:
+    """Give Prefect's queued Argus runs names before a worker picks them up."""
+    after = (timezone.now() - timedelta(minutes=5)).isoformat()
+    renamed = 0
+    for item in prefect_client.list_scheduled_flow_runs(after=after):
+        parameters = item.get('parameters') or {}
+        run = parameters.get('run') if isinstance(parameters, dict) else None
+        if not isinstance(run, dict) or run.get('schema_version') != 1 or run.get('execution_id'):
+            continue
+        workflow = run.get('workflow') or {}
+        if not isinstance(workflow, dict):
+            continue
+        definition = workflow.get('definition') or {}
+        if not isinstance(definition, dict):
+            continue
+        workflow_id, workflow_name = workflow.get('id'), definition.get('name')
+        created_by = item.get('created_by') or {}
+        if (
+            not isinstance(workflow_id, str) or not isinstance(workflow_name, str)
+            or not workflow_name.strip() or str(definition.get('id')) != workflow_id
+            or not isinstance(created_by, dict)
+            or not str(created_by.get('display_value') or '').startswith(f'argus-workflow-{workflow_id}-')
+        ):
+            continue
+        scheduled_at = item.get('next_scheduled_start_time')
+        if not isinstance(scheduled_at, str):
+            continue
+        try:
+            scheduled_at = datetime.fromisoformat(scheduled_at.replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        if scheduled_at.tzinfo is None:
+            continue
+        name = f"{workflow_name} :: {scheduled_at.astimezone(datetime_timezone.utc):%Y-%m-%d %H:%M:%S} UTC"
+        if isinstance(item.get('id'), str) and item.get('name') != name:
+            prefect_client.set_flow_run_name(item['id'], name)
+            renamed += 1
+    return renamed
+
+
 def _schedule_definition(schedule: WorkflowSchedule) -> Dict[str, Any]:
     if schedule.schedule_type == 'interval':
         return {'interval': schedule.interval_seconds or 0}
@@ -339,7 +380,7 @@ def sync_schedule(schedule: WorkflowSchedule | str) -> Dict[str, Any]:
                 deployment_id=deployment_id,
                 slug=schedule_slug(schedule),
                 schedule=_schedule_definition(schedule),
-                is_active=bool(schedule.is_active),
+                is_active=bool(workflow.is_active and schedule.is_active),
                 parameters={'run': run},
             )
         except (OSError, ValueError, TypeError, KeyError, prefect_client.PrefectAPIError, prefect_client.PrefectConfigError) as exc:

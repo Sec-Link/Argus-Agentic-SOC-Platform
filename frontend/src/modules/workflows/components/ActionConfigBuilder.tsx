@@ -509,7 +509,6 @@ const ActionConfigBuilder: React.FC<ActionConfigBuilderProps> = ({
           form={form}
           layout="vertical"
           onValuesChange={handleFormChange}
-          initialValues={config}
         >
           <Card size="small" style={{ marginBottom: 16, background: '#f5f5f5' }}>
             <Text strong>{actionInfo?.name || formatLabel(actionType)}</Text>

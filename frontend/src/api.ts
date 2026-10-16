@@ -89,7 +89,19 @@ const publicReportClient = axios.create({
 
 export async function fetchReport(range: '24h' | '7d' | '30d' = '7d') {
   const r = await publicReportClient.post('/reports/generate/', { time_range: range });
-  return r.data as { markdown_content: string; raw_stats: Record<string, any> };
+  return r.data as {
+    markdown_content: string;
+    raw_stats: Record<string, any>;
+    template_context: Record<string, string>;
+    placeholder_catalog: Array<{
+      key: string;
+      token: string;
+      label: string;
+      group: string;
+      description: string;
+      value: string;
+    }>;
+  };
 }
 const addAuthHeader = (config: InternalAxiosRequestConfig) => {
   const method = String(config.method || 'get').toUpperCase();
@@ -1398,6 +1410,11 @@ export async function activateWorkflow(id: string): Promise<void> {
 // Deactivate workflow
 export async function deactivateWorkflow(id: string): Promise<void> {
   await client.post(`${WORKFLOWS_BASE}/workflows/${id}/deactivate/`);
+}
+
+export async function setWorkflowScheduleActive(id: string, is_active: boolean): Promise<Workflow> {
+  const r = await client.post(`${WORKFLOWS_BASE}/workflows/${id}/set-schedule-active/`, { is_active });
+  return r.data;
 }
 
 // List executions

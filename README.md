@@ -199,10 +199,10 @@ The `k8s/` directory contains basic deployment manifests:
 
 In production we recommend:
 
-- Use a secure random `SECRET_KEY`
-- Precisely set `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS`
-- Add backups and monitoring for DB, object storage, and logs
-- Configure access boundaries, auditing, and least-privilege for AI/MCP features
+- Use a secure random `SECRET_KEY`.
+- Precisely set `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS`.
+- Add backups and monitoring for DB, object storage, and logs.
+- Configure access boundaries, auditing, and least-privilege for AI/MCP features.
 
 ## 10. Contribution
 We welcome contributions! Please refer to our [CONTRIBUTING.md](https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/CONTRIBUTING.md) for more information.

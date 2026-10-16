@@ -204,22 +204,24 @@ export default function Sidebar({
           display: 'flex',
           alignItems: 'center',
           justifyContent: siderCollapsed ? 'center' : 'space-between',
-          padding: siderCollapsed ? '0' : '0 12px',
+          padding: siderCollapsed ? '0' : '0 8px 0 12px',
           fontWeight: 700,
         }}
       >
         <div
-          onClick={() => onNavigate('/dashboard')}
+          className={`sidebar-brand-action${siderCollapsed ? ' is-collapsed' : ''}`}
+          onClick={() => siderCollapsed ? setSiderCollapsed(false) : onNavigate('/dashboard')}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
-              onNavigate('/dashboard');
+              if (siderCollapsed) setSiderCollapsed(false);
+              else onNavigate('/dashboard');
             }
           }}
           style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
-          aria-label="Go to dashboard"
+          aria-label={siderCollapsed ? 'Expand menu' : 'Go to dashboard'}
         >
           <img
             src="/seclink-logo.png"
@@ -229,6 +231,9 @@ export default function Sidebar({
             className="sidebar-brand-logo"
             style={{ width: siderCollapsed ? 36 : 40, height: siderCollapsed ? 36 : 40, borderRadius: 8, objectFit: 'contain' }}
           />
+          {siderCollapsed && (
+            <PanelLeftOpen className="sidebar-brand-expand-icon" size={22} strokeWidth={1.9} aria-hidden="true" />
+          )}
           {!siderCollapsed && <span className="argus-brand-wordmark argus-brand-wordmark-sidebar">Argus</span>}
         </div>
         {!siderCollapsed && (
@@ -236,7 +241,7 @@ export default function Sidebar({
             <Button
               type="text"
               size="small"
-              className="sidebar-toggle-btn"
+              className="sidebar-toggle-btn sidebar-collapse-btn"
               icon={<PanelLeftClose size={18} strokeWidth={1.9} />}
               onClick={() => setSiderCollapsed(true)}
               aria-label="Collapse menu"
@@ -244,23 +249,6 @@ export default function Sidebar({
           </Tooltip>
         )}
       </div>
-
-      {/* Collapsed: dedicated expand button below the logo, centered to align
-          with the icon rail, kept compact to match the icon rhythm. */}
-      {siderCollapsed && (
-        <div className="sidebar-rail-toggle">
-          <Tooltip title="Expand menu" placement="right">
-            <Button
-              type="text"
-              size="small"
-              className="sidebar-toggle-btn"
-              icon={<PanelLeftOpen size={18} strokeWidth={1.9} />}
-              onClick={() => setSiderCollapsed(false)}
-              aria-label="Expand menu"
-            />
-          </Tooltip>
-        </div>
-      )}
 
       <Menu
         mode="inline"
