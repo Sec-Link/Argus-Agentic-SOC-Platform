@@ -172,6 +172,46 @@ def get_flow_run(flow_run_id: str) -> Dict[str, Any]:
     return resp.json()
 
 
+def list_scheduled_flow_runs(after: str) -> list[Dict[str, Any]]:
+    """List future auto-scheduled SOAR runs, including every Prefect page."""
+    runs = []
+    seen = set()
+    while True:
+        data = _request(
+            'post', '/flow_runs/filter', operation='list scheduled flow runs',
+            json={
+                'flow_runs': {
+                    'state': {'type': {'any_': ['SCHEDULED']}},
+                    'created_by': {'type_': ['SCHEDULE']},
+                    'tags': {'all_': ['soar', 'auto-scheduled']},
+                    'next_scheduled_start_time': {'after_': after},
+                },
+                'sort': 'ID_DESC',
+                'limit': 200,
+                'offset': len(runs),
+            },
+        ).json()
+        if not isinstance(data, list) or len(data) > 200:
+            raise PrefectAPIError('Prefect returned an invalid scheduled flow run page.')
+        for run in data:
+            if not isinstance(run, dict) or not isinstance(run.get('id'), str) or not run['id']:
+                raise PrefectAPIError('Prefect returned an invalid scheduled flow run.')
+            if run['id'] in seen:
+                raise PrefectAPIError('Prefect scheduled flow run pages contained duplicate IDs.')
+            seen.add(run['id'])
+        runs.extend(data)
+        if len(data) < 200:
+            return runs
+
+
+def set_flow_run_name(flow_run_id: str, name: str) -> None:
+    """Rename an existing run; Prefect may delete a future run during rescheduling."""
+    _request(
+        'patch', f'/flow_runs/{flow_run_id}', operation='rename flow run',
+        allowed_statuses=(404,), json={'name': name},
+    )
+
+
 def iter_events(event_filter: Dict[str, Any]):
     """Page through retained events without trusting a server-supplied host."""
     page = _request('post', '/events/filter', operation='read events',

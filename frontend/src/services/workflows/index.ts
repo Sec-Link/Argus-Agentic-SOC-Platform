@@ -34,6 +34,7 @@ export {
   cloneWorkflow,
   activateWorkflow,
   deactivateWorkflow,
+  setWorkflowScheduleActive,
   listWorkflowExecutions,
   subscribeWorkflowProgress,
   getWorkflowExecution,

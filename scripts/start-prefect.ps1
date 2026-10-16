@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [int]$TimeoutSeconds = 90,
+    [switch]$ServerOnly,
     [switch]$SkipWorker,
     [switch]$SkipConsumer
 )
@@ -112,6 +113,12 @@ else {
 }
 
 Wait-PrefectApi -Timeout $TimeoutSeconds
+
+if ($ServerOnly) {
+    Set-DotEnvValue -Path $envFile -Name 'PREFECT_API_URL' -Value $apiUrl
+    Write-Host "Prefect Server is ready at http://127.0.0.1:4200 (API: $apiUrl)."
+    return
+}
 
 & $prefectExe work-pool inspect $workPoolName *> $null
 if ($LASTEXITCODE -ne 0) {
