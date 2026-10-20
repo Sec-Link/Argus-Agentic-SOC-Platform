@@ -8,6 +8,7 @@ export interface Workflow extends BaseWorkflow {
 
 export {
   // types
+  type WorkflowWritePayload,
   type WorkflowStep,
   type PrefectDeployment,
   type WorkflowSchedule,
