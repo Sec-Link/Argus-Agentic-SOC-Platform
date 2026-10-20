@@ -1,16 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
-import { App, Button, Card, Col, DatePicker, Form, Grid, Input, Modal, Row, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
+import { App, Button, Card, DatePicker, Form, Grid, Input, Modal, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType, TableProps } from 'antd/es/table';
 import { Pie } from '@ant-design/plots';
 import { batchDeleteSlaTickets, batchUpdateSlaTickets, createSlaTicket, dispatchTicketPlaybooks, updateSlaTicket, updateSlaTicketStatus } from 'services/tickets';
 import { listUsers } from 'services/accounts';
 import { useResizableColumns } from 'components/table/resizableColumns';
 import type { SlaTicketListItem } from 'types';
+import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
+import { buildTicketListContext } from '../aiContext';
+import layoutStyles from './TicketLayout.module.css';
 
 type Props = {
   tickets: SlaTicketListItem[];
   loading?: boolean;
+  appliedQuery?: Record<string, string>;
   onRefresh: (query?: Record<string, string | number | undefined | null>) => void;
   onOpenDetail: (ticketNumber: string) => void;
 };
@@ -227,6 +231,14 @@ export default function SlaTicketListView(props: Props) {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const selectedIds = useMemo(() => selectedRowKeys.map((key) => String(key)), [selectedRowKeys]);
   const hasSelection = selectedIds.length > 0;
+  const assistantContext = useMemo(() => buildTicketListContext({
+    tickets: filtered,
+    filters: { query, facets: filters, time_range: quickRange, applied_query: props.appliedQuery },
+    selectedIds,
+    loadedCount: tickets.length,
+    loading: Boolean(loading),
+  }), [filtered, query, filters, quickRange, props.appliedQuery, selectedIds, tickets.length, loading]);
+  useRegisterAssistantContext(assistantContext);
   const disableBatchActions = bulkLoading || loading || !hasSelection;
   const rowSelection: TableProps<SlaTicketListItem>['rowSelection'] = {
     selectedRowKeys,
@@ -732,7 +744,7 @@ export default function SlaTicketListView(props: Props) {
   };
 
   return (
-    <div>
+    <div className={layoutStyles.list}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
           <Typography.Title level={3} style={{ margin: 0 }}>Incidents</Typography.Title>
@@ -851,7 +863,7 @@ export default function SlaTicketListView(props: Props) {
       {showChartPanel && (
         <div style={{ marginTop: 10 }}>
           <Space direction="vertical" style={{ width: '100%' }} size={10}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(220px, 1fr))', gap: 12 }}>
+            <div className={layoutStyles.chartGrid}>
               <Card size="small" title="Severity" styles={{ body: { padding: '8px 12px 10px' } }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(112px, 42%)', gap: 12, alignItems: 'center' }}>
                   <LegendList
@@ -1046,6 +1058,7 @@ export default function SlaTicketListView(props: Props) {
           <Table
             rowKey="ticket_number"
             size="middle"
+            scroll={{ x: 'max-content' }}
             loading={loading}
             dataSource={filtered}
             columns={resizableColumns as ColumnsType<SlaTicketListItem>}
@@ -1059,9 +1072,9 @@ export default function SlaTicketListView(props: Props) {
             }}
           />
         ) : (
-          <Row gutter={[12, 12]}>
+          <div className={layoutStyles.summaryGrid}>
             {filtered.slice(0, 60).map((t) => (
-              <Col key={t.ticket_number} xs={24} md={12} xl={8}>
+              <div key={t.ticket_number}>
                 {/* Summary cards use explicit text hierarchy classes so dark mode can raise contrast safely. */}
                 <Card
                   className="sla-summary-ticket-card"
@@ -1083,9 +1096,9 @@ export default function SlaTicketListView(props: Props) {
                     Created: {formatTimestamp(t.created_time)}
                   </div>
                 </Card>
-              </Col>
+              </div>
             ))}
-          </Row>
+          </div>
         )}
       </div>
 

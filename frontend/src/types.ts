@@ -111,6 +111,9 @@ export interface SlaTicketDetail extends SlaTicketListItem {
   event_platform?: string | null;
   event_risk_score?: number | null;
   ticket_category?: string | null;
+  event_containment_cause?: string | null;
+  event_cause_category?: string | null;
+  ticket_stage?: string | null;
   alert_message?: string | null;
   attachments_count?: number | null;
   work_logs_count?: number | null;

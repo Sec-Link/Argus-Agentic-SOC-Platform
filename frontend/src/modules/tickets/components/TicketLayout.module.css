@@ -1,0 +1,39 @@
+.detail {
+  container: ticket-detail / inline-size;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  gap: 14px;
+}
+
+.detailGrid > * { min-width: 0; }
+
+.list {
+  container: ticket-list / inline-size;
+  min-width: 0;
+}
+
+.chartGrid, .summaryGrid {
+  display: grid;
+  gap: 12px;
+}
+
+.chartGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.summaryGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.chartGrid > *, .summaryGrid > * { min-width: 0; }
+
+@container ticket-detail (max-width: 1040px) {
+  .detailGrid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container ticket-list (max-width: 960px) {
+  .chartGrid, .summaryGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container ticket-list (max-width: 600px) {
+  .chartGrid, .summaryGrid { grid-template-columns: minmax(0, 1fr); }
+}

@@ -4,6 +4,9 @@ import { Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input,
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
 import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
+import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
+import { buildTicketDetailContext } from '../aiContext';
+import layoutStyles from './TicketLayout.module.css';
 
 type Props = {
   ticket: SlaTicketDetail;
@@ -29,11 +32,15 @@ type TicketCallablePlaybook = {
 
 type TicketWorkplanItem = {
   execution_id: string;
+  workflow_id?: string;
   workflow_name: string;
   status: string;
   trigger_source: string;
   progress_percent?: number;
   created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  executed_by?: string | null;
   error_message?: string;
 };
 
@@ -364,6 +371,7 @@ function WarRoomView({
               <Table
                 rowKey="id"
                 size="small"
+                scroll={{ x: 'max-content' }}
                 pagination={false}
                 columns={[
                   { title: 'File', dataIndex: 'file_name', key: 'file_name', ellipsis: true },
@@ -408,6 +416,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [isPending, setIsPending] = useState(false);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [handleLogs, setHandleLogs] = useState<SlaTicketHandleLog[]>([]);
+  const [handleLogsState, setHandleLogsState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [aiRawResponse, setAiRawResponse] = useState('');
@@ -437,6 +446,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [playbookLoading, setPlaybookLoading] = useState(false);
   const [workplanItems, setWorkplanItems] = useState<TicketWorkplanItem[]>([]);
   const [workplanLoading, setWorkplanLoading] = useState(false);
+  const [workplanState, setWorkplanState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [editableLabels, setEditableLabels] = useState<Array<{ label_name: string; label_value: string }>>([]);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelValue, setNewLabelValue] = useState('');
@@ -456,13 +466,21 @@ export default function SlaTicketDetailView(props: Props) {
 
   useEffect(() => {
     let alive = true;
+    setHandleLogs([]);
+    setHandleLogsState('loading');
     (async () => {
       try {
         const res = await fetchSlaTicketHandleLogs(ticket.ticket_number);
         const parsed = Array.isArray(res) ? res : [];
-        if (alive) setHandleLogs(parsed);
+        if (alive) {
+          setHandleLogs(parsed);
+          setHandleLogsState('loaded');
+        }
       } catch {
-        if (alive) setHandleLogs([]);
+        if (alive) {
+          setHandleLogs([]);
+          setHandleLogsState('error');
+        }
       }
     })();
     return () => {
@@ -491,14 +509,22 @@ export default function SlaTicketDetailView(props: Props) {
 
   useEffect(() => {
     let alive = true;
+    setWorkplanItems([]);
+    setWorkplanState('loading');
     setWorkplanLoading(true);
     (async () => {
       try {
         const res = await fetchTicketPlaybookWorkplan(ticket.ticket_number);
         const rows = Array.isArray(res?.results) ? res.results : [];
-        if (alive) setWorkplanItems(rows);
+        if (alive) {
+          setWorkplanItems(rows);
+          setWorkplanState('loaded');
+        }
       } catch {
-        if (alive) setWorkplanItems([]);
+        if (alive) {
+          setWorkplanItems([]);
+          setWorkplanState('error');
+        }
       } finally {
         if (alive) setWorkplanLoading(false);
       }
@@ -1114,6 +1140,22 @@ export default function SlaTicketDetailView(props: Props) {
     return [];
   }, [aiResult, workLogs]);
 
+  const assistantContext = useMemo(() => buildTicketDetailContext({
+    ticket: { ...ticket, labels: editableLabels }, workLogs, handleLogs, attachments, workplanItems,
+    observables: observableEvidenceItems,
+    ai: {
+      summary: aiResult?.case_summary?.incident_summary || aiResult?.alert_explanation,
+      raw_response: rawSummaryText,
+      header: aiHeader,
+      completed_tasks: aiTasks,
+      next_tasks: nextTasks,
+    },
+    view: { active_tab: activeTab, incident_tab: incidentTab, pending: isPending },
+    availability: { handle_logs: handleLogsState, workplan: workplanState },
+  }), [ticket, workLogs, handleLogs, attachments, workplanItems, observableEvidenceItems,
+    aiResult, rawSummaryText, aiHeader, aiTasks, nextTasks, activeTab, incidentTab, isPending, editableLabels, handleLogsState, workplanState]);
+  useRegisterAssistantContext(assistantContext);
+
   const caseDetailsItems = useMemo(() => {
     const rows: Array<{ label: string; value: any }> = [
       { label: 'Ticket Number', value: ticket.ticket_number },
@@ -1215,7 +1257,7 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className={layoutStyles.detail} style={{ padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <Space size={12} wrap>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -1224,7 +1266,7 @@ export default function SlaTicketDetailView(props: Props) {
           {renderStatusTag(ticket.status)}
           {renderSeverityTag(ticket.priority)}
         </Space>
-        <Space>
+        <Space wrap>
           <Button onClick={togglePending} loading={pendingLoading} disabled={!canTogglePending}>
             {isPending ? 'In Progress' : 'Pending'}
           </Button>
@@ -1275,6 +1317,7 @@ export default function SlaTicketDetailView(props: Props) {
                       <Table
                         rowKey="key"
                         size="small"
+                        scroll={{ x: 'max-content' }}
                         pagination={{ pageSize: 6 }}
                         columns={observableColumns}
                         dataSource={observableEvidenceItems}
@@ -1292,6 +1335,7 @@ export default function SlaTicketDetailView(props: Props) {
                       <Table
                         rowKey="id"
                         size="small"
+                        scroll={{ x: 'max-content' }}
                         pagination={false}
                         columns={attachmentColumns}
                         dataSource={attachments}
@@ -1309,7 +1353,7 @@ export default function SlaTicketDetailView(props: Props) {
             {activeTab === 'related' && <Empty description="No related incidents yet" />}
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 320px', gap: 14 }}>
+          <div className={layoutStyles.detailGrid}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <Card size="small" title="Case Details">
                 <Descriptions size="small" column={1} bordered>

@@ -194,6 +194,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
         <SlaTicketListView
           tickets={slaTickets}
           loading={slaLoading}
+          appliedQuery={slaQuery}
           onRefresh={loadSla}
           onOpenDetail={openSlaDetail}
         />
