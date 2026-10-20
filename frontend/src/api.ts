@@ -1,5 +1,6 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
 import { listenForWorkflowProgress, type WorkflowProgress } from './services/workflows/progress';
+import { readPageChatStream, pageChatHttpError, PageChatStreamError, type PageChatEvent } from './services/aiAssistant/stream';
 
 let accessToken: string | null = null;
 
@@ -683,6 +684,81 @@ export async function aiAssistantChat(payload: {
   return res.data;
 }
 
+export interface PageChatContext {
+  kind?: 'page' | 'ticket_detail' | 'ticket_list';
+  path: string;
+  title: string;
+  content: string;
+}
+
+export interface PageChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface PageChatRequest {
+  message: string;
+  messages: PageChatMessage[];
+  /** Up to three enabled specialist names. Omit to let the coordinator choose. */
+  agent_names?: string[];
+  page_context?: PageChatContext;
+  api_key?: string;
+  model?: string;
+  base_url?: string;
+  timeout_seconds?: number;
+}
+
+export async function aiAssistantPageChat(payload: PageChatRequest, signal?: AbortSignal): Promise<{ response: string }> {
+  const res = await client.post('/ai-assistant/page-chat/', payload, { signal });
+  return res.data;
+}
+
+export async function streamAiAssistantPageChat(
+  payload: PageChatRequest,
+  onEvent: (event: PageChatEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  if (localStorage.getItem('siem_is_readonly') === '1') {
+    throw pageChatHttpError(403);
+  }
+  const csrfToken = getCookie('csrftoken');
+  let response: Response;
+  try {
+    response = await fetch(`${resolveApiBase()}/ai-assistant/page-chat/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(accessToken ? { Authorization: `Token ${accessToken}` } : {}),
+        ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+      },
+      credentials: 'include',
+      cache: 'no-store',
+      signal,
+      body: JSON.stringify({ ...payload, stream: true }),
+    });
+  } catch {
+    signal.throwIfAborted();
+    throw new PageChatStreamError({
+      code: 'client_network_error', stage: 'connection',
+      message: 'Could not connect to the chat server. Check your connection, proxy and backend availability.',
+    });
+  }
+  if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
+    await response.body?.cancel().catch(() => {});
+    if (!response.ok) throw pageChatHttpError(response.status);
+    throw new PageChatStreamError({
+      code: 'client_invalid_response', stage: 'connection', status_code: response.status,
+      message: 'The chat server did not return a readable event stream. Check the backend and proxy configuration.',
+    });
+  }
+  await readPageChatStream(response.body, onEvent, signal);
+}
+
+export async function decidePageChatApproval(executionId: string, decision: 'approve' | 'reject', signal?: AbortSignal): Promise<void> {
+  await client.post(`/ai-assistant/page-chat/approvals/${encodeURIComponent(executionId)}/`, { decision }, { signal });
+}
+
 export async function fetchSlaTicketAiChatHistory(
   ticketNumber: string,
   params?: { limit?: number; before?: string }
@@ -718,6 +794,103 @@ export async function fetchAiAssistantMcpRegistryServers(payload: {
 export async function listAiAssistantMcpServers() {
   const res = await client.get('/ai-assistant/external-mcp/');
   return res.data;
+}
+
+export interface HttpToolParameter {
+  name: string;
+  type: 'string' | 'integer' | 'number' | 'boolean';
+  description: string;
+  required: boolean;
+}
+
+export interface HttpToolFields {
+  name: string;
+  description: string;
+  enabled: boolean;
+  method: 'GET' | 'POST';
+  url: string;
+  parameters: HttpToolParameter[];
+  query_params: Record<string, string | number | boolean | null>;
+  body_template: Record<string, unknown> | null;
+  auth_type: 'none' | 'bearer' | 'header';
+  auth_header: string;
+  auth_prefix: string;
+  timeout_seconds: number;
+}
+
+export interface HttpToolConfig extends HttpToolFields {
+  id: number;
+  has_auth_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type HttpToolWrite = HttpToolFields & { auth_secret?: string; clear_auth_secret?: boolean };
+
+export async function listAiAssistantHttpTools(page = 1, pageSize = 20): Promise<{
+  count: number; next: string | null; previous: string | null; results: HttpToolConfig[];
+}> {
+  const res = await client.get('/ai-assistant/http-tools/', { params: { page, page_size: pageSize } });
+  return res.data;
+}
+
+export async function createAiAssistantHttpTool(payload: HttpToolWrite): Promise<HttpToolConfig> {
+  const res = await client.post('/ai-assistant/http-tools/', payload);
+  return res.data;
+}
+
+export async function updateAiAssistantHttpTool(name: string, payload: Partial<HttpToolWrite>): Promise<HttpToolConfig> {
+  const res = await client.patch(`/ai-assistant/http-tools/${encodeURIComponent(name)}/`, payload);
+  return res.data;
+}
+
+export async function deleteAiAssistantHttpTool(name: string): Promise<void> {
+  await client.delete(`/ai-assistant/http-tools/${encodeURIComponent(name)}/`);
+}
+
+export interface AssistantAgentCatalogEntry {
+  name: string;
+  title: string;
+  role: string;
+}
+
+export interface AssistantAgentFields extends AssistantAgentCatalogEntry {
+  instructions: string;
+  enabled: boolean;
+  max_iterations: number;
+  max_delegations: number;
+}
+
+export interface AssistantAgentConfig extends AssistantAgentFields {
+  id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listAiAssistantAgents(page = 1, pageSize = 20): Promise<{
+  count: number; next: string | null; previous: string | null; results: AssistantAgentConfig[];
+}> {
+  const res = await client.get('/ai-assistant/agents/', { params: { page, page_size: pageSize } });
+  return res.data;
+}
+
+export async function fetchAiAssistantAgentCatalog(signal?: AbortSignal): Promise<AssistantAgentCatalogEntry[]> {
+  const res = await client.get('/ai-assistant/agents/catalog/', { signal });
+  return res.data;
+}
+
+export async function createAiAssistantAgent(payload: AssistantAgentFields): Promise<AssistantAgentConfig> {
+  const res = await client.post('/ai-assistant/agents/', payload);
+  return res.data;
+}
+
+export async function updateAiAssistantAgent(name: string, payload: Partial<AssistantAgentFields>): Promise<AssistantAgentConfig> {
+  const res = await client.patch(`/ai-assistant/agents/${encodeURIComponent(name)}/`, payload);
+  return res.data;
+}
+
+export async function deleteAiAssistantAgent(name: string): Promise<void> {
+  await client.delete(`/ai-assistant/agents/${encodeURIComponent(name)}/`);
 }
 
 export async function createAiAssistantMcpServer(payload: {

@@ -53,7 +53,10 @@ async function proxy(request: Request, ctx: any) {
   }
 
   let res: Response | undefined;
-  for (const origin of targetOrigins) {
+  // A failed agent POST may already have executed tools; never replay it elsewhere.
+  const origins = method === 'POST' && /^ai-assistant\/page-chat(?:\/|$)/.test(encodedPath)
+    ? targetOrigins.slice(0, 1) : targetOrigins;
+  for (const origin of origins) {
     const url = new URL(origin + targetPath);
     url.search = incomingUrl.search;
     try {

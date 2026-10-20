@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 
 COMMON_APP_LABELS = {
+    "ai_assistant",
     "tickets",
     "accounts",
     "integrations",

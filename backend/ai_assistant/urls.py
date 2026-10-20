@@ -5,6 +5,10 @@ trailing-slash and bare forms. MCP endpoints live under the `mcp/` sub-prefix.
 """
 from django.urls import re_path
 
+from .agent_views import AgentConfigViewSet, agent_catalog
+from .http_tool_views import HttpToolViewSet
+from .page_chat import page_chat
+from .page_agent import page_chat_approval
 from .mcp_protocol_views import mcp_rpc, mcp_tools_manifest
 from .mcp_views import (
     mcp_cmdb_asset_lookup,
@@ -32,8 +36,15 @@ app_name = 'ai_assistant'
 
 urlpatterns = [
     # AI assistant endpoints
+    re_path(r'^agents/?$', AgentConfigViewSet.as_view({'get': 'list', 'post': 'create'}), name='agents'),
+    re_path(r'^agents/catalog/?$', agent_catalog, name='agent_catalog'),
+    re_path(r'^agents/(?P<name>[a-z][a-z0-9_]{0,47})/?$', AgentConfigViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='agent_detail'),
+    re_path(r'^http-tools/?$', HttpToolViewSet.as_view({'get': 'list', 'post': 'create'}), name='http_tools'),
+    re_path(r'^http-tools/(?P<name>[a-z][a-z0-9_]{0,47})/?$', HttpToolViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='http_tool_detail'),
     re_path(r'^test-connectivity/?$', test_connectivity, name='test_connectivity'),
     re_path(r'^chat/?$', ai_chat, name='chat'),
+    re_path(r'^page-chat/?$', page_chat, name='page_chat'),
+    re_path(r'^page-chat/approvals/(?P<execution_id>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', page_chat_approval, name='page_chat_approval'),
     re_path(r'^mcp-monitor/?$', mcp_monitor, name='mcp_monitor'),
     re_path(r'^mcp-registry/servers/?$', mcp_registry_servers, name='mcp_registry_servers'),
     re_path(r'^skill-monitor/?$', skill_monitor, name='skill_monitor'),

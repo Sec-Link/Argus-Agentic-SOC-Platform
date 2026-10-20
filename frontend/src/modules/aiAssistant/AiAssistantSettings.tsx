@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
 import { getIsReadonly } from '../../lib/auth';
+import HttpToolsSettings from './HttpToolsSettings';
+import AgentSettings from './AgentSettings';
 import {
   createAiAssistantMcpServer,
   createAiAssistantSkillConfig,
@@ -28,6 +30,7 @@ const STORAGE_KEYS = {
 };
 
 export default function AiAssistantSettings() {
+  const [message, messageContextHolder] = antdMessage.useMessage();
   const [generalForm] = Form.useForm();
   const [mcpEditForm] = Form.useForm();
   const [skillEditForm] = Form.useForm();
@@ -600,11 +603,12 @@ export default function AiAssistantSettings() {
 
   return (
     <div style={{ maxWidth: 980 }}>
+      {messageContextHolder}
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         AI Assistant Settings
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        General settings are stored locally in the browser. MCP/Skills management is stored server-side.
+        General settings are stored locally in the browser. Agents, MCP, Skills and HTTP Tools are managed server-side.
       </Typography.Paragraph>
       {isReadonly ? (
         <Alert
@@ -654,6 +658,16 @@ export default function AiAssistantSettings() {
                 </Form>
               </Card>
             ),
+          },
+          {
+            key: 'agents',
+            label: 'Agents',
+            children: <AgentSettings readonly={isReadonly} />,
+          },
+          {
+            key: 'http-tools',
+            label: 'Tools',
+            children: <HttpToolsSettings readonly={isReadonly} />,
           },
           {
             key: 'mcp-monitor',

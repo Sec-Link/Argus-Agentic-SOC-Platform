@@ -1,4 +1,5 @@
 ﻿import uuid
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 from tickets.models import EventTicket
 
@@ -18,6 +19,73 @@ class ExternalMCPServer(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.endpoint})"
+
+
+class HttpToolConfig(models.Model):
+    name = models.CharField(
+        max_length=48, unique=True,
+        validators=[RegexValidator(r"^[a-z][a-z0-9_]{0,47}$", "Use lowercase letters, numbers and underscores, starting with a letter.")],
+    )
+    description = models.TextField(max_length=1000)
+    enabled = models.BooleanField(default=False)
+    method = models.CharField(max_length=4, choices=[("GET", "GET"), ("POST", "POST")], default="GET")
+    url = models.CharField(max_length=2000)
+    parameters = models.JSONField(default=list, blank=True)
+    query_params = models.JSONField(default=dict, blank=True)
+    body_template = models.JSONField(null=True, blank=True, default=None)
+    auth_type = models.CharField(
+        max_length=8, choices=[("none", "None"), ("bearer", "Bearer"), ("header", "Header")], default="none",
+    )
+    auth_header = models.CharField(max_length=100, blank=True, default="")
+    auth_prefix = models.CharField(max_length=40, blank=True, default="")
+    encrypted_auth_secret = models.TextField(blank=True, default="")
+    timeout_seconds = models.PositiveSmallIntegerField(
+        default=15, validators=[MinValueValidator(1), MaxValueValidator(30)],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_http_tool_configs"
+
+    def __str__(self) -> str:
+        return self.name
+
+    def as_tool_config(self) -> dict:
+        """Snapshot for runtime validation and approval; excludes credentials."""
+        fields = (
+            "name", "description", "enabled", "method", "url", "parameters", "query_params",
+            "body_template", "auth_type", "auth_header", "auth_prefix", "timeout_seconds",
+        )
+        return {
+            **{field: getattr(self, field) for field in fields},
+            "id": self.pk, "version": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AgentConfig(models.Model):
+    name = models.CharField(
+        max_length=48, unique=True,
+        validators=[RegexValidator(r"^[a-z][a-z0-9_]{0,47}$", "Use lowercase letters, numbers and underscores, starting with a letter.")],
+    )
+    title = models.CharField(max_length=120)
+    role = models.CharField(max_length=500)
+    instructions = models.TextField(max_length=6000)
+    enabled = models.BooleanField(default=False)
+    max_iterations = models.PositiveSmallIntegerField(
+        default=3, validators=[MinValueValidator(1), MaxValueValidator(100)],
+    )
+    max_delegations = models.PositiveSmallIntegerField(
+        default=3, validators=[MinValueValidator(1), MaxValueValidator(100)],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_agent_configs"
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class SkillConfig(models.Model):

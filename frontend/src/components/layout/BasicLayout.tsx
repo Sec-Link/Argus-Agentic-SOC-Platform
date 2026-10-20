@@ -7,6 +7,8 @@ import { clearAccessToken, getRbacMe } from 'services/accounts';
 import { permissionByKey, resolveRouteKey, type RouteKey } from '../../route';
 import HeaderBar from './Header';
 import Sidebar from './Sidebar';
+import AssistantWorkspace from '../../modules/aiAssistant/AssistantWorkspace';
+import { AssistantPageContextProvider } from '../../modules/aiAssistant/AssistantPageContext';
 
 const { Header, Content } = Layout;
 
@@ -312,6 +314,7 @@ export default function BasicLayout({
 
   return (
     <ConfigProvider theme={antdThemeConfig}>
+      <AssistantPageContextProvider key={impersonation?.userId ?? 'current-user'} pathname={pathname}>
       <Layout
         className={uiTheme === 'dark' ? 'theme-dark' : 'theme-light'}
         style={{
@@ -445,6 +448,7 @@ export default function BasicLayout({
           onNavigate={(path) => router.push(path)}
         />
 
+        <AssistantWorkspace pathname={pathname} readonly={!!rbacMe?.is_readonly}>
         <Layout style={{ flex: 1, minWidth: 0, background: 'var(--bg-main)', transition: 'background-color 180ms ease' }}>
           <Header style={{ background: 'var(--bg-header)', padding: 0, borderBottom: 'none', color: 'var(--text-primary)' }}>
             <HeaderBar
@@ -459,12 +463,14 @@ export default function BasicLayout({
             />
           </Header>
           <Content style={{ minWidth: 0, padding: 24, overflowX: 'hidden', background: 'var(--bg-main)', color: 'var(--text-primary)' }}>
-            <div key={pathname} className="siem-page-transition" style={{ minWidth: 0, maxWidth: '100%' }}>
+            <div id="argus-page-content" key={pathname} className="siem-page-transition" style={{ minWidth: 0, maxWidth: '100%' }}>
               {content}
             </div>
           </Content>
         </Layout>
+        </AssistantWorkspace>
       </Layout>
+      </AssistantPageContextProvider>
     </ConfigProvider>
   );
 }
