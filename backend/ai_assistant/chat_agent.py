@@ -1,10 +1,6 @@
 import json
-import logging
-import re
-from dataclasses import dataclass
-from functools import partial
 from threading import Event, Lock, get_ident
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 from django.conf import settings
 from django.db import connections
@@ -12,23 +8,14 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import ToolMessage
-from langchain_core.tools import StructuredTool, ToolException
+from langchain_core.tools import BaseTool, ToolException, tool
 from langgraph.config import get_stream_writer
 
 from ai_assistant.knowledge_base import ensure_index, format_search_results, get_categories, scan_knowledge_base, search_knowledge_base
-from ai_assistant.mcp_gateway import get_mcp_tools_catalog, invoke_mcp_tool_exact, invoke_mcp_tool_explicit
+from ai_assistant.mcp_tools import load_mcp_tools
 from ai_assistant.model_client import chat_response, message_text, open_chat_model
-from ai_assistant.skill_library import list_skills, read_skill
-from ai_assistant.monitoring import finish_mcp_execution, record_skill_call, start_mcp_execution, update_mcp_stats
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ToolExecutionResult:
-    content: str
-    is_error: bool = False
-
+from ai_assistant.skill_tools import SkillsMiddleware
+from ai_assistant.monitoring import finish_mcp_execution, start_mcp_execution, update_mcp_stats
 
 class ChatCancelled(RuntimeError):
     pass
@@ -101,163 +88,36 @@ class _AnswerStream:
         self.pending = ""
 
 
-def _safe_tool_name(name: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9_-]+", "_", name).strip("_")
-
-
-def _internal_tools(allowed_skills=None) -> Tuple[List[Dict[str, Any]], Dict[str, Callable[[Dict[str, Any]], ToolExecutionResult]]]:
-    tools: List[Dict[str, Any]] = []
-    handlers: Dict[str, Callable[[Dict[str, Any]], ToolExecutionResult]] = {}
-
-    def register(name: str, description: str, schema: Dict[str, Any], handler: Callable[[Dict[str, Any]], ToolExecutionResult]) -> None:
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-                "parameters": schema,
-            },
-        })
-        handlers[name] = handler
-
-    register(
-        "list_skills",
-        "List all available skills from the local skills library.",
-        {"type": "object", "properties": {}, "required": []},
-        lambda args: ToolExecutionResult("\n".join(
-            name for name in list_skills() if allowed_skills is None or name in allowed_skills
-        ) or "No skills found."),
-    )
-
-    def _read_skill(args: Dict[str, Any]) -> ToolExecutionResult:
-        name = str(args.get("skill_name") or "").strip()
-        if not name:
-            return ToolExecutionResult("skill_name is required", is_error=True)
-        if allowed_skills is not None and name not in allowed_skills:
-            return ToolExecutionResult("Skill is not enabled", is_error=True)
-        doc = read_skill(name)
-        if not doc:
-            record_skill_call(name, False)
-            return ToolExecutionResult(f"Skill not found: {name}", is_error=True)
-        record_skill_call(name, True)
-        body = [f"## Skill: {doc.name}"]
-        if doc.description:
-            body.append(f"**Description**: {doc.description}")
-        body.append(doc.content)
-        body.append(f"*Path: {doc.path}*")
-        return ToolExecutionResult("\n\n".join(body))
-
-    register(
-        "read_skill",
-        "Read a specific skill document by name.",
-        {
-            "type": "object",
-            "properties": {
-                "skill_name": {"type": "string", "description": "Skill directory name"},
-            },
-            "required": ["skill_name"],
-        },
-        _read_skill,
-    )
-
-    def _list_risk_types(args: Dict[str, Any]) -> ToolExecutionResult:
+def _internal_tools() -> list[BaseTool]:
+    @tool
+    def list_knowledge_risk_types() -> str:
+        """List available knowledge base risk types (categories)."""
         categories = get_categories()
         if not categories:
             scan_knowledge_base()
             categories = get_categories()
-        if not categories:
-            return ToolExecutionResult("No knowledge base categories found.")
-        return ToolExecutionResult("\n".join(categories))
+        return "\n".join(categories) or "No knowledge base categories found."
 
-    register(
-        "list_knowledge_risk_types",
-        "List available knowledge base risk types (categories).",
-        {"type": "object", "properties": {}, "required": []},
-        _list_risk_types,
-    )
-
-    def _search_kb(args: Dict[str, Any]) -> ToolExecutionResult:
-        query = str(args.get("query") or "").strip()
-        if not query:
-            return ToolExecutionResult("query is required", is_error=True)
-        risk_type = str(args.get("risk_type") or "").strip()
+    @tool
+    def search_knowledge(query: str, risk_type: str = "") -> str:
+        """Search the knowledge base with semantic and keyword matching."""
+        if not query.strip():
+            raise ToolException("query is required")
         ensure_index()
-        results = search_knowledge_base(query=query, risk_type=risk_type)
-        expanded = results
-        text, item_ids = format_search_results(expanded)
-        return ToolExecutionResult(text)
+        results = search_knowledge_base(query=query.strip(), risk_type=risk_type.strip())
+        text, _ = format_search_results(results)
+        return text
 
-    register(
-        "search_knowledge_base",
-        "Search the knowledge base with semantic + keyword matching.",
-        {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"},
-                "risk_type": {"type": "string", "description": "Optional category"},
-            },
-            "required": ["query"],
-        },
-        _search_kb,
-    )
-
-    return tools, handlers
+    search_knowledge.name = "search_knowledge_base"
+    tools = [list_knowledge_risk_types, search_knowledge]
+    for native_tool in tools:
+        native_tool.metadata = {"source": "internal", "tool_name": native_tool.name, "endpoint": ""}
+        native_tool.handle_tool_error = True
+    return tools
 
 
-def _external_tools(overrides: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
-    catalog = get_mcp_tools_catalog(overrides=overrides)
-    tools: List[Dict[str, Any]] = []
-    mapping: Dict[str, Dict[str, Any]] = {}
-    for idx, entry in enumerate(catalog):
-        endpoint = str(entry.get("endpoint") or "")
-        if not endpoint:
-            continue
-        for tool in entry.get("tools") or []:
-            name = str(tool.get("name") or "").strip()
-            if not name:
-                continue
-            safe_name = _safe_tool_name(name)
-            openai_name = f"mcp__{idx}__{safe_name}"
-            mapping[openai_name] = {
-                "endpoint": endpoint, "tool_name": name,
-                "annotations": tool.get("annotations") or {},
-            }
-            schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else {}
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": openai_name,
-                    "description": str(tool.get("description") or f"External MCP tool: {name}"),
-                    "parameters": schema or {"type": "object", "properties": {}},
-                },
-            })
-    return tools, mapping
-
-
-def _tool_result_to_text(result: Any) -> str:
-    if isinstance(result, str):
-        return result
-    try:
-        return json.dumps(result, ensure_ascii=True)
-    except Exception:
-        return str(result)
-
-
-def _execute_external_tool(tool_name: str, args: Dict[str, Any], mapping: Dict[str, Dict[str, str]], overrides: Optional[Dict[str, Any]]) -> ToolExecutionResult:
-    meta = mapping.get(tool_name) or {}
-    endpoint = meta.get("endpoint")
-    actual_tool = meta.get("tool_name")
-    if not endpoint or not actual_tool:
-        return ToolExecutionResult(f"External tool mapping not found for {tool_name}", is_error=True)
-    mcp = (overrides or {}).get("mcp") or {}
-    invoke = invoke_mcp_tool_exact if mcp.get("exact_only") else invoke_mcp_tool_explicit
-    payload = invoke(
-        tool_name=actual_tool, arguments=args, target_mcp=endpoint,
-        overrides=overrides, record_execution=False,
-    )
-    if payload is None:
-        return ToolExecutionResult(f"External MCP tool call failed: {actual_tool}", is_error=True)
-    return ToolExecutionResult(_tool_result_to_text(payload))
+def _external_tools(overrides: Optional[Dict[str, Any]] = None) -> list[BaseTool]:
+    return load_mcp_tools(overrides=overrides)
 
 
 def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
@@ -273,124 +133,12 @@ def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
     return {}
 
 
-def _preload_chat_skills(
-    user_input: str, recommended_skills: List[str], overrides: Optional[Dict[str, Any]] = None,
-    *, trace=None, allowed_skills=None, cancel_event=None, tool_guard=None,
-    tool_result_transform=None, safe_tool_errors=False, audit_source=None,
-) -> Tuple[List[str], List[str], List[Dict[str, Any]]]:
-    trace = trace if trace is not None else []
-    if not recommended_skills:
-        return [], [], trace
-    names = [str(name).strip() for name in recommended_skills if str(name).strip()
-             and (allowed_skills is None or str(name).strip() in allowed_skills)]
-    if not names:
-        return [], [], trace
-    _check_cancelled(cancel_event)
-    list_exec_id = start_mcp_execution("list_skills", {}, source=audit_source or "internal")
-    list_call_id = f"preload-list-{list_exec_id}"
-    try:
-        trace.extend([
-            {"type": "model_call", "iteration": 0, "purpose": "skill_selection"},
-            {"type": "tool_calls_detected", "iteration": 0, "count": 1},
-            {"type": "tool_call", "iteration": 0, "tool": "list_skills", "source": "internal", "arguments": {}, "automatic": True, "execution_id": list_exec_id, "call_id": list_call_id},
-        ])
-        if tool_guard:
-            tool_guard(name="list_skills", arguments={}, meta={}, execution_id=list_exec_id, call_id=list_call_id)
-        _check_cancelled(cancel_event)
-        catalog = list_skills()
-        if allowed_skills is not None:
-            catalog = [name for name in catalog if name in allowed_skills]
-        list_success = True
-        list_content = "\n".join(catalog)
-    except ChatCancelled:
-        finish_mcp_execution(list_exec_id, False, error="Chat cancelled")
-        raise
-    except Exception as exc:
-        catalog = []
-        list_success = False
-        list_content = "Skill listing failed" if safe_tool_errors else f"Skill listing failed: {exc}"
-    if tool_result_transform:
-        list_content = tool_result_transform(list_content)
-    finish_mcp_execution(list_exec_id, list_success, error="" if list_success else list_content)
-    update_mcp_stats("list_skills", list_success)
-    available = [name for name in names if name in catalog] if catalog else names
-    trace.append({"type": "tool_result", "iteration": 0, "tool": "list_skills", "source": "internal", "success": list_success, "content": list_content, "automatic": True, "execution_id": list_exec_id, "call_id": list_call_id})
-    router_prompt = ('You are a SOC skill router. Select only relevant skills from this list based on the user request. '
-        'Return JSON only: {"skills":["exact skill name"]}. Return {"skills":[]} if none apply. Never invent names.\n'
-        + 'Available skills: ' + json.dumps(available, ensure_ascii=False) + '\nUser request: ' + user_input)
-    selected_names = []
-    try:
-        _check_cancelled(cancel_event)
-        with open_chat_model(overrides) as model:
-            text = message_text(model.invoke([
-                {"role": "system", "content": router_prompt},
-                {"role": "user", "content": user_input},
-            ])).strip()
-        _check_cancelled(cancel_event)
-        match = re.search(r'\{.*\}', text, flags=re.DOTALL)
-        payload = json.loads(match.group(0) if match else text)
-        values = payload.get("skills") if isinstance(payload, dict) else []
-        if isinstance(values, list):
-            selected_names = [str(value).strip() for value in values if str(value).strip() in available]
-    except ChatCancelled:
-        raise
-    except Exception:
-        if safe_tool_errors:
-            logger.warning("Chat skill preselection failed")
-        else:
-            logger.exception("Chat skill preselection failed")
-    instructions = []
-    for name in selected_names:
-        _check_cancelled(cancel_event)
-        arguments = {"skill_name": name}
-        audit_arguments = tool_result_transform(arguments) if tool_result_transform else arguments
-        read_exec_id = start_mcp_execution("read_skill", audit_arguments, source=audit_source or "internal")
-        read_call_id = f"preload-read-{read_exec_id}"
-        try:
-            trace.append({"type": "tool_call", "iteration": 0, "tool": "read_skill", "source": "internal", "arguments": audit_arguments, "automatic": True, "execution_id": read_exec_id, "call_id": read_call_id})
-            if tool_guard:
-                tool_guard(name="read_skill", arguments={"skill_name": name}, meta={}, execution_id=read_exec_id, call_id=read_call_id)
-            _check_cancelled(cancel_event)
-            doc = read_skill(name)
-        except ChatCancelled:
-            finish_mcp_execution(read_exec_id, False, error="Chat cancelled")
-            raise
-        except Exception:
-            finish_mcp_execution(read_exec_id, False, error="Skill could not be loaded")
-            update_mcp_stats("read_skill", False)
-            trace.append({"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": False, "content": "Skill could not be loaded", "automatic": True, "execution_id": read_exec_id, "call_id": read_call_id})
-            continue
-        if doc and doc.content:
-            finish_mcp_execution(read_exec_id, True)
-            update_mcp_stats("read_skill", True)
-            record_skill_call(name, True)
-            skill_content = tool_result_transform(doc.content) if tool_result_transform else doc.content
-            instructions.append(f"SKILL: {doc.name}\n{skill_content[:12000]}")
-            trace.append({"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": True, "content": skill_content[:2000], "automatic": True, "execution_id": read_exec_id, "call_id": read_call_id})
-        else:
-            finish_mcp_execution(read_exec_id, False, error=f"Skill not found: {name}")
-            update_mcp_stats("read_skill", False)
-            record_skill_call(name, False)
-            trace.append({"type": "tool_result", "iteration": 0, "tool": "read_skill", "source": "internal", "success": False, "content": f"Skill not found: {name}", "automatic": True, "execution_id": read_exec_id, "call_id": read_call_id})
-    return selected_names, instructions, trace
-
-def _tool_function(handler: Callable[[Dict[str, Any]], ToolExecutionResult]) -> Callable[..., str]:
-    def execute(**arguments: Any) -> str:
-        result = handler(arguments)
-        if result.is_error:
-            raise ToolException(result.content)
-        return result.content
-
-    return execute
-
-
 class _ChatCompatibility(AgentMiddleware):
     """Translate framework events to the existing chat trace and tool audit."""
 
-    def __init__(self, trace, external_mapping, *, cancel_event=None, tool_guard=None,
+    def __init__(self, trace, *, cancel_event=None, tool_guard=None,
                  tool_result_transform=None, safe_tool_errors=False, model_call_guard=None, audit_source=None) -> None:
         self.trace = trace
-        self.external_mapping = external_mapping
         self.iteration = 0
         self.caller_thread = get_ident()
         self.cancel_event = cancel_event
@@ -403,29 +151,34 @@ class _ChatCompatibility(AgentMiddleware):
         self.audit_source = audit_source
 
     def wrap_model_call(self, request, handler):
-        _check_cancelled(self.cancel_event)
-        tool_choice = self.model_call_guard() if self.model_call_guard else None
-        self.iteration += 1
-        self.trace.extend([
-            {"type": "iteration_start", "iteration": self.iteration},
-            {"type": "model_call", "iteration": self.iteration},
-        ])
-        response = handler(request.override(tool_choice=tool_choice or ("auto" if request.tools else None)))
-        _check_cancelled(self.cancel_event)
-        message = response.result[0]
-        self.last_message = message
-        # Keep malformed tool arguments on the error-feedback path instead of
-        # silently treating an invalid tool call as a final empty answer.
-        if message.invalid_tool_calls:
-            message.tool_calls.extend([
-                {"name": call["name"], "args": _parse_tool_arguments(call["args"]),
-                 "id": call["id"], "type": "tool_call"}
-                for call in message.invalid_tool_calls
+        try:
+            _check_cancelled(self.cancel_event)
+            tool_choice = self.model_call_guard() if self.model_call_guard else None
+            self.iteration += 1
+            self.trace.extend([
+                {"type": "iteration_start", "iteration": self.iteration},
+                {"type": "model_call", "iteration": self.iteration},
             ])
-            message.invalid_tool_calls = []
-        if message.tool_calls:
-            self.trace.append({"type": "tool_calls_detected", "iteration": self.iteration, "count": len(message.tool_calls)})
-        return response
+            response = handler(request.override(tool_choice=tool_choice or ("auto" if request.tools else None)))
+            _check_cancelled(self.cancel_event)
+            message = response.result[0]
+            self.last_message = message
+            # Keep malformed tool arguments on the error-feedback path instead of
+            # silently treating an invalid tool call as a final empty answer.
+            if message.invalid_tool_calls:
+                message.tool_calls.extend([
+                    {"name": call["name"], "args": _parse_tool_arguments(call["args"]),
+                     "id": call["id"], "type": "tool_call"}
+                    for call in message.invalid_tool_calls
+                ])
+                message.invalid_tool_calls = []
+            if message.tool_calls:
+                self.trace.append({"type": "tool_calls_detected", "iteration": self.iteration, "count": len(message.tool_calls)})
+            return response
+        finally:
+            if get_ident() != self.caller_thread:
+                connections.close_all()
+
 
     def wrap_tool_call(self, request, handler):
         with self.tool_lock:
@@ -435,10 +188,10 @@ class _ChatCompatibility(AgentMiddleware):
         _check_cancelled(self.cancel_event)
         call = request.tool_call
         name = call["name"]
-        meta = self.external_mapping.get(name) or {}
+        meta = dict(request.tool.metadata or {}) if request.tool is not None else {}
         actual_name = meta.get("tool_name") or name
         endpoint = meta.get("endpoint") or ""
-        source = meta.get("source", "external") if meta else "internal"
+        source = meta.get("source", "internal")
         try:
             audit_arguments = self.tool_result_transform(call["args"]) if self.tool_result_transform else call["args"]
             exec_id = start_mcp_execution(actual_name, audit_arguments, source=self.audit_source or source, endpoint=endpoint)
@@ -463,6 +216,8 @@ class _ChatCompatibility(AgentMiddleware):
                     result = handler(request)
                 if self.tool_result_transform:
                     result.content = self.tool_result_transform(result.content)
+                    if result.artifact is not None:
+                        result.artifact = self.tool_result_transform(result.artifact)
             except ChatCancelled:
                 finish_mcp_execution(exec_id, False, error="Chat cancelled")
                 update_mcp_stats(actual_name, False)
@@ -501,8 +256,7 @@ def run_chat_agent(
     cancel_event=None,
     system_prompt_extra="",
     allowed_skills=None,
-    extra_tools=None,
-    extra_tool_metadata=None,
+    extra_tools: Optional[Sequence[BaseTool]] = None,
     tool_guard=None,
     tool_result_transform=None,
     safe_tool_errors=False,
@@ -529,17 +283,6 @@ def run_chat_agent(
         "not private internal reasoning."
     )
     trace = _EventTrace(event_callback)
-    preloaded_names, preloaded_instructions, _ = _preload_chat_skills(
-        user_input, recommended_skills, overrides=overrides, trace=trace,
-        allowed_skills=allowed_skills, cancel_event=cancel_event, tool_guard=tool_guard,
-        tool_result_transform=tool_result_transform, safe_tool_errors=safe_tool_errors,
-        audit_source=audit_source,
-    )
-    if recommended_skills:
-        skills_hint = ", ".join([f"`{s}`" for s in recommended_skills])
-        system_prompt += f"\nAvailable skills: {skills_hint}. You may still call read_skill for additional details."
-    if preloaded_instructions:
-        system_prompt += "\nSelected skill instructions (apply only when supported by evidence):\n" + "\n\n".join(preloaded_instructions)
     if system_prompt_extra:
         system_prompt += "\n" + system_prompt_extra
 
@@ -552,22 +295,20 @@ def run_chat_agent(
 
     messages.append({"role": "user", "content": user_input})
 
-    internal_tools, internal_handlers = ([], {})
+    agent_tools = list(extra_tools or [])
+    skill_middleware = None
     if include_default_tools:
-        internal_tools, internal_handlers = _internal_tools(allowed_skills=allowed_skills) if allowed_skills is not None else _internal_tools()
-    if extra_tools:
-        internal_tools = [*internal_tools, *extra_tools[0]]
-        internal_handlers = {**internal_handlers, **extra_tools[1]}
+        agent_tools = [*_internal_tools(), *agent_tools]
+        skill_middleware = SkillsMiddleware(
+            allowed_skills=allowed_skills, recommended_skills=recommended_skills,
+        )
+        _check_cancelled(cancel_event)
+        agent_tools.extend(_external_tools(overrides=overrides))
     _check_cancelled(cancel_event)
-    external_tools, external_mapping = _external_tools(overrides=overrides) if include_default_tools else ([], {})
-    external_mapping = {**external_mapping, **(extra_tool_metadata or {})}
-    _check_cancelled(cancel_event)
-    if preloaded_names and allowed_skills is None:
-        internal_tools = [
-            tool for tool in internal_tools
-            if ((tool.get("function") or {}).get("name") != "read_skill")
-        ]
-    tools = internal_tools + external_tools
+    registered_tools = agent_tools + (list(skill_middleware.tools) if skill_middleware else [])
+    names = [native_tool.name for native_tool in registered_tools]
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate AI tool names are not allowed")
 
     max_iter_value = None
     if isinstance(overrides, dict):
@@ -580,24 +321,13 @@ def run_chat_agent(
         max_iterations = 6
 
     middleware = _ChatCompatibility(
-        trace, external_mapping, cancel_event=cancel_event, tool_guard=tool_guard,
+        trace, cancel_event=cancel_event, tool_guard=tool_guard,
         tool_result_transform=tool_result_transform, safe_tool_errors=safe_tool_errors,
         model_call_guard=model_call_guard, audit_source=audit_source,
     )
-    agent_tools = []
-    for schema in tools:
-        definition = schema["function"]
-        name = definition["name"]
-        handler = internal_handlers.get(name)
-        if handler is None:
-            handler = partial(_execute_external_tool, name, mapping=external_mapping, overrides=overrides)
-        agent_tools.append(StructuredTool(
-            name=name,
-            description=definition["description"],
-            args_schema=definition["parameters"],
-            func=_tool_function(handler),
-            handle_tool_error=True,
-        ))
+    middlewares = [ModelCallLimitMiddleware(run_limit=max_iterations, exit_behavior="error"), middleware]
+    if skill_middleware is not None:
+        middlewares.append(skill_middleware)
 
     if max_iterations > 0:
         with open_chat_model(overrides) as model:
@@ -605,10 +335,7 @@ def run_chat_agent(
                 model=model,
                 tools=agent_tools,
                 system_prompt=system_prompt,
-                middleware=[
-                    ModelCallLimitMiddleware(run_limit=max_iterations, exit_behavior="error"),
-                    middleware,
-                ],
+                middleware=middlewares,
             )
             try:
                 # Graph steps include middleware and tools; the middleware above

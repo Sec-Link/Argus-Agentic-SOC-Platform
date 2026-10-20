@@ -13,6 +13,7 @@ from django.contrib.auth import get_user_model
 from django.db import connections, transaction
 from django.http import StreamingHttpResponse
 from django.utils import timezone
+from langchain_core.tools import BaseTool, StructuredTool, ToolException
 from langgraph.config import get_stream_writer
 from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes
@@ -21,7 +22,7 @@ from rest_framework.response import Response
 
 from accounts.permissions import DenyReadonlyUser
 from accounts.services import is_user_readonly
-from ai_assistant.chat_agent import ChatCancelled, ToolExecutionResult, run_chat_agent
+from ai_assistant.chat_agent import ChatCancelled, run_chat_agent
 from ai_assistant.chat_errors import event_progress, safe_chat_error
 from ai_assistant.model_client import ModelCallError, model_request_summary_text
 from ai_assistant.mcp_protocol_views import _call_tool, _tool_defs
@@ -129,17 +130,19 @@ def _check_internal(user, name, arguments):
         raise PermissionError("This skill is no longer enabled.")
 
 
-def _builtin_tools():
-    schemas, handlers = [], {}
-    for definition in _tool_defs():
+def _builtin_tools() -> list[BaseTool]:
+    def create_tool(definition):
         name = definition["name"]
-        schemas.append({"type": "function", "function": {
-            "name": name, "description": definition["description"], "parameters": definition["inputSchema"],
-        }})
-        handlers[name] = lambda arguments, tool_name=name: ToolExecutionResult(
-            json.dumps(_call_tool(tool_name, arguments), ensure_ascii=False, default=str)
+
+        def call(**arguments):
+            return json.dumps(_call_tool(name, arguments), ensure_ascii=False, default=str)
+
+        return StructuredTool(
+            name=name, description=definition["description"], args_schema=definition["inputSchema"],
+            func=call, metadata={"source": "internal", "tool_name": name}, handle_tool_error=True,
         )
-    return schemas, handlers
+
+    return [create_tool(definition) for definition in _tool_defs()]
 
 
 def _http_config(meta):
@@ -149,27 +152,22 @@ def _http_config(meta):
     return row
 
 
-def _http_tools(cancel_event):
-    schemas, handlers, metadata = [], {}, {}
-    for row in HttpToolConfig.objects.filter(enabled=True).order_by("name"):
+def _http_tools(cancel_event) -> list[BaseTool]:
+    def create_tool(row):
         config = row.as_tool_config()
         name = "http__" + row.name
         target = urlsplit(row.url)
         meta = {"source": "http", "tool_name": name, "endpoint": f"{target.scheme}://{target.netloc}",
                 "config_id": row.pk, "config_version": config["version"]}
-        metadata[name] = meta
-        schemas.append({"type": "function", "function": {
-            "name": name, "description": row.description, "parameters": tool_input_schema(config),
-        }})
 
-        def call(arguments, tool_meta=meta):
+        def call(**arguments):
             if cancel_event.is_set():
                 raise ChatCancelled("Chat stopped")
-            current = _http_config(tool_meta)
+            current = _http_config(meta)
             try:
                 secret = decrypt_http_tool_secret(current.encrypted_auth_secret)
             except ValueError:
-                return ToolExecutionResult("HTTP tool credential cannot be decrypted; re-enter it in AI Assistant settings.", is_error=True)
+                raise ToolException("HTTP tool credential cannot be decrypted; re-enter it in AI Assistant settings.") from None
             try:
                 result = execute_http_tool(
                     current.as_tool_config(), arguments, secret,
@@ -178,13 +176,17 @@ def _http_tools(cancel_event):
             except HttpToolError as exc:
                 if cancel_event.is_set():
                     raise ChatCancelled("Chat stopped") from None
-                return ToolExecutionResult(str(exc), is_error=True)
+                raise ToolException(str(exc)) from None
             if cancel_event.is_set():
                 raise ChatCancelled("Chat stopped")
-            return ToolExecutionResult(json.dumps(result, ensure_ascii=False, default=str))
+            return json.dumps(result, ensure_ascii=False, default=str)
 
-        handlers[name] = call
-    return schemas, handlers, metadata
+        return StructuredTool(
+            name=name, description=row.description, args_schema=tool_input_schema(config),
+            func=call, metadata=meta, handle_tool_error=True,
+        )
+
+    return [create_tool(row) for row in HttpToolConfig.objects.filter(enabled=True).order_by("name")]
 
 
 class PageToolPolicy:
@@ -383,13 +385,11 @@ def stream_page_chat(user, data):
 
     def produce():
         try:
-            builtin_schemas, builtin_handlers = _builtin_tools()
-            http_schemas, http_handlers, http_metadata = _http_tools(cancelled)
+            tools = [*_builtin_tools(), *_http_tools(cancelled)]
             worker_kwargs = dict(
                 user_input=data["message"], history_messages=history, overrides=overrides,
                 recommended_skills=skills, allowed_skills=skills,
-                extra_tools=([*builtin_schemas, *http_schemas], {**builtin_handlers, **http_handlers}),
-                extra_tool_metadata=http_metadata,
+                extra_tools=tools,
                 event_callback=emit, cancel_event=cancelled, tool_guard=policy, system_prompt_extra=AGENT_PROMPT,
                 tool_result_transform=public_event, safe_tool_errors=True,
                 audit_source="page_chat",

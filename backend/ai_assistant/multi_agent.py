@@ -3,9 +3,10 @@
 import json
 from uuid import uuid4
 
+from langchain_core.tools import StructuredTool, ToolException
 from rest_framework.exceptions import ValidationError
 
-from .chat_agent import ChatCancelled, ToolExecutionResult, run_chat_agent
+from .chat_agent import ChatCancelled, run_chat_agent
 from .chat_errors import event_progress, safe_chat_error
 from .model_client import ModelCallError
 from .models import AgentConfig
@@ -56,25 +57,23 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
             raise ChatCancelled("Chat stopped")
         check_actor()
 
-    def delegate(arguments):
+    def delegate(agent_name: str, task: str) -> str:
         nonlocal calls
         live()
-        name = arguments.get("agent_name")
-        task = arguments.get("task")
-        if name not in available or not isinstance(task, str) or not task.strip() or len(task) > 4000:
-            return ToolExecutionResult("Choose an available agent and a task of 1–4000 characters.", is_error=True)
+        name = agent_name
+        if not isinstance(name, str) or name not in available or not isinstance(task, str) or not task.strip() or len(task) > 4000:
+            raise ToolException("Choose an available agent and a task of 1–4000 characters.")
         pending = set(selected_names) - attempted
         if pending and name not in pending:
-            return ToolExecutionResult("Delegate to the remaining explicitly selected agents first.", is_error=True)
+            raise ToolException("Delegate to the remaining explicitly selected agents first.")
         if calls >= delegation_budget:
-            return ToolExecutionResult("Delegation limit reached. Summarize the available results.", is_error=True)
+            raise ToolException("Delegation limit reached. Summarize the available results.")
         if coordinator_iteration >= coordinator_budget:
-            return ToolExecutionResult("The final model round is reserved for summarizing available results.", is_error=True)
+            raise ToolException("The final model round is reserved for summarizing available results.")
         row = available[name]
         if calls_by_agent.get(name, 0) >= limits[name]["max_delegations"]:
-            return ToolExecutionResult(
+            raise ToolException(
                 "This specialist's delegation limit is reached for this message. Use the available results.",
-                is_error=True,
             )
         worker_iterations = limits[name]["max_iterations"]
         context = {
@@ -131,10 +130,6 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
                     "message": "The specialist reached its model step limit. Its findings are incomplete.",
                 } if exhausted else {}),
             })
-            return ToolExecutionResult(json.dumps({
-                "agent": name, "status": "incomplete" if exhausted else "completed",
-                "result": response, "truncated": truncated,
-            }, ensure_ascii=False), is_error=exhausted)
         except ChatCancelled:
             raise
         except Exception as exc:
@@ -143,9 +138,16 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
                 progress = {**progress, "stage": "model"}
                 progress.pop("tool", None)
             emit({"type": "agent_error", "content": diagnostic["message"], **progress, **diagnostic, **tags})
-            return ToolExecutionResult(json.dumps({
+            raise ToolException(json.dumps({
                 "agent": name, "status": "failed", "error": diagnostic["message"], "code": diagnostic["code"],
-            }), is_error=True)
+            })) from None
+        payload = json.dumps({
+            "agent": name, "status": "incomplete" if exhausted else "completed",
+            "result": response, "truncated": truncated,
+        }, ensure_ascii=False)
+        if exhausted:
+            raise ToolException(payload)
+        return payload
 
     def coordinator_guard():
         nonlocal coordinator_iteration
@@ -161,16 +163,18 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
             return "none"
         return None
 
-    schema = {"type": "function", "function": {
-        "name": "delegate_to_agent",
-        "description": "Assign one focused task to an available specialist and receive its evidence. Respect the configured delegation limits.",
-        "parameters": {
+    delegation_tool = StructuredTool(
+        name="delegate_to_agent",
+        description="Assign one focused task to an available specialist and receive its evidence. Respect the configured delegation limits.",
+        args_schema={
             "type": "object", "properties": {
                 "agent_name": {"type": "string", "enum": list(available)},
                 "task": {"type": "string", "minLength": 1, "maxLength": 4000},
             }, "required": ["agent_name", "task"], "additionalProperties": False,
         },
-    }}
+        func=delegate, metadata={"source": "internal", "tool_name": "delegate_to_agent"},
+        handle_tool_error=True,
+    )
     catalog = [{
         "name": row.name, "title": row.title, "role": row.role,
         **limits[row.name],
@@ -180,8 +184,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
             **worker_kwargs, "recommended_skills": [], "allowed_skills": [],
             "overrides": {**worker_kwargs["overrides"], "max_iterations": coordinator_budget},
             "include_default_tools": False,
-            "extra_tools": ([schema], {"delegate_to_agent": delegate}),
-            "extra_tool_metadata": {},
+            "extra_tools": [delegation_tool],
             "model_call_guard": coordinator_guard,
             "event_callback": lambda event: emit({**event, "agent": "coordinator", "agent_title": "Coordinator"}),
             "system_prompt_extra": (

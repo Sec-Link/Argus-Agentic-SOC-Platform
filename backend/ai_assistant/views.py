@@ -396,7 +396,8 @@ def skill_config_detail(request, name: str):
 
 
 def _sanitize_skill_name(name: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9_.-]", "", name or "").strip()
+    safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "", name or "").strip()
+    return "" if safe_name in {".", ".."} else safe_name
 
 
 @api_view(["GET", "PUT"])
@@ -416,5 +417,8 @@ def skill_content_detail(request, name: str):
     content = str(data.get("content") or "")
     title = str(data.get("title") or "")
     description = str(data.get("description") or "")
-    path = write_skill_content(safe_name, content, title=title, description=description)
+    try:
+        path = write_skill_content(safe_name, content, title=title, description=description)
+    except ValueError:
+        return Response({"error": "invalid skill path"}, status=status.HTTP_400_BAD_REQUEST)
     return Response({"name": safe_name, "path": path})

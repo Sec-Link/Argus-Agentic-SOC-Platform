@@ -5,22 +5,20 @@ import threading
 import time
 from collections import deque
 from typing import Any, Dict, List
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import requests
 from django.conf import settings
 from django.utils import timezone
 
 from ai_assistant.models import MCPToolExecution
+from ai_assistant.mcp_tools import call_mcp_tool, discover_mcp_tools, mcp_result
 from ai_assistant.monitoring import update_mcp_stats
 
 logger = logging.getLogger(__name__)
 
 _MONITOR_LOCK = threading.Lock()
 _MONITOR_ROWS: deque[Dict[str, Any]] = deque(maxlen=500)
-_TOOLS_CACHE_LOCK = threading.Lock()
-_TOOLS_CACHE: Dict[str, Dict[str, Any]] = {}
-_TOOLS_CACHE_TTL_SECONDS = 180
 
 
 def _record_monitor(
@@ -321,7 +319,7 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
 
 def _is_mcp_jsonrpc_endpoint(config: Dict[str, Any]) -> bool:
     base_url = str(config.get("base_url", "") or "").lower()
-    return "/mcp-connect/" in base_url or base_url.endswith("/mcp") or base_url.endswith("/mcp/")
+    return bool(config.get("exact_only")) or "/mcp-connect/" in base_url or base_url.endswith("/mcp") or base_url.endswith("/mcp/")
 
 
 def _extract_tool_result(data: Any) -> Any:
@@ -345,214 +343,18 @@ def _extract_tool_result(data: Any) -> Any:
     return None
 
 
-def _normalize_tool_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(name or "").lower()).strip("_")
-
-
-def _initialize_mcp_session(config: Dict[str, Any], base_headers: Dict[str, str]) -> Dict[str, str]:
-    request_url = str(config.get("base_url", "")).rstrip("/")
-    headers = dict(base_headers)
-    timeout = _timeout(config)
-    try:
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "Obot MCP Gateway (via nanobot v0.0.0-dev+07f62acb)",
-                    "version": "",
-                },
-            },
-        }
-        init_res = requests.post(
-            request_url,
-            headers=headers,
-            json=init_payload,
-            timeout=timeout,
-        )
-        session_id = (
-            init_res.headers.get("mcp-session-id")
-            or init_res.headers.get("Mcp-Session-Id")
-            or init_res.headers.get("MCP-Session-Id")
-            or ""
-        )
-        if session_id:
-            headers["mcp-session-id"] = session_id
-
-        notif_payload = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-            "params": {},
-        }
-        try:
-            requests.post(
-                request_url,
-                headers=headers,
-                json=notif_payload,
-                timeout=timeout,
-            )
-        except Exception:
-            pass
-    except Exception:
-        pass
-    return headers
-
-
-def _extract_tools_list(data: Any) -> List[str]:
-    result = data.get("result") if isinstance(data, dict) else None
-    if not isinstance(result, dict):
-        return []
-    tools = result.get("tools")
-    if not isinstance(tools, list):
-        return []
-    out: List[str] = []
-    for item in tools:
-        if isinstance(item, dict):
-            name = str(item.get("name") or "").strip()
-            if name:
-                out.append(name)
-    return out
-
-
-def _extract_tools_meta(data: Any) -> List[Dict[str, Any]]:
-    result = data.get("result") if isinstance(data, dict) else None
-    if not isinstance(result, dict):
-        return []
-    tools = result.get("tools")
-    if not isinstance(tools, list):
-        return []
-    out: List[Dict[str, Any]] = []
-    for item in tools:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        schema = item.get("inputSchema") if isinstance(item.get("inputSchema"), dict) else {}
-        out.append({
-            "name": name,
-            "inputSchema": schema,
-            "description": str(item.get("description") or ""),
-            "annotations": item.get("annotations") if isinstance(item.get("annotations"), dict) else {},
-        })
-    return out
-
-
 def _get_endpoint_tools(config: Dict[str, Any]) -> List[str] | None:
-    if not _is_mcp_jsonrpc_endpoint(config):
-        return None
-    endpoint = str(config.get("base_url") or "").rstrip("/")
-    if not endpoint:
-        return None
-
-    now = time.time()
-    with _TOOLS_CACHE_LOCK:
-        cache_row = _TOOLS_CACHE.get(endpoint)
-        if cache_row and now - float(cache_row.get("ts") or 0) <= _TOOLS_CACHE_TTL_SECONDS:
-            meta = cache_row.get("meta")
-            if isinstance(meta, list):
-                names = [str(x.get("name") or "").strip() for x in meta if isinstance(x, dict)]
-                names = [n for n in names if n]
-                if names:
-                    return names
-
-    request_url = str(config.get("base_url", "")).rstrip("/")
-    headers = _initialize_mcp_session(config, _headers(config))
-    timeout = _timeout(config)
-    method_candidates = ["tools/list", "tools.list", "list_tools"]
-    meta: List[Dict[str, Any]] = []
-    for method_name in method_candidates:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": method_name,
-            "params": {},
-        }
-        res = requests.post(
-            request_url,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-        )
-        if res.status_code >= 400:
-            continue
-        try:
-            data = res.json()
-        except Exception:
-            continue
-        meta = _extract_tools_meta(data)
-        if meta:
-            break
-    if not meta:
-        return None
-    names = [str(x.get("name") or "").strip() for x in meta if isinstance(x, dict)]
-    names = [n for n in names if n]
-    normalized_tools = {_normalize_tool_name(t) for t in names if t}
-    with _TOOLS_CACHE_LOCK:
-        _TOOLS_CACHE[endpoint] = {"ts": now, "tools": normalized_tools, "names": names, "meta": meta}
-    return names
+    metadata = _get_endpoint_tool_meta(config)
+    return [tool["name"] for tool in metadata] if metadata is not None else None
 
 
 def _get_endpoint_tool_meta(config: Dict[str, Any]) -> List[Dict[str, Any]] | None:
     if not _is_mcp_jsonrpc_endpoint(config):
         return None
-    endpoint = str(config.get("base_url") or "").rstrip("/")
-    if not endpoint:
+    try:
+        return _get_exact_endpoint_tool_meta(config)
+    except ValueError:
         return None
-    now = time.time()
-    with _TOOLS_CACHE_LOCK:
-        cache_row = _TOOLS_CACHE.get(endpoint)
-        if cache_row and now - float(cache_row.get("ts") or 0) <= _TOOLS_CACHE_TTL_SECONDS:
-            meta = cache_row.get("meta")
-            if isinstance(meta, list):
-                return [x for x in meta if isinstance(x, dict)]
-    _get_endpoint_tools(config)
-    with _TOOLS_CACHE_LOCK:
-        cache_row = _TOOLS_CACHE.get(endpoint) or {}
-        meta = cache_row.get("meta")
-        if isinstance(meta, list):
-            return [x for x in meta if isinstance(x, dict)]
-    return None
-
-
-def _list_mcp_tools_jsonrpc(config: Dict[str, Any]) -> tuple[List[str], int | None, str]:
-    request_url = str(config.get("base_url", "")).rstrip("/")
-    headers = _initialize_mcp_session(config, _headers(config))
-    timeout = _timeout(config)
-
-    method_candidates = ["tools/list", "tools.list", "list_tools"]
-    last_status: int | None = None
-    last_error = ""
-    for method_name in method_candidates:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": method_name,
-            "params": {},
-        }
-        res = requests.post(
-            request_url,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-        )
-        last_status = res.status_code
-        if res.status_code >= 400:
-            last_error = (res.text or "")[:600]
-            continue
-        try:
-            data = res.json()
-        except Exception:
-            last_error = f"invalid json response: {(res.text or '')[:200]}"
-            continue
-        tools = _extract_tools_list(data)
-        if tools:
-            return tools, res.status_code, ""
-        last_error = f"invalid tools/list result: {str(data)[:300]}"
-    return [], last_status, last_error or "tools/list failed"
 
 
 def _endpoint_supports_tool(config: Dict[str, Any], tool_name: str) -> bool | None:
@@ -565,8 +367,7 @@ def _endpoint_supports_tool(config: Dict[str, Any], tool_name: str) -> bool | No
     tools = _get_endpoint_tools(config)
     if not tools:
         return None
-    req = _normalize_tool_name(tool_name)
-    return any(_normalize_tool_name(t) == req for t in tools)
+    return tool_name in tools
 
 
 def _prioritize_configs_by_tool_support(configs: List[Dict[str, Any]], tool_name: str) -> List[Dict[str, Any]]:
@@ -790,6 +591,7 @@ def invoke_mcp_tool_from_prompt(
                 "result": tool_payload,
             }
         last_error = err or f"tool call failed for {tool_name}"
+        break
 
     _record_monitor(
         tool="dynamic-tool-router",
@@ -908,6 +710,7 @@ def invoke_mcp_tool_explicit(
                 request_payload=rpc_req,
                 response_payload=rpc_resp,
             )
+        return None
 
     if record_execution:
         _record_monitor(
@@ -921,91 +724,11 @@ def invoke_mcp_tool_explicit(
     return None
 
 
-def _post_mcp_exact(config: Dict[str, Any], headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Send one MCP message; redirects and compatibility retries are deliberately disabled."""
-    with requests.post(
-        config["base_url"], headers=headers, json=payload, timeout=_timeout(config),
-        allow_redirects=False, stream=True,
-    ) as response:
-        if not 200 <= response.status_code < 300:
-            raise ValueError(f"MCP request failed (HTTP {response.status_code})")
-        session_id = response.headers.get("mcp-session-id")
-        if session_id and payload["method"] == "initialize":
-            headers["mcp-session-id"] = session_id
-        if "id" not in payload:
-            return {}
-        if "text/event-stream" in response.headers.get("content-type", "").lower():
-            response.encoding = "utf-8"
-            data_lines: List[str] = []
-            data = None
-            deadline = time.monotonic() + _timeout(config)
-            for line in response.iter_lines(chunk_size=1, decode_unicode=True):
-                if time.monotonic() >= deadline:
-                    raise requests.Timeout("MCP response deadline exceeded")
-                if isinstance(line, bytes):
-                    line = line.decode("utf-8")
-                if line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip(" "))
-                elif not line and data_lines:
-                    event = json.loads("\n".join(data_lines))
-                    data_lines = []
-                    if isinstance(event, dict) and event.get("id") == payload["id"]:
-                        data = event
-                        break
-        else:
-            data = response.json()
-        if not isinstance(data, dict) or data.get("id") != payload["id"] or "error" in data:
-            raise ValueError("MCP returned an invalid response or a protocol error")
-        return data
-
-
-def _initialize_mcp_exact(config: Dict[str, Any]) -> Dict[str, str]:
-    parsed = urlsplit(config["base_url"])
-    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
-        raise ValueError("MCP endpoint is invalid")
-    headers = {**_headers(config), "Accept": "application/json, text/event-stream"}
-    initialized = _post_mcp_exact(config, headers, {
-        "jsonrpc": "2.0", "id": time.time_ns(), "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-06-18", "capabilities": {},
-            "clientInfo": {"name": "Argus", "version": "1"},
-        },
-    })
-    init_result = initialized.get("result")
-    if not isinstance(init_result, dict):
-        raise ValueError("MCP returned an invalid initialization response")
-    headers["MCP-Protocol-Version"] = str(init_result.get("protocolVersion") or "2025-06-18")
-    _post_mcp_exact(config, headers, {"jsonrpc": "2.0", "method": "notifications/initialized"})
-    return headers
-
-
 def _get_exact_endpoint_tool_meta(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    failure = "MCP tool discovery failed. Check the configured MCP server."
-    try:
-        headers = _initialize_mcp_exact(config)
-        tools: List[Dict[str, Any]] = []
-        cursor = None
-        seen_cursors: set[str] = set()
-        for _ in range(20):
-            data = _post_mcp_exact(config, headers, {
-                "jsonrpc": "2.0", "id": time.time_ns(), "method": "tools/list",
-                "params": {} if cursor is None else {"cursor": cursor},
-            })
-            result = data.get("result")
-            if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
-                raise ValueError("MCP returned an invalid tool catalog")
-            tools.extend(_extract_tools_meta(data))
-            cursor = result.get("nextCursor")
-            if cursor is None:
-                return tools
-            if not isinstance(cursor, str) or cursor in seen_cursors:
-                failure = "MCP tool discovery failed: the server returned an invalid or repeated pagination cursor."
-                raise ValueError(failure)
-            seen_cursors.add(cursor)
-        failure = "MCP tool discovery failed: the catalog exceeded the 20-page limit."
-        raise ValueError(failure)
-    except (requests.RequestException, ValueError, UnicodeError):
-        raise ValueError(failure) from None
+    return [{
+        "name": tool.name, "inputSchema": tool.input_schema, "description": tool.description or "",
+        "annotations": tool.annotations.model_dump(by_alias=True, exclude_none=True) if tool.annotations else {},
+    } for tool in discover_mcp_tools(config)]
 
 
 def invoke_mcp_tool_exact(
@@ -1035,10 +758,9 @@ def invoke_mcp_tool_exact(
             raise ValueError("MCP endpoint is not enabled or does not match the configured server")
         if not isinstance(tool_name, str) or not tool_name.strip() or not isinstance(arguments, dict):
             raise ValueError("MCP tool name and arguments are required")
-        headers = _initialize_mcp_exact(cfg)
-        payload = {"jsonrpc": "2.0", "id": time.time_ns(), "method": "tools/call", "params": {"name": tool_name, "arguments": arguments}}
-        data = _post_mcp_exact(cfg, headers, payload)
-        result = data.get("result")
+        payload = {"name": tool_name, "arguments": arguments}
+        result = mcp_result(call_mcp_tool(cfg, tool_name, arguments))
+        data = {"result": result}
         if (
             not isinstance(result, dict) or result.get("isError")
             or not (isinstance(result.get("content"), list) or isinstance(result.get("structuredContent"), dict))
@@ -1050,7 +772,7 @@ def invoke_mcp_tool_exact(
                 request_url=endpoint, request_payload=payload, response_payload=data,
             )
         return {"endpoint": endpoint, "title": cfg["server_title"], "tool": tool_name, "result": result}
-    except (requests.RequestException, ValueError, UnicodeError):
+    except Exception:
         # A timeout can happen after execution; never retry a potentially mutating call.
         if record_execution:
             _record_monitor(
@@ -1066,82 +788,19 @@ def _call_mcp_tool_jsonrpc(
     tool_name: str,
     arguments: Dict[str, Any],
 ) -> tuple[Any, int | None, str, Any, Any]:
-    base_url = str(config.get("base_url", "")).rstrip("/")
-    request_url = base_url
-    base_headers = _initialize_mcp_session(config, _headers(config))
-    timeout = _timeout(config)
-
-    # Use MCP-standard method first; keep only minimal compatibility fallback.
-    method_candidates = ["tools/call", "tools.call"]
-    params_candidates = [
-        {"name": tool_name, "arguments": arguments},
-        {"tool_name": tool_name, "arguments": arguments},
-        {"name": tool_name, "input": arguments},
-        {"tool": tool_name, "input": arguments},
-    ]
-    last_status: int | None = None
-    last_error = ""
-    last_request: Any = None
-    last_response: Any = None
-
-    for method_name in method_candidates:
-        for params in params_candidates:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": int(time.time() * 1000),
-                "method": method_name,
-                "params": params,
-            }
-            last_request = payload
-            res = requests.post(
-                request_url,
-                headers=base_headers,
-                json=payload,
-                timeout=timeout,
-            )
-            last_status = res.status_code
-            if res.status_code >= 400:
-                body = (res.text or "")[:600]
-                last_error = body
-                last_response = {"status_code": res.status_code, "body": body}
-                # Retry alternative method/params shapes only for method/params errors.
-                if (
-                    "method not" in body.lower()
-                    or "not allowed" in body.lower()
-                    or "invalid params" in body.lower()
-                    or "missing" in body.lower()
-                ):
-                    continue
-                return None, res.status_code, body, last_request, last_response
-            try:
-                data = res.json()
-            except Exception:
-                text = (res.text or "")[:300]
-                return None, res.status_code, f"invalid json response: {text}", last_request, {"status_code": res.status_code, "body": text}
-            last_response = data
-            if isinstance(data, dict) and isinstance(data.get("error"), dict):
-                err_obj = data.get("error") or {}
-                err_code = err_obj.get("code")
-                err_msg = str(err_obj.get("message") or "")
-                last_error = f"jsonrpc error {err_code}: {err_msg}".strip()
-                # Keep probing other variants for method/params compatibility issues.
-                lower_msg = err_msg.lower()
-                if (
-                    err_code == -32601
-                    or err_code == -32602
-                    or "method not found" in lower_msg
-                    or "invalid params" in lower_msg
-                    or "tool not found" in lower_msg
-                    or "tool  not found" in lower_msg
-                ):
-                    continue
-                return None, res.status_code, last_error, last_request, last_response
-            tool_result = _extract_tool_result(data)
-            if tool_result is not None:
-                return tool_result, res.status_code, "", last_request, last_response
-            last_error = f"invalid {method_name} result: {str(data)[:300]}"
-
-    return None, last_status, last_error or "all MCP method variants failed", last_request, last_response
+    request = {"name": tool_name, "arguments": arguments}
+    try:
+        result = mcp_result(call_mcp_tool(config, tool_name, arguments))
+        response = {"result": result}
+        if result["isError"]:
+            return None, None, "MCP tool reported an error.", request, response
+        payload = _extract_tool_result(response)
+        if payload is None:
+            return None, None, "MCP tool returned no usable result.", request, response
+        return payload, None, "", request, response
+    except Exception:
+        # A timeout can occur after execution; never retry or expose provider payloads.
+        return None, None, "MCP call failed; execution status may be unknown. No retry was attempted.", request, None
 
 
 def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
@@ -1160,7 +819,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
         _candidate_configs(config, tool_hint="ticket_context"),
         "ticket_context",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("ticket_context_path") or "/ticket-context/{ticket_number}")
         path = path.format(ticket_number=quote(str(ticket_number), safe=""))
         url = _full_url(path, cfg)
@@ -1194,7 +853,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.get(url, headers=_headers(cfg), timeout=timeout)
             if res.status_code >= 400:
@@ -1265,7 +924,7 @@ def fetch_similar_cases(
         _candidate_configs(config, tool_hint="ticket_search_similar_cases"),
         "ticket_search_similar_cases",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("ticket_search_path") or "/ticket-search/similar-cases")
         url = _full_url(path, cfg)
         timeout = _timeout(cfg)
@@ -1312,7 +971,7 @@ def fetch_similar_cases(
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.post(url, headers=_headers(cfg), json=payload, timeout=timeout)
             if res.status_code >= 400:
@@ -1395,7 +1054,7 @@ def fetch_cmdb_assets(
         _candidate_configs(config, tool_hint="cmdb_asset_lookup"),
         "cmdb_asset_lookup",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("cmdb_lookup_path") or "/cmdb/asset-lookup")
         url = _full_url(path, cfg)
         timeout = _timeout(cfg)
@@ -1442,7 +1101,7 @@ def fetch_cmdb_assets(
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.post(url, headers=_headers(cfg), json=payload, timeout=timeout)
             if res.status_code >= 400:
@@ -1530,7 +1189,7 @@ def fetch_observables(
         _candidate_configs(config, tool_hint="observables_extract"),
         "observables_extract",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("observables_extract_path") or "/observables/extract")
         url = _full_url(path, cfg)
         timeout = _timeout(cfg)
@@ -1563,7 +1222,7 @@ def fetch_observables(
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.post(url, headers=_headers(cfg), json=payload, timeout=timeout)
             if res.status_code >= 400:

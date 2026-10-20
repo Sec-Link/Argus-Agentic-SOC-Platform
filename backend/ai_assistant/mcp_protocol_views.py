@@ -1,10 +1,8 @@
 import json
-import time
 from typing import Any, Dict, List, Tuple
 
 from django.db.models import Q
-from django.http import JsonResponse
-from django.http import StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
@@ -305,24 +303,9 @@ def mcp_tools_manifest(request):
     return JsonResponse({"tools": _tool_defs()})
 
 
-def _sse_stream():
-    # Minimal SSE stream for MCP HTTP streaming clients.
-    # Keep the connection valid and provide an initial event.
-    yield "event: ready\n"
-    yield "data: {\"ok\": true, \"server\": \"siem-mcp\"}\n\n"
-    while True:
-        yield ": keep-alive\n\n"
-        time.sleep(15)
-
-
-@api_view(["GET", "POST"])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mcp_rpc(request):
-    if request.method == "GET":
-        response = StreamingHttpResponse(_sse_stream(), content_type="text/event-stream")
-        response["Cache-Control"] = "no-cache"
-        return response
-
     try:
         rpc_id, method, params = _parse_jsonrpc_request(request.body)
     except ValueError as exc:
@@ -343,7 +326,7 @@ def mcp_rpc(request):
             return _rpc_ok(rpc_id, {})
 
         if method in ("notifications/initialized", "initialized"):
-            return _rpc_ok(rpc_id, {})
+            return HttpResponse(status=202)
 
         if method == "tools/list":
             return _rpc_ok(rpc_id, {"tools": _tool_defs()})
