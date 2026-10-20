@@ -105,7 +105,9 @@ def mcp_monitor(request):
     except Exception:
         page_size = 20
 
-    payload = get_mcp_monitor(page=page, page_size=page_size, status=status_filter, tool_name=tool)
+    payload = get_mcp_monitor(
+        page=page, page_size=page_size, status=status_filter, tool_name=tool, user_id=request.user.pk,
+    )
     return Response(payload)
 
 

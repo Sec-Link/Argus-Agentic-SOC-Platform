@@ -4,8 +4,9 @@ import os
 import re
 from typing import Any, Dict, List
 
-import requests
 from django.conf import settings
+
+from ai_assistant.model_client import ModelCallError, call_responses
 
 from ai_assistant.mcp_gateway import (
     fetch_cmdb_assets,
@@ -424,96 +425,11 @@ def _generate_structured_sections(prompt: str, overrides: Dict[str, Any] | None 
             raw_failures.append(f'{name}: {response_text[:4000]}')
     return assistant, raw_failures
 
-def _parse_responses_stream(res: requests.Response) -> Dict[str, Any]:
-    text_buffer: List[str] = []
-    last_response: Dict[str, Any] | None = None
-    for raw in res.iter_lines(decode_unicode=True):
-        if not raw:
-            continue
-        line = raw.strip()
-        if line.startswith("data:"):
-            line = line[len("data:"):].strip()
-        if not line or line == "[DONE]":
-            if line == "[DONE]":
-                break
-            continue
-        try:
-            payload = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(payload, dict):
-            if isinstance(payload.get("response"), dict):
-                last_response = payload.get("response")
-            if isinstance(payload.get("output_text"), str):
-                text_buffer.append(payload.get("output_text"))
-            if payload.get("type") == "response.output_text.delta":
-                delta = payload.get("delta")
-                if isinstance(delta, str):
-                    text_buffer.append(delta)
-    if last_response:
-        return last_response
-    return {"output_text": "".join(text_buffer)}
-
-
-def _normalize_base_url(raw: str) -> str:
-    base = (raw or "").strip()
-    if not base:
-        return base
-    if "/v1" in base:
-        return base.rstrip("/")
-    if base.rstrip("/").endswith("/openai"):
-        return f"{base.rstrip('/')}/v1"
-    return base.rstrip("/")
-
-
 def _call_openai(prompt: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    overrides = overrides or {}
-    api_key = overrides.get("api_key") or _get_setting("OPENAI_API_KEY")
-    if not api_key:
-        raise AIAssistantError("OPENAI_API_KEY is not configured")
-
-    base_url = overrides.get("base_url") or _get_setting("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    base_url = _normalize_base_url(base_url)
-    model = overrides.get("model") or _get_setting("OPENAI_MODEL", "gpt-5.1-codex")
-    timeout_value = overrides.get("timeout_seconds")
-    if timeout_value in (None, ""):
-        timeout_value = _get_setting("OPENAI_TIMEOUT_SECONDS", 45)
     try:
-        timeout = int(timeout_value or 45)
-    except Exception:
-        timeout = 45
-
-    url = f"{base_url.rstrip('/')}/responses"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt}
-                ],
-            }
-        ],
-        "temperature": 0.2,
-        "max_output_tokens": 1200,
-        "stream": True,
-    }
-
-    res = requests.post(url, headers=headers, json=payload, timeout=timeout, stream=True)
-    if res.status_code >= 400:
-        logger.error("OpenAI API error: %s %s", res.status_code, res.text[:2000])
-        raise AIAssistantError(f"OpenAI API error: {res.status_code}")
-    content_type = str(res.headers.get("content-type") or "")
-    if "text/event-stream" in content_type:
-        return _parse_responses_stream(res)
-    try:
-        return res.json()
-    except Exception:
-        return _parse_responses_stream(res)
+        return call_responses(prompt, overrides)
+    except ModelCallError as exc:
+        raise AIAssistantError(str(exc)) from exc
 
 
 def test_openai_connectivity(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:

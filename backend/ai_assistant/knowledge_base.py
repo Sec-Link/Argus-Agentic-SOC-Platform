@@ -8,8 +8,9 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
 from django.conf import settings
+
+from ai_assistant.model_client import embed_text as embed_with_langchain
 
 from ai_assistant.models import KnowledgeBaseItem, KnowledgeEmbedding, KnowledgeRetrievalLog
 
@@ -125,26 +126,7 @@ def _embedding_client_config(overrides: Optional[Dict[str, Any]] = None) -> Dict
 
 
 def embed_text(text: str, overrides: Optional[Dict[str, Any]] = None) -> List[float]:
-    cfg = _embedding_client_config(overrides)
-    if not cfg["api_key"]:
-        raise RuntimeError("Embedding API key is not configured")
-    url = f"{cfg['base_url'].rstrip('/')}/embeddings"
-    headers = {
-        "Authorization": f"Bearer {cfg['api_key']}",
-        "Content-Type": "application/json",
-    }
-    payload = {"model": cfg["model"], "input": text}
-    timeout = cfg.get("timeout", 30)
-    res = requests.post(url, headers=headers, json=payload, timeout=timeout)
-    if res.status_code >= 400:
-        raise RuntimeError(f"Embedding API error: {res.status_code} {res.text[:500]}")
-    data = res.json()
-    items = data.get("data") if isinstance(data, dict) else None
-    if isinstance(items, list) and items:
-        vec = items[0].get("embedding")
-        if isinstance(vec, list):
-            return [float(v) for v in vec]
-    raise RuntimeError("Invalid embedding response")
+    return embed_with_langchain(text, _embedding_client_config(overrides))
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:

@@ -153,3 +153,7 @@ These routes are registered in `backend/siem_project/urls.py` via DRF routers, s
 | MCP CMDB lookup | `/api/v1/mcp/cmdb/asset-lookup` | GET/POST | Asset lookup | `backend/siem_project/urls.py` |
 | MCP observables extract | `/api/v1/mcp/observables/extract` | POST | Extract observables | `backend/siem_project/urls.py` |
 
+### LangChain model execution
+
+Chat, ticket analysis and embeddings use the shared LangChain model client. Install the versions in `backend/requirements.txt` before starting this backend. Model failures use bounded diagnostics rather than logging provider payloads, and model/tool calls are not automatically retried. Existing chat and ticket-analysis response formats are preserved. New tool-result audit payloads are stored only for page-chat executions with an identified actor; legacy ownerless executions retain their existing audit payload behavior. The MCP monitor returns page-chat executions only to their initiating user, including filtering and pagination; legacy monitoring remains unchanged.
+

@@ -5,7 +5,7 @@ import threading
 import time
 from collections import deque
 from typing import Any, Dict, List
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 from django.conf import settings
@@ -162,7 +162,12 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         enabled = bool(getattr(settings, "MCP_GATEWAY_ENABLED", False))
 
     base_url = (mcp.get("base_url") or getattr(settings, "MCP_GATEWAY_BASE_URL", "") or "").strip()
-    token = (mcp.get("token") or getattr(settings, "MCP_GATEWAY_TOKEN", "") or "").strip()
+    exact_only = bool(mcp.get("exact_only"))
+    token = (
+        (mcp.get("token") or "")
+        if exact_only
+        else (mcp.get("token") or getattr(settings, "MCP_GATEWAY_TOKEN", "") or "")
+    ).strip()
     raw_servers = mcp.get("servers")
     servers: List[Dict[str, str]] = []
     if isinstance(raw_servers, list):
@@ -212,6 +217,7 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         "token": token,
         "servers": servers,
         "force_internal": bool(mcp.get("force_internal")),
+        "exact_only": exact_only,
         "timeout_seconds": timeout_seconds,
         "ticket_context_path": str(ticket_context_path),
         "ticket_search_path": str(ticket_search_path),
@@ -251,7 +257,11 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
 
     base_url = str(config.get("base_url") or "").strip()
     if base_url:
-        items.append({"endpoint": base_url, "title": ""})
+        primary = {"endpoint": base_url, "title": ""}
+        if config.get("exact_only") and not config.get("force_internal"):
+            primary = next((server for server in config.get("servers") or []
+                            if server.get("endpoint") == base_url), primary)
+        items.append(primary)
 
     if config.get("force_internal"):
         candidates: List[Dict[str, Any]] = []
@@ -296,14 +306,14 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
     candidates: List[Dict[str, Any]] = []
     for _, __, item in weighted:
         url = str(item.get("endpoint") or "").strip()
-        key = url.rstrip("/").lower()
+        key = url if config.get("exact_only") else url.rstrip("/").lower()
         if key in seen:
             continue
         seen.add(key)
         cfg = dict(config)
         cfg["base_url"] = url
         cfg["server_title"] = str(item.get("title") or "").strip()
-        if item.get("token"):
+        if "token" in item:
             cfg["token"] = str(item.get("token") or "").strip()
         candidates.append(cfg)
     return candidates
@@ -422,7 +432,12 @@ def _extract_tools_meta(data: Any) -> List[Dict[str, Any]]:
         if not name:
             continue
         schema = item.get("inputSchema") if isinstance(item.get("inputSchema"), dict) else {}
-        out.append({"name": name, "inputSchema": schema})
+        out.append({
+            "name": name,
+            "inputSchema": schema,
+            "description": str(item.get("description") or ""),
+            "annotations": item.get("annotations") if isinstance(item.get("annotations"), dict) else {},
+        })
     return out
 
 
@@ -799,9 +814,9 @@ def get_mcp_tools_catalog(
         configs = _filter_configs_by_target_mcp(configs, target_mcp)
     catalog: List[Dict[str, Any]] = []
     for cfg in configs:
-        if not _is_mcp_jsonrpc_endpoint(cfg):
+        if not config.get("exact_only") and not _is_mcp_jsonrpc_endpoint(cfg):
             continue
-        meta = _get_endpoint_tool_meta(cfg) or []
+        meta = _get_exact_endpoint_tool_meta(cfg) if config.get("exact_only") else (_get_endpoint_tool_meta(cfg) or [])
         tools = []
         for item in meta:
             if not isinstance(item, dict):
@@ -810,7 +825,12 @@ def get_mcp_tools_catalog(
             if not name:
                 continue
             schema = item.get("inputSchema") if isinstance(item.get("inputSchema"), dict) else {}
-            tools.append({"name": name, "inputSchema": schema})
+            tools.append({
+                "name": name,
+                "inputSchema": schema,
+                "description": str(item.get("description") or ""),
+                "annotations": item.get("annotations") if isinstance(item.get("annotations"), dict) else {},
+            })
         catalog.append(
             {
                 "endpoint": str(cfg.get("base_url") or ""),
@@ -826,17 +846,20 @@ def invoke_mcp_tool_explicit(
     arguments: Dict[str, Any],
     target_mcp: str | None = None,
     overrides: Dict[str, Any] | None = None,
+    *,
+    record_execution: bool = True,
 ) -> Dict[str, Any] | None:
     start_ts = time.time()
     config = _resolve_config(overrides)
     if not _enabled(config):
-        _record_monitor(
-            tool=f"dynamic:{tool_name}",
-            status="failed",
-            start_ts=start_ts,
-            request_url="",
-            error="mcp gateway disabled or base_url missing",
-        )
+        if record_execution:
+            _record_monitor(
+                tool=f"dynamic:{tool_name}",
+                status="failed",
+                start_ts=start_ts,
+                request_url="",
+                error="mcp gateway disabled or base_url missing",
+            )
         return None
 
     configs = _candidate_configs(config, tool_hint=tool_name)
@@ -857,15 +880,16 @@ def invoke_mcp_tool_explicit(
         )
         rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:{tool_name}"
         if tool_payload is not None:
-            _record_monitor(
-                tool=f"dynamic:{tool_name}",
-                status="completed",
-                start_ts=start_ts,
-                request_url=rpc_url,
-                http_status=http_status,
-                request_payload=rpc_req,
-                response_payload=rpc_resp,
-            )
+            if record_execution:
+                _record_monitor(
+                    tool=f"dynamic:{tool_name}",
+                    status="completed",
+                    start_ts=start_ts,
+                    request_url=rpc_url,
+                    http_status=http_status,
+                    request_payload=rpc_req,
+                    response_payload=rpc_resp,
+                )
             return {
                 "endpoint": str(cfg.get("base_url") or ""),
                 "title": str(cfg.get("server_title") or ""),
@@ -873,26 +897,168 @@ def invoke_mcp_tool_explicit(
                 "result": tool_payload,
             }
         last_error = err or f"tool call failed for {tool_name}"
+        if record_execution:
+            _record_monitor(
+                tool=f"dynamic:{tool_name}",
+                status="failed",
+                start_ts=start_ts,
+                request_url=rpc_url,
+                http_status=http_status,
+                error=last_error,
+                request_payload=rpc_req,
+                response_payload=rpc_resp,
+            )
+
+    if record_execution:
         _record_monitor(
             tool=f"dynamic:{tool_name}",
             status="failed",
             start_ts=start_ts,
-            request_url=rpc_url,
-            http_status=http_status,
+            request_url="",
             error=last_error,
-            request_payload=rpc_req,
-            response_payload=rpc_resp,
+            request_payload=arguments,
         )
-
-    _record_monitor(
-        tool=f"dynamic:{tool_name}",
-        status="failed",
-        start_ts=start_ts,
-        request_url="",
-        error=last_error,
-        request_payload=arguments,
-    )
     return None
+
+
+def _post_mcp_exact(config: Dict[str, Any], headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Send one MCP message; redirects and compatibility retries are deliberately disabled."""
+    with requests.post(
+        config["base_url"], headers=headers, json=payload, timeout=_timeout(config),
+        allow_redirects=False, stream=True,
+    ) as response:
+        if not 200 <= response.status_code < 300:
+            raise ValueError(f"MCP request failed (HTTP {response.status_code})")
+        session_id = response.headers.get("mcp-session-id")
+        if session_id and payload["method"] == "initialize":
+            headers["mcp-session-id"] = session_id
+        if "id" not in payload:
+            return {}
+        if "text/event-stream" in response.headers.get("content-type", "").lower():
+            response.encoding = "utf-8"
+            data_lines: List[str] = []
+            data = None
+            deadline = time.monotonic() + _timeout(config)
+            for line in response.iter_lines(chunk_size=1, decode_unicode=True):
+                if time.monotonic() >= deadline:
+                    raise requests.Timeout("MCP response deadline exceeded")
+                if isinstance(line, bytes):
+                    line = line.decode("utf-8")
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip(" "))
+                elif not line and data_lines:
+                    event = json.loads("\n".join(data_lines))
+                    data_lines = []
+                    if isinstance(event, dict) and event.get("id") == payload["id"]:
+                        data = event
+                        break
+        else:
+            data = response.json()
+        if not isinstance(data, dict) or data.get("id") != payload["id"] or "error" in data:
+            raise ValueError("MCP returned an invalid response or a protocol error")
+        return data
+
+
+def _initialize_mcp_exact(config: Dict[str, Any]) -> Dict[str, str]:
+    parsed = urlsplit(config["base_url"])
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("MCP endpoint is invalid")
+    headers = {**_headers(config), "Accept": "application/json, text/event-stream"}
+    initialized = _post_mcp_exact(config, headers, {
+        "jsonrpc": "2.0", "id": time.time_ns(), "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "Argus", "version": "1"},
+        },
+    })
+    init_result = initialized.get("result")
+    if not isinstance(init_result, dict):
+        raise ValueError("MCP returned an invalid initialization response")
+    headers["MCP-Protocol-Version"] = str(init_result.get("protocolVersion") or "2025-06-18")
+    _post_mcp_exact(config, headers, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+    return headers
+
+
+def _get_exact_endpoint_tool_meta(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    failure = "MCP tool discovery failed. Check the configured MCP server."
+    try:
+        headers = _initialize_mcp_exact(config)
+        tools: List[Dict[str, Any]] = []
+        cursor = None
+        seen_cursors: set[str] = set()
+        for _ in range(20):
+            data = _post_mcp_exact(config, headers, {
+                "jsonrpc": "2.0", "id": time.time_ns(), "method": "tools/list",
+                "params": {} if cursor is None else {"cursor": cursor},
+            })
+            result = data.get("result")
+            if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
+                raise ValueError("MCP returned an invalid tool catalog")
+            tools.extend(_extract_tools_meta(data))
+            cursor = result.get("nextCursor")
+            if cursor is None:
+                return tools
+            if not isinstance(cursor, str) or cursor in seen_cursors:
+                failure = "MCP tool discovery failed: the server returned an invalid or repeated pagination cursor."
+                raise ValueError(failure)
+            seen_cursors.add(cursor)
+        failure = "MCP tool discovery failed: the catalog exceeded the 20-page limit."
+        raise ValueError(failure)
+    except (requests.RequestException, ValueError, UnicodeError):
+        raise ValueError(failure) from None
+
+
+def invoke_mcp_tool_exact(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    target_mcp: str,
+    overrides: Dict[str, Any] | None = None,
+    *,
+    record_execution: bool = True,
+) -> Dict[str, Any] | None:
+    """Invoke the already-approved tool at its configured endpoint exactly once."""
+    start_ts = time.time()
+    config = _resolve_config(overrides)
+    endpoint = str(target_mcp or "")
+    cfg = None
+    # Resolve credentials from the exact server, never from a similarly named endpoint.
+    if _enabled(config):
+        for server in config.get("servers") or []:
+            if server["endpoint"] == endpoint and not config.get("force_internal"):
+                cfg = {**config, "base_url": endpoint, "token": server["token"], "server_title": server["title"]}
+                break
+        if cfg is None and config["base_url"] == endpoint:
+            cfg = {**config, "server_title": ""}
+    payload = None
+    try:
+        if cfg is None:
+            raise ValueError("MCP endpoint is not enabled or does not match the configured server")
+        if not isinstance(tool_name, str) or not tool_name.strip() or not isinstance(arguments, dict):
+            raise ValueError("MCP tool name and arguments are required")
+        headers = _initialize_mcp_exact(cfg)
+        payload = {"jsonrpc": "2.0", "id": time.time_ns(), "method": "tools/call", "params": {"name": tool_name, "arguments": arguments}}
+        data = _post_mcp_exact(cfg, headers, payload)
+        result = data.get("result")
+        if (
+            not isinstance(result, dict) or result.get("isError")
+            or not (isinstance(result.get("content"), list) or isinstance(result.get("structuredContent"), dict))
+        ):
+            raise ValueError("MCP tool reported an error")
+        if record_execution:
+            _record_monitor(
+                tool=f"dynamic:{tool_name}", status="completed", start_ts=start_ts,
+                request_url=endpoint, request_payload=payload, response_payload=data,
+            )
+        return {"endpoint": endpoint, "title": cfg["server_title"], "tool": tool_name, "result": result}
+    except (requests.RequestException, ValueError, UnicodeError):
+        # A timeout can happen after execution; never retry a potentially mutating call.
+        if record_execution:
+            _record_monitor(
+                tool=f"dynamic:{tool_name}", status="failed", start_ts=start_ts,
+                request_url=endpoint, request_payload=payload,
+                error="MCP call failed; execution status may be unknown. No retry was attempted.",
+            )
+        return None
 
 
 def _call_mcp_tool_jsonrpc(

@@ -12,6 +12,8 @@ redis
 pymysql
 requests
 urllib3>=2.8.0,<3
+langchain==1.4.3
+langchain-openai==1.6.6
 croniter
 django-scheduled-tasks>=0.2.18
 gunicorn>=20.1.0

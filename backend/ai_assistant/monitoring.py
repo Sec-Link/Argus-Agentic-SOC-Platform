@@ -2,7 +2,7 @@
 from typing import Any, Dict, List, Optional
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from ai_assistant.models import MCPToolExecution, MCPToolStats, SkillStats
@@ -24,7 +24,7 @@ def start_mcp_execution(
     return str(exec_row.id)
 
 
-def finish_mcp_execution(exec_id: str, success: bool, error: str = "") -> None:
+def finish_mcp_execution(exec_id: str, success: bool, error: str = "", *, response_payload: Any = None) -> None:
     if not exec_id:
         return
     now = timezone.now()
@@ -38,7 +38,14 @@ def finish_mcp_execution(exec_id: str, success: bool, error: str = "") -> None:
     row.error = (error or "")[:2000]
     row.end_time = now
     row.duration_ms = duration_ms
-    row.save(update_fields=["status", "error", "end_time", "duration_ms"])
+    update_fields = ["status", "error", "end_time", "duration_ms"]
+    page_audit = row.response_payload.get("_page_chat") if isinstance(row.response_payload, dict) else None
+    # Legacy executions have no owner; do not publish new chat evidence there.
+    if (response_payload is not None and row.source == "page_chat"
+            and isinstance(page_audit, dict) and page_audit.get("user_id")):
+        row.response_payload = {"result": response_payload, "_page_chat": page_audit}
+        update_fields.append("response_payload")
+    row.save(update_fields=update_fields)
 
 
 def update_mcp_stats(tool_name: str, success: bool) -> None:
@@ -105,11 +112,18 @@ def _serialize_skill_stats(row: SkillStats) -> Dict[str, Any]:
     }
 
 
-def get_mcp_monitor(page: int, page_size: int, status: str = "", tool_name: str = "") -> Dict[str, Any]:
+def get_mcp_monitor(
+    page: int, page_size: int, status: str = "", tool_name: str = "", *, user_id=None,
+) -> Dict[str, Any]:
     page = max(1, int(page or 1))
     page_size = max(1, min(int(page_size or 20), 100))
 
     qs = MCPToolExecution.objects.all().order_by("-start_time")
+    # Page-chat evidence belongs to its actor, including counts and pagination.
+    visible = ~Q(source="page_chat")
+    if user_id is not None:
+        visible |= Q(source="page_chat", response_payload___page_chat__user_id=user_id)
+    qs = qs.filter(visible)
     if status:
         qs = qs.filter(status=status)
     if tool_name:

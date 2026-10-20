@@ -9,7 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
 from ai_assistant.mcp_views import _extract_hostnames, _extract_iocs, _extract_observables, _flatten_observables, _json_dumps_safe
-#from cmdb.models import Asset
+from cmdb.models import Asset
 from tickets.models import EventTicket, TicketWorkLog
 
 
