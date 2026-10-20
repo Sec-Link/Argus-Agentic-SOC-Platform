@@ -15,6 +15,8 @@ import os
 import datetime
 from rest_framework import status as rf_status
 
+SPLUNK_INTEGRATION_TYPES = {'splunk', 'splunk_search', 'splunk_rule_publisher'}
+
 # Helper to write a detailed sync debug log when sync fails or imports zero rows.
 def _write_sync_debug_log(index, mapping_columns, docs, extraction_results=None, errors=None, exc_tb=None, name=None):
     try:
@@ -55,11 +57,44 @@ def _deny_if_no_perm(request, perm):
     if user.is_superuser or user.has_perm(perm):
         return None
     return Response({"detail": "Permission denied."}, status=rf_status.HTTP_403_FORBIDDEN)
+
+
+def _as_bool(value, default=True):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _splunk_auth_and_headers(cfg):
+    headers = {"Accept": "application/json"}
+    auth = None
+    token = str(cfg.get('api_key') or cfg.get('token') or '').strip()
+    if token:
+        headers["Authorization"] = f"Splunk {token}"
+    elif cfg.get('username'):
+        auth = HTTPBasicAuth(cfg.get('username'), cfg.get('password') or '')
+    return auth, headers
+
+
+def _splunk_default_path(cfg):
+    integration_type = str(cfg.get('integration_type') or cfg.get('type') or '').lower()
+    if integration_type == 'splunk_rule_publisher':
+        owner = str(cfg.get('splunk_owner') or 'nobody').strip() or 'nobody'
+        app = str(cfg.get('splunk_app') or 'search').strip() or 'search'
+        default_path = f'/servicesNS/{owner}/{app}/saved/searches?count=1&output_mode=json'
+    else:
+        default_path = '/services/server/info?output_mode=json'
+    path = str(cfg.get('path') or default_path).strip() or default_path
+    return path if path.startswith('/') else f'/{path}'
+
+
 class IntegrationViewSet(viewsets.ModelViewSet):
     queryset = Integration.objects.all().order_by('-created_at')
     serializer_class = IntegrationSerializer
     permission_classes = [RbacModelPermissions, DenyReadonlyUser]
-    rbac_action_perms = {"test": "change"}
+    rbac_action_perms = {"test": "change", "fetch_data": "change"}
 
     def _activate_alerts_es_config(self, integration: Integration):
         if integration.type != 'elasticsearch':
@@ -116,7 +151,42 @@ class IntegrationViewSet(viewsets.ModelViewSet):
                     auth = (cfg.get('username'), cfg.get('password'))
                 r = requests.get(host, auth=auth, timeout=10)
                 return Response({'status': r.status_code, 'body': r.text, 'headers': dict(r.headers)})
-            return Response({'error': 'only Elasticsearch integrations can be tested'}, status=status.HTTP_400_BAD_REQUEST)
+            if it.type in SPLUNK_INTEGRATION_TYPES:
+                host = cfg.get('host')
+                if not host:
+                    return Response({'error': 'integration config missing host'}, status=status.HTTP_400_BAD_REQUEST)
+                auth, headers = _splunk_auth_and_headers(cfg)
+                url = str(host).rstrip('/') + _splunk_default_path({**cfg, 'type': it.type})
+                r = requests.get(
+                    url,
+                    auth=auth,
+                    headers=headers,
+                    timeout=10,
+                    verify=_as_bool(cfg.get('verify_certs'), True),
+                )
+                return Response({'status': r.status_code, 'body': r.text, 'headers': dict(r.headers)})
+            return Response({'error': 'only Elasticsearch and Splunk integrations can be tested'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path='fetch-data')
+    def fetch_data(self, request, pk=None):
+        it = self.get_object()
+        if it.type not in {'splunk', 'splunk_search'}:
+            return Response(
+                {'error': 'only Splunk Data Source integrations can fetch data'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            size = int(request.data.get('size') or 1000)
+        except Exception:
+            size = 1000
+        try:
+            from alerts.tasks import sync_splunk_alerts_to_db
+
+            result = sync_splunk_alerts_to_db(integration_id=str(it.id), size=size)
+            http_status = status.HTTP_200_OK if not result.get('errors') else status.HTTP_207_MULTI_STATUS
+            return Response(result, status=http_status)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -376,32 +446,39 @@ def test_es_connection(request):
     denied = _deny_if_no_perm(request, "integrations.change_integration")
     if denied:
         return denied
-    """Server-side proxy to test connectivity to an Elasticsearch host.
+    """Server-side proxy to test connectivity to an Elasticsearch, Kibana, or Splunk host.
     POST body: { host: 'http://...', username: 'user', password: 'pass', path: '/_cluster/health' }
     Returns: { ok: true, status: 200, body: '...', headers: { ... } } or error details.
     """
     payload = request.data or {}
+    integration_type = str(payload.get('integration_type') or payload.get('type') or 'elasticsearch').lower()
     # accept host in several common keys for flexibility
     host = payload.get('host') or payload.get('url') or (payload.get('config') and payload.get('config').get('host'))
-    try:
-        print('DEBUG test_es_connection payload:', payload)
-    except Exception:
-        pass
     if not host:
         return Response({'ok': False, 'error': 'host required'}, status=status.HTTP_400_BAD_REQUEST)
-    path = payload.get('path') or '/_cluster/health'
+    if integration_type in SPLUNK_INTEGRATION_TYPES:
+        path = _splunk_default_path(payload)
+    else:
+        path = payload.get('path') or '/_cluster/health'
     url = str(host).rstrip('/') + path
-    try:
-        print('DEBUG test_es_connection computed url:', url)
-    except Exception:
-        pass
     auth = None
+    headers = {}
     username = payload.get('username')
     password = payload.get('password')
-    if username:
+    if integration_type in SPLUNK_INTEGRATION_TYPES:
+        auth, headers = _splunk_auth_and_headers(payload)
+    elif username:
         auth = HTTPBasicAuth(username, password or '')
+    if integration_type in {'elasticsearch', 'kibana'} and payload.get('api_key'):
+        headers['Authorization'] = f"ApiKey {payload.get('api_key')}"
     try:
-        resp = requests.get(url, timeout=10, auth=auth)
+        resp = requests.get(
+            url,
+            timeout=10,
+            auth=auth,
+            headers=headers,
+            verify=_as_bool(payload.get('verify_certs'), True),
+        )
     except requests.exceptions.RequestException as e:
         return Response({'ok': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
