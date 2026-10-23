@@ -1,5 +1,4 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
-import { listenForWorkflowProgress, type WorkflowProgress } from './services/workflows/progress';
 
 let accessToken: string | null = null;
 
@@ -1416,15 +1415,6 @@ export async function deactivateWorkflow(id: string): Promise<void> {
 export async function setWorkflowScheduleActive(id: string, is_active: boolean): Promise<Workflow> {
   const r = await client.post(`${WORKFLOWS_BASE}/workflows/${id}/set-schedule-active/`, { is_active });
   return r.data;
-}
-
-// Subscribe before reloading snapshots so changes during a disconnect are covered.
-export function subscribeWorkflowProgress(onProgress: (progress: WorkflowProgress | null) => void): () => void {
-  return listenForWorkflowProgress(
-    `${resolveApiBase()}${WORKFLOWS_BASE}/executions/events/`,
-    () => accessToken,
-    onProgress,
-  );
 }
 
 // List executions
