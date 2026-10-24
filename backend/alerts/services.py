@@ -140,7 +140,7 @@ def _alerts_queryset_for_active_index():
     qs = Alert.objects.all()
     active_index = _get_active_index_name()
     if active_index:
-        qs = qs.filter(source_index=active_index)
+        qs = qs.filter(Q(source_index=active_index) | Q(source_data__connector_type='splunk_search'))
     # Guard dashboard/list APIs from legacy/broken rows that were inserted
     # without a stable identity.
     qs = qs.exclude(alert_id__isnull=True).exclude(alert_id='')

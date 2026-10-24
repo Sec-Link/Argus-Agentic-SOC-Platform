@@ -34,6 +34,11 @@ from .services import (
 
 logger = logging.getLogger(__name__)
 
+
+def sync_splunk_alerts_to_db(*, integration_id: str, size: int = 500):
+    from .splunk import sync_splunk_alerts_to_db as sync
+    return sync(integration_id=integration_id, size=size)
+
 def _looks_unresolved_template(value: object) -> bool:
     if value is None:
         return False
