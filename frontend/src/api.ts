@@ -846,9 +846,35 @@ export async function queryPreview(payload:any){
   return r.data
 }
 
-export async function testIntegrationById(id: string){
-  const r = await client.post(`/integrations/${encodeURIComponent(id)}/test/`, {})
+export async function testIntegrationById(id: string, payload: any = {}, timeout?: number){
+  const r = await client.post(`/integrations/${encodeURIComponent(id)}/test/`, payload, { timeout })
   return r.data
+}
+
+export type SplunkConnectionTestResult = {
+  ok: boolean;
+  status: number;
+  server_info: { version?: string; build?: string; product_type?: string };
+};
+
+export type SplunkFetchResult = {
+  ok: boolean;
+  limit_reached?: boolean;
+  fetched: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+};
+
+export async function testSplunkIntegration(payload: Record<string, unknown>): Promise<SplunkConnectionTestResult> {
+  const result = await client.post('/integrations/test_splunk', payload, { timeout: 45000 });
+  return result.data;
+}
+
+export async function fetchSplunkIntegrationData(id: string, size = 500): Promise<SplunkFetchResult> {
+  const result = await client.post(`/integrations/${encodeURIComponent(id)}/fetch-data/`, { size }, { timeout: 60000 });
+  return result.data;
 }
 
 export async function testEsIntegration(payload:any){

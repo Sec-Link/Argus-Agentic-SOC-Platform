@@ -22,6 +22,7 @@ import {
   updateIntegration,
 } from 'services/integrations';
 import { getIsReadonly } from 'lib/auth';
+import SplunkIntegrations from './SplunkIntegrations';
 
 const { Title, Text } = Typography;
 
@@ -73,6 +74,7 @@ const HOST_PATTERN = /^(localhost|(([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+)|(\d{1,3}(\.\
 
 const Integrations: React.FC = () => {
   const [items, setItems] = useState<any[]>([]);
+  const [splunkOpen, setSplunkOpen] = useState(false);
   const [isReadonly, setIsReadonly] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [connectorKind, setConnectorKind] = useState<ConnectorKind>('elasticsearch');
@@ -397,9 +399,7 @@ const Integrations: React.FC = () => {
     }
   };
 
-  const handleSplunkSetup = () => {
-    message.info('Splunk Integration is currently in our development backlog and will be available in a future version update.');
-  };
+  const splunkItem = items.find((item: any) => item?.type === 'splunk_search');
 
   type IntegrationCardConfig = {
     key: 'elastic' | 'kibana' | 'splunk';
@@ -440,11 +440,11 @@ const Integrations: React.FC = () => {
       key: 'splunk',
       title: 'Splunk',
       subtitle: 'SIEM Sync Connector',
-      description: 'Synchronize raw log indices and complex correlation findings directly from Splunk deployments.',
+      description: 'Splunk management API',
       logo: '/splunk-logo.svg',
-      isInstalled: false,
-      onConfigure: handleSplunkSetup,
-      onUnavailable: handleSplunkSetup,
+      isInstalled: Boolean(splunkItem?.id),
+      onConfigure: () => setSplunkOpen(true),
+      onUninstall: splunkItem?.id ? () => handleDelete(splunkItem) : undefined,
     },
   ];
 
@@ -465,7 +465,7 @@ const Integrations: React.FC = () => {
       <Card
         key={card.key}
         hoverable
-        onClick={card.key === 'splunk' ? card.onUnavailable : card.onConfigure}
+        onClick={card.onConfigure}
         style={{
           width: '100%',
           maxWidth: 440,
@@ -596,6 +596,8 @@ const Integrations: React.FC = () => {
           {integrationCards.map(renderIntegrationCard)}
         </div>
       </Card>
+
+      <SplunkIntegrations open={splunkOpen} item={splunkItem} isReadonly={isReadonly} onClose={() => setSplunkOpen(false)} onChanged={fetchList} />
 
       <Modal
         title={
