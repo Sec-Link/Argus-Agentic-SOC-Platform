@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="./README.md"><img alt="English" src="https://img.shields.io/badge/English-d9d9d9"></a>
-  <a href="./README_ZH.MD"><img alt="Chinese" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
+  <a href="./README_ZH.md"><img alt="Chinese" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
 </p>
 
 
@@ -180,6 +180,29 @@ https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/docs/api-overvi
 ### Docker Compose
 - `docker-compose.dev.yml`：本地开发
 - `docker-compose.prod.yml`：生产容器部署
+
+#### 中国大陆用户访问 Docker Hub
+
+如果访问 Docker 官方镜像仓库较慢或失败，可以通过 `IMAGE_REGISTRY` 指定可访问且可信的镜像仓库或 Docker Hub 镜像服务，无需修改 Dockerfile：
+
+```bash
+# 默认使用 Docker Hub
+make build-dev
+
+# 指定镜像仓库前缀；请将示例地址替换为实际可用的地址
+make build-dev IMAGE_REGISTRY=registry.example.com/dockerhub/library
+make build-prod IMAGE_REGISTRY=registry.example.com/dockerhub/library
+
+# 也支持只更新后端或前端
+make build-backend-prod IMAGE_REGISTRY=registry.example.com/dockerhub/library
+make build-frontend-prod IMAGE_REGISTRY=registry.example.com/dockerhub/library
+```
+
+- 默认值为 `docker.io/library`。参数需包含实际仓库命名空间，不带 `https://` 或结尾 `/`；示例地址仅为占位符。
+- 目标仓库必须在此前缀下提供 `python:3.13-slim`、`node:24-alpine3.24`、`alpine:3.24` 和 `postgres:16`。
+- 私有仓库需先通过 `docker login` 登录，不要把密码或令牌写入 `IMAGE_REGISTRY`。
+- 可使用 `export IMAGE_REGISTRY=实际仓库前缀` 在当前终端固定选择，使用 `unset IMAGE_REGISTRY` 恢复默认值；Make 不读取项目 `.env` 中的该参数。
+- 此参数只切换镜像仓库路径，不配置 Docker daemon 的镜像加速，也不修改 pip、npm、apt 或 apk 软件源。
 
 ### Kubernetes
 `k8s/` 目录包含基础部署清单：
