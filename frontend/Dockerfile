@@ -1,13 +1,14 @@
 # ---------- 1. 依赖安装阶段 ----------
+ARG IMAGE_REGISTRY=docker.io/library
 ARG ALPINE_VERSION=3.24
-FROM node:24-alpine${ALPINE_VERSION} AS deps
+FROM ${IMAGE_REGISTRY}/node:24-alpine${ALPINE_VERSION} AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
 # ---------- 2. 构建阶段 ----------
-FROM node:24-alpine${ALPINE_VERSION} AS builder
+FROM ${IMAGE_REGISTRY}/node:24-alpine${ALPINE_VERSION} AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -15,7 +16,7 @@ COPY . .
 RUN npm run build
 
 # ---------- 3. 运行阶段 ----------
-FROM alpine:${ALPINE_VERSION} AS runner
+FROM ${IMAGE_REGISTRY}/alpine:${ALPINE_VERSION} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
