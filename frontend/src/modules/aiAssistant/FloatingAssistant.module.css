@@ -37,6 +37,11 @@
 .header, .actions { justify-content: space-between; }
 .headerActions { flex: none; gap: 2px; }
 .header { padding: 12px 16px; border-bottom: 1px solid; }
+.conversationBar, .historyToolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 16px; }
+.conversationBar > :first-child { min-width: 0; }
+.savedConversation { padding: 8px 0; border-bottom: 1px solid; }
+.savedConversation > .actions { margin-top: 6px; font-size: 12px; }
+.conversationTitle { width: 100%; height: auto; text-align: left; justify-content: flex-start; white-space: normal; overflow-wrap: anywhere; }
 .title { flex-wrap: wrap; }
 .context { padding: 10px 16px; border-bottom: 1px solid; font-size: 12px; }
 .context > label { margin-inline-start: 0; margin-inline-end: 12px; font-size: 12px; }

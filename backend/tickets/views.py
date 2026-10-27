@@ -7,7 +7,8 @@ from django.db import transaction
 from django.db.models import Avg
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
-from rest_framework import status, viewsets
+from rest_framework import serializers, status, viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -28,6 +29,7 @@ from .serializers import (
 
 from ai_assistant.assistant import AIAssistantError, generate_ai_assistant_output
 from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
+from ai_assistant.conversation_history import current_actor, event_permissions, require_history_permissions
 from ai_assistant.skill_config import get_enabled_skill_configs
 from ai_assistant.serializers import AIAssistantRequestSerializer
 
@@ -734,6 +736,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def ai_chat_history(self, request, ticket_number=None):
+        actor, owner_id, reviewing = self._ai_chat_history_scope(request)
         ticket = self.get_object()
         limit_raw = request.query_params.get("limit", 200)
         before_raw = request.query_params.get("before")
@@ -753,7 +756,22 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             if before_dt and timezone.is_naive(before_dt):
                 before_dt = timezone.make_aware(before_dt, timezone.get_current_timezone())
 
-        rows = TicketAIChatMessage.objects.filter(ticket=ticket)
+        rows = TicketAIChatMessage.objects.filter(ticket=ticket).select_related("created_by")
+        if not reviewing:
+            rows = rows.filter(created_by=actor)
+            # A later answer may repeat earlier tool output, including evidence
+            # outside this page. Check this owner's whole ticket history first.
+            if not all(actor.has_perm(permission) for permission in ("cmdb.view_asset", "ai_assistant.view_knowledgebaseitem")):
+                for trace in rows.order_by().values_list("trace", flat=True).iterator(chunk_size=200):
+                    if not isinstance(trace, list):
+                        continue
+                    required = set()
+                    for event in trace:
+                        if isinstance(event, dict) and isinstance(event.get("tool"), str):
+                            required.update(event_permissions({"tool": event["tool"]}))
+                    require_history_permissions(actor, required)
+        elif owner_id is not None:
+            rows = rows.filter(created_by_id=owner_id)
         if before_dt:
             rows = rows.filter(created_at__lt=before_dt)
         rows = rows.order_by("-created_at")
@@ -772,16 +790,47 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 "trace": self._fix_mojibake_in_obj(row.trace) if isinstance(row.trace, list) else [],
                 "created_at": row.created_at.isoformat(),
                 "created_by": getattr(row.created_by, "username", None),
+                "owner_id": row.created_by_id,
             }
             for row in rows_display
         ]
-        return Response({"messages": payload, "next_before": next_before})
+        from accounts.services import is_user_readonly
+        if reviewing:
+            from accounts.audit import AuditService, request_ip, request_user_agent
+            from accounts.models import AuditLog
+            AuditService.log_event(
+                event_type=AuditLog.EventType.ACTIVITY, status=AuditLog.Status.SUCCESS,
+                action_type=AuditLog.ActionType.FEATURE_EXEC, user_email=actor.email,
+                ip_address=request_ip(request), user_agent=request_user_agent(request),
+                path=request.path, method=request.method,
+                metadata={"resource": "ticket_ai_chat", "actor_id": actor.pk, "action": "review", "owner_id": owner_id},
+            )
+        can_write = not reviewing and not is_user_readonly(actor)
+        response = Response({"messages": payload, "next_before": next_before,
+                             "can_view_all": actor.has_perm("ai_assistant.review_all_pagechatconversation"),
+                             "readonly": not can_write, "can_continue": can_write, "can_clear": can_write})
+        response["Cache-Control"] = "private, no-store"
+        return response
 
     @action(detail=True, methods=["delete"])
     def ai_chat_clear(self, request, ticket_number=None):
+        actor, _, _ = self._ai_chat_history_scope(request, write=True)
         ticket = self.get_object()
-        TicketAIChatMessage.objects.filter(ticket=ticket).delete()
+        TicketAIChatMessage.objects.filter(ticket=ticket, created_by=actor).delete()
         return Response({"message": "cleared"})
+
+    @staticmethod
+    def _ai_chat_history_scope(request, *, write=False):
+        actor = current_actor(request.user, write=write)
+        require_history_permissions(actor, ("tickets.view_eventticket",))
+        scope = serializers.ChoiceField(choices=("mine", "all")).run_validation(request.query_params.get("scope", "mine"))
+        owner_id = None
+        if "owner_id" in request.query_params:
+            owner_id = serializers.IntegerField(min_value=1).run_validation(request.query_params["owner_id"])
+        reviewing = scope == "all" or owner_id is not None and owner_id != actor.pk
+        if reviewing and (write or not actor.has_perm("ai_assistant.review_all_pagechatconversation")):
+            raise PermissionDenied("Other users' ticket chat history is available only for authorized read-only review.")
+        return actor, owner_id, reviewing
 
     @staticmethod
     def _fix_mojibake(value: str) -> str:

@@ -4,9 +4,12 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import APIException
 
 from ai_assistant.assistant import AIAssistantError, test_openai_connectivity
 from ai_assistant.chat_agent import run_chat_agent
+from ai_assistant.chat_errors import safe_chat_error
+from ai_assistant.conversation_history import current_actor, require_history_permissions
 from ai_assistant.monitoring import get_mcp_monitor, get_skill_monitor
 from ai_assistant.serializers import (
     AIAssistantRequestSerializer,
@@ -195,6 +198,13 @@ def ai_chat(request):
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     ticket_number = str(data.get("ticket_number") or "").strip()
+    actor = current_actor(request.user, write=True)
+    if ticket_number:
+        require_history_permissions(actor, ("tickets.view_eventticket",))
+    def model_guard():
+        live_actor = current_actor(actor, write=True)
+        if ticket_number:
+            require_history_permissions(live_actor, ("tickets.view_eventticket",))
     ticket = None
     if ticket_number:
         ticket = EventTicket.objects.filter(ticket_number=ticket_number, is_deleted=False).first()
@@ -215,7 +225,6 @@ def ai_chat(request):
             "timeout_seconds": data.get("mcp_timeout_seconds"),
         },
     }
-
     mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
     if isinstance(mcp_overrides, dict):
         if mcp_overrides.get("enabled") is not False:
@@ -244,6 +253,15 @@ def ai_chat(request):
         recommended_skills = get_enabled_skill_names()
 
     if ticket:
+        if model_guard:
+            try:
+                model_guard()
+            except APIException:
+                raise
+            except Exception as exc:
+                failure = safe_chat_error(exc)
+                return Response({"error": failure["message"], "code": failure["code"]},
+                                status=status.HTTP_502_BAD_GATEWAY)
         try:
             TicketAIChatMessage.objects.create(
                 ticket=ticket,
@@ -264,15 +282,20 @@ def ai_chat(request):
             history_messages=data.get("messages") or [],
             overrides=overrides,
             recommended_skills=recommended_skills,
+            **({"model_call_guard": model_guard, "tool_guard": lambda **_kwargs: model_guard()}
+               if model_guard else {}),
         )
+        if model_guard:
+            model_guard()
         if ticket:
             try:
                 trace = result.get("trace") if isinstance(result, dict) else None
                 if not isinstance(trace, list):
                     trace = []
+                # Ownership is the initiating user; role identifies the AI speaker.
                 TicketAIChatMessage.objects.create(
                     ticket=ticket,
-                    created_by=None,
+                    created_by=actor,
                     role="assistant",
                     content=_fix_mojibake(str(result.get("response") or "No response")) if isinstance(result, dict) else "No response",
                     trace=_fix_mojibake_in_obj(trace),
@@ -285,18 +308,23 @@ def ai_chat(request):
                 result["trace"] = _fix_mojibake_in_obj(result.get("trace"))
         return Response(result)
     except Exception as exc:
+        if model_guard and isinstance(exc, APIException):
+            raise
+        failure = safe_chat_error(exc) if model_guard else None
+        error_message = failure["message"] if failure else str(exc)
         if ticket:
             try:
                 TicketAIChatMessage.objects.create(
                     ticket=ticket,
-                    created_by=None,
+                    created_by=actor,
                     role="assistant",
-                    content=_fix_mojibake(str(exc)),
+                    content=_fix_mojibake(error_message),
                     trace=[],
                 )
             except Exception:
                 pass
-        return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"error": error_message, **({"code": failure["code"]} if failure else {})},
+                        status=status.HTTP_502_BAD_GATEWAY)
 
 
 @api_view(["GET", "POST"])

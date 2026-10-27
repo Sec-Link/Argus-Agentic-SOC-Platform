@@ -7,6 +7,7 @@ from django.urls import re_path
 
 from .agent_views import AgentConfigViewSet, agent_catalog
 from .http_tool_views import HttpToolViewSet
+from .conversation_views import ConversationViewSet
 from .page_chat import page_chat
 from .page_agent import page_chat_approval
 from .mcp_protocol_views import mcp_rpc, mcp_tools_manifest
@@ -36,6 +37,8 @@ app_name = 'ai_assistant'
 
 urlpatterns = [
     # AI assistant endpoints
+    re_path(r'^conversations/?$', ConversationViewSet.as_view({'get': 'list', 'post': 'create'}), name='conversations'),
+    re_path(r'^conversations/(?P<pk>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', ConversationViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}), name='conversation_detail'),
     re_path(r'^agents/?$', AgentConfigViewSet.as_view({'get': 'list', 'post': 'create'}), name='agents'),
     re_path(r'^agents/catalog/?$', agent_catalog, name='agent_catalog'),
     re_path(r'^agents/(?P<name>[a-z][a-z0-9_]{0,47})/?$', AgentConfigViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='agent_detail'),

@@ -698,7 +698,10 @@ export interface PageChatMessage {
 
 export interface PageChatRequest {
   message: string;
-  messages: PageChatMessage[];
+  messages?: PageChatMessage[];
+  conversation_id?: string;
+  revision?: number;
+  context_options?: { share_page: boolean; include_content: boolean };
   /** Up to three enabled specialist names. Omit to let the coordinator choose. */
   agent_names?: string[];
   page_context?: PageChatContext;
@@ -761,11 +764,13 @@ export async function decidePageChatApproval(executionId: string, decision: 'app
 
 export async function fetchSlaTicketAiChatHistory(
   ticketNumber: string,
-  params?: { limit?: number; before?: string }
+  params?: { limit?: number; before?: string; scope?: 'mine' | 'all'; owner_id?: number }
 ) {
   const qp = new URLSearchParams();
   if (params?.limit) qp.set('limit', String(params.limit));
   if (params?.before) qp.set('before', params.before);
+  if (params?.scope) qp.set('scope', params.scope);
+  if (params?.owner_id) qp.set('owner_id', String(params.owner_id));
   const q = qp.toString();
   const res = await client.get(
     `${TICKETS_BASE}/${encodeURIComponent(ticketNumber)}/ai_chat_history/${q ? `?${q}` : ''}`

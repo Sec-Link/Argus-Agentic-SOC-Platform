@@ -26,6 +26,8 @@ export interface PageChatEvent {
   delegation_id?: string;
   code?: string;
   request_id?: string;
+  conversation_id?: string;
+  turn_id?: string;
   stage?: PageChatStage;
   status_code?: number;
 }
@@ -64,7 +66,8 @@ export function pageChatHttpError(status: number): PageChatStreamError {
     404: 'The chat endpoint was not found. Check that the frontend and backend versions match.',
     406: 'The server did not accept the streaming response format. Check the backend version.',
     408: 'The chat server timed out while receiving the request.',
-    413: 'The message or shared page context is too large. Reduce it before sending again.',
+    409: 'This conversation changed or is still running. Refresh it before continuing.',
+    413: 'The message, shared page context or saved conversation exceeds its limit. Saved history is retained. Reduce the new input or start a new conversation.',
     429: 'The chat server is limiting requests. Wait before sending another message.',
     502: 'The gateway could not reach the chat backend. Check the backend service.',
     503: 'The chat service is unavailable. Check the backend service before trying again.',
@@ -107,6 +110,9 @@ function parseFrame(frame: string): PageChatEvent | null {
   }
   if (event.code !== undefined && !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(event.code)) throw invalidStream();
   if (event.request_id !== undefined && !REQUEST_ID.test(event.request_id)) throw invalidStream();
+  for (const key of ['conversation_id', 'turn_id']) {
+    if (event[key] !== undefined && (typeof event[key] !== 'string' || !REQUEST_ID.test(event[key]))) throw invalidStream();
+  }
   if (event.stage !== undefined && !STAGES.has(event.stage)) throw invalidStream();
   if (event.status_code !== undefined && (!Number.isInteger(event.status_code) || event.status_code < 100 || event.status_code > 599)) throw invalidStream();
   if (event.iteration !== undefined && (!Number.isInteger(event.iteration) || event.iteration < 0)) throw new Error('Invalid AI iteration');

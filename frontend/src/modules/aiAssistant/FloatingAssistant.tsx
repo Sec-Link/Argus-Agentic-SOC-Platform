@@ -1,16 +1,17 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Mentions, Spin, Tag, Typography, theme } from 'antd';
+import { Alert, App, Button, Checkbox, Input, Mentions, Select, Spin, Tag, Typography, theme } from 'antd';
 import type { MentionsRef } from 'antd/es/mentions';
-import { Bot, Maximize2, Minimize2, Send, Square, X } from 'lucide-react';
+import { ArrowLeft, Bot, History, Maximize2, Minimize2, Pencil, Plus, RefreshCw, Send, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { streamAiAssistantPageChat, decidePageChatApproval, fetchAiAssistantAgentCatalog, clientChatDiagnostic, type AssistantAgentCatalogEntry, type PageChatContext, type PageChatDiagnostic, type PageChatMessage } from 'services/aiAssistant';
+import { streamAiAssistantPageChat, decidePageChatApproval, fetchAiAssistantAgentCatalog, clientChatDiagnostic, listConversations, createConversation, getConversation, renameConversation, deleteConversation, type ConversationSummary, type ConversationDetail, type AssistantAgentCatalogEntry, type PageChatContext, type PageChatDiagnostic } from 'services/aiAssistant';
 import { collectPageContext } from './pageContext';
 import { useAssistantPageContext } from './AssistantPageContext';
 import { applyChatEvent, failChatTurn, finishChatTurn, type ChatMessage, type ChatStep } from './chatState';
 import { validateAgentMentions } from './agentMentions';
+import { canContinueConversation, conversationError, hasConfirmedSavedTurn, restoreConversation, type HistoryMessage } from './conversationHistory';
 import styles from './FloatingAssistant.module.css';
 
 export default function FloatingAssistant({ pathname, readonly = false, docked, canDock, onDockChange }: {
@@ -21,8 +22,22 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
   onDockChange: (docked: boolean) => void;
 }) {
   const { token } = theme.useToken();
+  const { modal } = App.useApp();
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<HistoryMessage[]>([]);
+  const [conversation, setConversation] = useState<ConversationSummary | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyRows, setHistoryRows] = useState<ConversationSummary[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyHasNext, setHistoryHasNext] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [canViewAllHistory, setCanViewAllHistory] = useState(false);
+  const [historyScope, setHistoryScope] = useState<'mine' | 'all' | undefined>();
+  const [historyOwner, setHistoryOwner] = useState('');
+  const [needsRefresh, setNeedsRefresh] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -38,7 +53,115 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
   const wasOpenRef = useRef(false);
   const historyRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const historySequence = useRef(0);
+  const unconfirmedSaveRef = useRef<{ requestId?: string; failed: boolean } | null>(null);
   const registeredContext = useAssistantPageContext(pathname);
+  const busy = loading || historyBusy;
+  const reviewing = conversation?.readonly === true;
+  const canContinue = canContinueConversation(conversation);
+  const restore = (detail: ConversationDetail) => {
+    setConversation(detail);
+    setMessages(restoreConversation(detail));
+    const options = detail.turns.at(-1)?.context_options;
+    if (options) { setSharePage(options.share_page); setIncludeContent(options.include_content); }
+    setNeedsRefresh(false);
+    unconfirmedSaveRef.current = null;
+    setError('');
+  };
+
+  const loadHistory = async (page = historyPage, scope = historyScope, owner = historyOwner) => {
+    const sequence = ++historySequence.current;
+    setHistoryBusy(true);
+    setHistoryError('');
+    try {
+      const result = await listConversations(page, undefined, { scope, owner: owner || undefined });
+      if (sequence !== historySequence.current) return;
+      setHistoryRows(result.results);
+      setHistoryHasNext(!!result.next);
+      setHistoryPage(page);
+      setCanViewAllHistory(result.can_view_all);
+    } catch (err) {
+      if (sequence === historySequence.current) { setHistoryRows([]); setHistoryError(conversationError(err)); }
+    } finally {
+      if (sequence === historySequence.current) setHistoryBusy(false);
+    }
+  };
+
+  const openConversation = async (id: string, clearDraft = true) => {
+    if (requestRef.current || historyBusy) return;
+    const sequence = ++historySequence.current;
+    setHistoryBusy(true);
+    setHistoryError('');
+    try {
+      const detail = await getConversation(id);
+      if (sequence !== historySequence.current) return;
+      const unconfirmed = unconfirmedSaveRef.current;
+      if (!clearDraft && unconfirmed && !hasConfirmedSavedTurn(detail, unconfirmed.requestId, unconfirmed.failed)) {
+        setConversation(detail);
+        setHistoryError(unconfirmed.failed
+          ? 'Some output could not be saved and remains visible here. Open the conversation from History to review the saved information before continuing.'
+          : 'The saved result is not yet confirmed. Your visible output is retained. Refresh again when the execution has finished.');
+        return;
+      }
+      restore(detail);
+      if (clearDraft) setDraft('');
+      setApprovalBusy(new Set());
+      setShowHistory(false);
+    } catch (err) {
+      if (sequence === historySequence.current) setHistoryError(conversationError(err));
+    } finally {
+      if (sequence === historySequence.current) setHistoryBusy(false);
+    }
+  };
+
+  const newConversation = () => {
+    if (requestRef.current || historyBusy) return;
+    setConversation(null);
+    setMessages([]);
+    setDraft('');
+    setError('');
+    setHistoryError('');
+    setNeedsRefresh(false);
+    unconfirmedSaveRef.current = null;
+    setApprovalBusy(new Set());
+    setShowHistory(false);
+    setSharePage(true);
+    setIncludeContent(true);
+  };
+
+  const rename = async (id: string) => {
+    if (!renameTitle.trim() || busy || !historyRows.find((row) => row.id === id)?.can_manage) return;
+    setHistoryBusy(true);
+    setHistoryError('');
+    try {
+      const updated = await renameConversation(id, renameTitle.trim());
+      setHistoryRows((rows) => rows.map((row) => row.id === id ? updated : row));
+      setConversation((current) => current?.id === id ? updated : current);
+      setRenaming(null);
+    } catch (err) { setHistoryError(conversationError(err)); }
+    finally { setHistoryBusy(false); }
+  };
+
+  const remove = (row: ConversationSummary) => {
+    if (!row.can_manage || readonly) return;
+    modal.confirm({
+      title: 'Delete this conversation?',
+      content: 'Its messages, shared page snapshots and recorded execution steps will be permanently deleted.',
+      okText: 'Delete', okButtonProps: { danger: true }, cancelText: 'Cancel',
+      onOk: async () => {
+        if (requestRef.current) return;
+        setHistoryBusy(true);
+        setHistoryError('');
+        try {
+          await deleteConversation(row.id);
+          if (conversation?.id === row.id) { setConversation(null); setMessages([]); setDraft(''); setNeedsRefresh(false); unconfirmedSaveRef.current = null; }
+          setRenaming(null);
+          await loadHistory(historyRows.length === 1 && historyPage > 1 ? historyPage - 1 : historyPage);
+        } catch (err) { setHistoryError(conversationError(err)); }
+        finally { setHistoryBusy(false); }
+      },
+    });
+  };
 
   const capturePage = (): PageChatContext => {
     const page = collectPageContext(document.getElementById('argus-page-content'), pathname, includeContent && !registeredContext);
@@ -74,7 +197,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
     historyRef.current?.scrollTo({ top: historyRef.current.scrollHeight });
   }, [messages, loading, open]);
 
-  useEffect(() => () => requestRef.current?.abort(), []);
+  useEffect(() => () => { requestRef.current?.abort(); historySequence.current++; }, []);
 
   const close = () => {
     setOpen(false);
@@ -87,7 +210,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
 
   const decideApproval = async (index: number, step: ChatStep, decision: 'approve' | 'reject') => {
     const controller = requestRef.current;
-    if (!step.executionId || !controller || controller.signal.aborted || readonly || approvalBusy.has(step.id)) return;
+    if (!step.executionId || !controller || controller.signal.aborted || readonly || reviewing || approvalBusy.has(step.id)) return;
     setApprovalBusy((previous) => new Set(previous).add(step.id));
     setError('');
     try {
@@ -120,12 +243,18 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || requestRef.current || readonly) return;
+    if (!text || requestRef.current || readonly || historyBusy || !canContinue || needsRefresh) return;
     const controller = new AbortController();
     const assistantIndex = messages.length + 1;
     let turnStarted = false;
+    let receivedEvent = false;
+    let receivedRequestId: string | undefined;
+    let saveFailed = false;
+    let requestRejected = false;
+    let currentConversation = conversation;
     requestRef.current = controller;
     setError('');
+    setHistoryError('');
     setLoading(true);
     try {
       if (localStorage.getItem('siem_ai_enabled') === '0') {
@@ -148,21 +277,14 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
       catch (err) { setError(err instanceof Error ? err.message : 'Check your agent mentions.'); return; }
       const snapshot = sharePage ? capturePage() : undefined;
       setContext(snapshot || null);
-      // Limit the request history independently of the displayed conversation.
-      const history: PageChatMessage[] = [];
-      let historyLength = 0;
-      for (const item of messages.slice(-12).reverse()) {
-        const interruption = item.role === 'assistant' && item.status !== 'done'
-          ? `\n[Previous execution ${item.status}. Calls already started may have completed. Recorded tool steps: ${item.steps?.filter((step) => step.kind === 'tool').map((step) => `${step.label}: ${step.status}`).join('; ') || 'none'}.]`.slice(0, 2000) : '';
-        const content = item.content.slice(0, 8000 - interruption.length) + interruption;
-        if (!content.trim()) continue;
-        if (historyLength + content.length > 32000) break;
-        history.unshift({ role: item.role, content });
-        historyLength += content.length;
+      if (!currentConversation) {
+        currentConversation = await createConversation(controller.signal);
+        setConversation(currentConversation);
       }
+      if (controller.signal.aborted) return;
       turnStarted = true;
       setMessages((previous) => [...previous,
-        { role: 'user', content: text },
+        { role: 'user', content: text, pageContext: snapshot },
         { role: 'assistant', content: '', steps: [], status: 'running', phase: 'Connecting…' },
       ]);
       setDraft('');
@@ -170,7 +292,9 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
       await streamAiAssistantPageChat({
         message: text,
         agent_names: selectedAgents.length ? selectedAgents : undefined,
-        messages: history,
+        conversation_id: currentConversation.id,
+        revision: currentConversation.revision,
+        context_options: { share_page: sharePage, include_content: includeContent },
         page_context: snapshot,
         api_key: localStorage.getItem('siem_ai_api_key') || undefined,
         model: localStorage.getItem('siem_ai_model') || undefined,
@@ -178,6 +302,9 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
         timeout_seconds: Number.isFinite(timeout) && timeout > 0 ? Math.min(120, Math.max(1, Math.round(timeout))) : undefined,
       }, (event) => {
         if (controller.signal.aborted) return;
+        receivedEvent = true;
+        receivedRequestId ||= event.request_id;
+        if (event.code === 'conversation_save_failed') saveFailed = true;
         updateTurn(assistantIndex, (turn) => applyChatEvent(turn, event));
       }, controller.signal);
     } catch (err: unknown) {
@@ -186,10 +313,31 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
         return;
       }
       const diagnostic = clientChatDiagnostic(err);
+      requestRejected = !receivedEvent && [400, 401, 403, 404, 406, 409, 413, 429].includes(diagnostic.status_code || 0);
       if (turnStarted) updateTurn(assistantIndex, (turn) => failChatTurn(turn, diagnostic));
-      else setError(diagnostic.message);
+      else setError(conversationError(err));
+      if (!receivedEvent) { setDraft(text); setHistoryError(turnStarted ? diagnostic.message : conversationError(err)); }
     } finally {
       if (requestRef.current === controller) {
+        if (currentConversation && turnStarted) {
+          try {
+            const detail = await getConversation(currentConversation.id);
+            if (requestRejected || hasConfirmedSavedTurn(detail, receivedRequestId, saveFailed)) {
+              restore(detail);
+            } else {
+              setConversation(detail);
+              setNeedsRefresh(true);
+              unconfirmedSaveRef.current = { requestId: receivedRequestId, failed: saveFailed };
+              setHistoryError(saveFailed
+                ? 'Some output could not be saved and remains visible here. Open the conversation from History to review the saved information before continuing.'
+                : 'The saved result is not yet confirmed. Your visible output is retained. Refresh before sending again.');
+            }
+          } catch {
+            setNeedsRefresh(true);
+            unconfirmedSaveRef.current = { requestId: receivedRequestId, failed: saveFailed };
+            setHistoryError('Could not confirm the saved conversation. Your visible output is retained. Refresh before sending again.');
+          }
+        }
         requestRef.current = null;
         setLoading(false);
         inputRef.current?.focus();
@@ -212,6 +360,10 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
           <header className={styles.header} style={{ borderColor: token.colorBorderSecondary }}>
             <div className={styles.title}><Bot size={20} /><strong id="argus-ai-chat-title">Argus AI</strong><Tag color="blue">Page assistant</Tag></div>
             <div className={styles.headerActions}>
+              <Button type="text" aria-label={showHistory ? 'Back to conversation' : 'Conversation history'}
+                title={showHistory ? 'Back to conversation' : 'Conversation history'} disabled={busy}
+                icon={showHistory ? <ArrowLeft size={18} /> : <History size={18} />}
+                onClick={() => { if (showHistory) setShowHistory(false); else { setShowHistory(true); void loadHistory(1); } }} />
               <Button
                 type="text"
                 aria-label={docked ? 'Restore floating chat' : 'Expand AI chat'}
@@ -224,9 +376,60 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
               <Button type="text" aria-label="Close AI chat" icon={<X size={18} />} onClick={close} />
             </div>
           </header>
-          <div className={styles.context} style={{ borderColor: token.colorBorderSecondary }}>
-            <Checkbox checked={sharePage} onChange={(event) => setSharePage(event.target.checked)}>Share current page</Checkbox>
-            {sharePage && <Checkbox checked={includeContent} onChange={(event) => setIncludeContent(event.target.checked)}>{registeredContext ? 'Include ticket data' : 'Include visible content'}</Checkbox>}
+          {showHistory ? <>
+            <div className={styles.historyToolbar}>
+              <Typography.Text strong>Conversation history</Typography.Text>
+              <Button size="small" icon={<Plus size={14} />} disabled={busy || readonly} onClick={newConversation}>New chat</Button>
+            </div>
+            {canViewAllHistory && <div className={styles.historyToolbar}>
+              <Select aria-label="Conversation history scope" value={historyScope || 'all'} disabled={busy}
+                style={{ minWidth: 135 }} options={[{ value: 'all', label: 'All users' }, { value: 'mine', label: 'My history' }]}
+                onChange={(value: 'mine' | 'all') => { setHistoryScope(value); setHistoryOwner(''); void loadHistory(1, value, ''); }} />
+              {(historyScope || 'all') === 'all' && <Input.Search aria-label="Filter history by username" placeholder="Username"
+                allowClear value={historyOwner} maxLength={150} disabled={busy}
+                onChange={(event) => setHistoryOwner(event.target.value)} onSearch={(value) => void loadHistory(1, 'all', value)} />}
+            </div>}
+            {historyError && <Alert type="error" showIcon message={historyError} />}
+            <div className={styles.history} aria-label="Saved conversations" aria-busy={historyBusy}>
+              {historyBusy && <Spin size="small" />}
+              {!historyBusy && !historyRows.length && !historyError && <Typography.Text type="secondary">No saved conversations yet. Your conversations are saved when you send a message.</Typography.Text>}
+              {historyRows.map((row) => <div key={row.id} className={styles.savedConversation} style={{ borderColor: token.colorBorderSecondary }}>
+                {renaming === row.id ? <>
+                  <Input aria-label="Conversation title" value={renameTitle} maxLength={120} disabled={busy}
+                    onChange={(event) => setRenameTitle(event.target.value)} onPressEnter={() => void rename(row.id)} />
+                  <div className={styles.actions}>
+                    <Button size="small" disabled={busy} onClick={() => setRenaming(null)}>Cancel</Button>
+                    <Button size="small" type="primary" disabled={busy || !renameTitle.trim()} onClick={() => void rename(row.id)}>Save title</Button>
+                  </div>
+                </> : <>
+                  <Button type="text" className={styles.conversationTitle} disabled={busy} onClick={() => void openConversation(row.id)}>{row.title || 'New conversation'}</Button>
+                  <Typography.Text type="secondary">{row.owner.username}{row.readonly && ' · Read-only'}</Typography.Text>
+                  <div className={styles.actions}>
+                    <Typography.Text type="secondary">{new Date(row.updated_at).toLocaleString()}</Typography.Text>
+                    <div className={styles.headerActions}>
+                      {row.active && <Tag>Running</Tag>}
+                      <Button size="small" type="text" aria-label={`Rename ${row.title}`} title="Rename" icon={<Pencil size={14} />} disabled={busy || readonly || row.active || !row.can_manage}
+                        onClick={() => { setRenaming(row.id); setRenameTitle(row.title); }} />
+                      <Button size="small" type="text" danger aria-label={`Delete ${row.title}`} title="Delete" icon={<Trash2 size={14} />} disabled={busy || readonly || row.active || !row.can_manage} onClick={() => remove(row)} />
+                    </div>
+                  </div>
+                </>}
+              </div>)}
+            </div>
+            <div className={styles.historyToolbar}>
+              <Button size="small" disabled={busy || historyPage <= 1} onClick={() => void loadHistory(historyPage - 1)}>Previous</Button>
+              <Button size="small" icon={<RefreshCw size={14} />} disabled={busy} onClick={() => void loadHistory()}>Refresh</Button>
+              <Button size="small" disabled={busy || !historyHasNext} onClick={() => void loadHistory(historyPage + 1)}>Next</Button>
+            </div>
+          </> : <>
+          <div className={styles.conversationBar}>
+            <Typography.Text ellipsis title={conversation?.title}>{conversation?.title || 'New conversation'}</Typography.Text>
+            {reviewing && <Tag>Read-only · {conversation?.owner.username}</Tag>}
+            {conversation && <Button size="small" type="text" icon={<RefreshCw size={14} />} aria-label="Refresh saved conversation" title="Refresh saved conversation" disabled={busy} onClick={() => void openConversation(conversation.id, false)} />}
+          </div>
+          {!reviewing && <div className={styles.context} style={{ borderColor: token.colorBorderSecondary }}>
+            <Checkbox checked={sharePage} disabled={busy} onChange={(event) => setSharePage(event.target.checked)}>Share current page</Checkbox>
+            {sharePage && <Checkbox checked={includeContent} disabled={busy} onChange={(event) => setIncludeContent(event.target.checked)}>{registeredContext ? 'Include ticket data' : 'Include visible content'}</Checkbox>}
             {sharePage && context && (
               <details>
                 <summary>Page context · {context.title || context.path}</summary>
@@ -237,7 +440,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
                 <Button size="small" onClick={() => setContext(capturePage())}>Refresh preview</Button>
               </details>
             )}
-          </div>
+          </div>}
           <div className={styles.history} ref={historyRef} role="log" aria-live="polite" aria-label="AI conversation" aria-busy={loading}>
             {!messages.length && (
               <div className={styles.empty}>
@@ -248,7 +451,11 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
             )}
             {messages.map((item, index) => (
               <div key={index} className={styles.message} style={{ background: item.role === 'user' ? token.colorPrimaryBg : token.colorFillAlter }}>
-                <Typography.Text strong>{item.role === 'user' ? 'You' : 'Argus AI'}</Typography.Text>
+                <Typography.Text strong>{item.role === 'user' ? reviewing ? conversation?.owner.username : 'You' : 'Argus AI'}</Typography.Text>
+                {item.pageContext && <details className={styles.steps}>
+                  <summary>Shared page snapshot: {item.pageContext.title || item.pageContext.path}</summary>
+                  <pre className={styles.preview}>{item.pageContext.path}{'\n'}{item.pageContext.content || 'No page text was shared.'}</pre>
+                </details>}
                 {!!item.steps?.length && (
                   <details className={styles.steps} open={item.status === 'running'}>
                     <summary>Execution steps · {item.steps.length}</summary>
@@ -280,7 +487,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
                   <FailureDetails key={step.id} diagnostic={step.diagnostic!} specialist />
                 ))}
                 {/* Keep pending actions outside collapsed steps and below streamed text. */}
-                {item.status === 'running' && item.steps?.filter((step) => step.status === 'approval').map((step) => (
+                {!reviewing && item.status === 'running' && item.steps?.filter((step) => step.status === 'approval').map((step) => (
                   <section key={step.id} className={styles.approval} aria-label={`Approval required: ${step.agentTitle || step.agent || 'AI'} · ${step.label}`}
                     style={{ background: token.colorWarningBg, borderColor: token.colorWarningBorder }}>
                     <Typography.Text strong>Approval required</Typography.Text>
@@ -298,7 +505,10 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
             ))}
           </div>
           <footer className={styles.footer} style={{ borderColor: token.colorBorderSecondary }}>
+            {reviewing && <Alert type="info" showIcon message="Read-only history review. Only the owner can continue, rename, delete or approve calls in this conversation." />}
             {readonly && <Alert type="info" showIcon message="Chat is unavailable for read-only accounts." />}
+            {conversation?.active && !loading && <Alert type="info" showIcon message="This conversation has an active execution. Refresh to check its result before continuing." />}
+            {historyError && <Alert type="error" showIcon message={historyError} closable onClose={() => setHistoryError('')} />}
             {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
             {agentsError && <Typography.Text type="warning">{agentsError}</Typography.Text>}
             <Mentions
@@ -313,7 +523,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
               aria-label="Message to AI"
               autoSize={{ minRows: 2, maxRows: 5 }}
               maxLength={4000}
-              disabled={loading || readonly}
+              disabled={busy || readonly || !canContinue || needsRefresh}
               onPressEnter={(event) => {
                 if (!event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                   event.preventDefault();
@@ -323,12 +533,13 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>Coordinator assigns automatically. @mentions limit delegation to those agents (up to 3).</Typography.Text>
             <div className={styles.actions}>
-              <Button type="text" size="small" disabled={loading || !messages.length} onClick={() => { setMessages([]); setError(''); }}>Clear chat</Button>
+              <Button type="text" size="small" icon={<Plus size={14} />} disabled={busy || readonly} onClick={newConversation}>New chat</Button>
               {loading
                 ? <Button icon={<Square size={14} />} onClick={stop}>Stop</Button>
-                : <Button type="primary" icon={<Send size={16} />} onClick={() => void send()} disabled={!draft.trim() || readonly}>Send</Button>}
+                : <Button type="primary" icon={<Send size={16} />} onClick={() => void send()} disabled={!draft.trim() || readonly || busy || !canContinue || needsRefresh}>Send</Button>}
             </div>
           </footer>
+          </>}
         </section>
       )}
       <Button

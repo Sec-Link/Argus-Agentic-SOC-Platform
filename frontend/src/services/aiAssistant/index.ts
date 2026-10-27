@@ -22,3 +22,7 @@ export {
   type PageChatMessage,
 } from '../../api';
 export { clientChatDiagnostic, type PageChatEvent, type PageChatDiagnostic } from './stream';
+export {
+  listConversations, createConversation, getConversation, renameConversation, deleteConversation,
+  type ConversationSummary, type ConversationDetail, type ConversationTurn,
+} from './conversations';

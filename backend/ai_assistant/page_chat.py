@@ -53,11 +53,19 @@ class PageChatMessageSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=8000)
 
 
+class ConversationContextOptionsSerializer(serializers.Serializer):
+    share_page = serializers.BooleanField(default=True)
+    include_content = serializers.BooleanField(default=True)
+
+
 class PageChatRequestSerializer(serializers.Serializer):
     message = serializers.CharField(max_length=4000)
     stream = serializers.BooleanField(default=False)
     messages = PageChatMessageSerializer(many=True, max_length=12, required=False)
     page_context = PageContextSerializer(required=False)
+    conversation_id = serializers.UUIDField(required=False)
+    revision = serializers.IntegerField(min_value=0, required=False)
+    context_options = ConversationContextOptionsSerializer(required=False)
     api_key = serializers.CharField(max_length=4096, allow_blank=True, required=False)
     model = serializers.CharField(max_length=200, allow_blank=True, required=False)
     base_url = serializers.URLField(max_length=2000, allow_blank=True, required=False)
@@ -80,6 +88,15 @@ class PageChatRequestSerializer(serializers.Serializer):
         return value
 
     def validate(self, data):
+        if "conversation_id" in data:
+            if not data["stream"]:
+                raise serializers.ValidationError({"conversation_id": "Saved conversations require streaming chat."})
+            if "revision" not in data:
+                raise serializers.ValidationError({"revision": "Reload the conversation before continuing."})
+            if "messages" in data:
+                raise serializers.ValidationError({"messages": "Saved conversation history is loaded by the server."})
+        elif "revision" in data or "context_options" in data:
+            raise serializers.ValidationError({"conversation_id": "A conversation is required for saved context options."})
         if data.get("agent_names") and not data["stream"]:
             raise serializers.ValidationError({"agent_names": "Agent selection requires streaming chat."})
         base_url = data.get("base_url")

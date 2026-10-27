@@ -1,4 +1,5 @@
-﻿import uuid
+import uuid
+from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 from tickets.models import EventTicket
@@ -210,3 +211,44 @@ class TicketAIChatMessage(models.Model):
 
     def __str__(self) -> str:
         return f"{self.ticket_id} {self.role} @ {self.created_at}"
+
+
+class PageChatConversation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    title = models.CharField(max_length=120, default="New conversation")
+    revision = models.PositiveIntegerField(default=0)
+    active_request_id = models.UUIDField(null=True, blank=True)
+    active_until = models.DateTimeField(null=True, blank=True)
+    stored_bytes = models.PositiveIntegerField(default=0)
+    required_permissions = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_page_chat_conversations"
+        indexes = [models.Index(fields=["owner", "-updated_at"], name="ai_page_chat_owner_idx")]
+
+
+class PageChatTurn(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(PageChatConversation, on_delete=models.CASCADE, related_name="turns")
+    sequence = models.PositiveIntegerField()
+    request_id = models.UUIDField(unique=True)
+    message = models.TextField()
+    page_context = models.JSONField(null=True, blank=True)
+    agent_names = models.JSONField(default=list, blank=True)
+    context_options = models.JSONField(default=dict, blank=True)
+    events = models.JSONField(default=list, blank=True)
+    response = models.TextField(blank=True)
+    status = models.CharField(max_length=10, default="running", choices=[
+        ("running", "Running"), ("done", "Done"), ("error", "Error"), ("stopped", "Stopped"),
+    ])
+    stored_bytes = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ai_page_chat_turns"
+        ordering = ["sequence"]
+        constraints = [models.UniqueConstraint(fields=["conversation", "sequence"], name="ai_page_chat_turn_sequence")]

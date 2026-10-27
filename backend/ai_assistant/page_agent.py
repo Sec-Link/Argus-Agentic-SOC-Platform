@@ -2,6 +2,7 @@
 
 import json
 import logging
+from math import ceil
 from queue import Empty, Full, Queue
 import re
 from threading import Event, Thread
@@ -10,7 +11,7 @@ from urllib.parse import unquote_plus, urlsplit
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from django.db import connections, transaction
+from django.db import DatabaseError, connections, transaction
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
@@ -31,6 +32,7 @@ from ai_assistant.http_tool_crypto import decrypt_http_tool_secret
 from ai_assistant.http_tools import HttpToolError, build_tool_request, execute_http_tool, tool_input_schema
 from ai_assistant.skill_config import get_enabled_skill_names
 from ai_assistant.multi_agent import check_agent, enabled_agents, run_multi_agent
+from ai_assistant.conversation_history import ConversationConflict, ConversationLimit, start_conversation_turn
 
 
 APPROVAL_SECONDS = 90
@@ -191,7 +193,7 @@ def _http_tools(cancel_event) -> list[BaseTool]:
 
 class PageToolPolicy:
     def __init__(self, user_id, request_id, cancel_event, servers, *, agent_context=None, external_denied=None,
-                 event_callback=None):
+                 event_callback=None, approval_seconds=90, deadline=None, execution_guard=None):
         self.user_id = user_id
         self.request_id = request_id
         self.cancel_event = cancel_event
@@ -199,6 +201,9 @@ class PageToolPolicy:
         self.agent_context = agent_context or {}
         self.external_denied = external_denied if external_denied is not None else Event()
         self.event_callback = event_callback
+        self.approval_seconds = approval_seconds
+        self.deadline = deadline
+        self.execution_guard = execution_guard
 
     def _check_agent(self):
         if self.agent_context:
@@ -224,6 +229,8 @@ class PageToolPolicy:
         )
         user = _actor(self.user_id)
         self._check_agent()
+        if self.execution_guard:
+            self.execution_guard()
         if not endpoint:
             _check_internal(user, name, arguments)
             return
@@ -240,13 +247,18 @@ class PageToolPolicy:
                          request=public_event(request))
         else:
             self._server_enabled(endpoint)
-        audit["expires_at"] = timezone.now().timestamp() + APPROVAL_SECONDS
+        approval_seconds = self.approval_seconds
+        if self.deadline is not None:
+            approval_seconds = min(approval_seconds, max(0, self.deadline - monotonic()))
+        if approval_seconds <= 0:
+            raise ChatCancelled("Chat execution deadline reached")
+        audit["expires_at"] = timezone.now().timestamp() + approval_seconds
         MCPToolExecution.objects.filter(pk=execution_id).update(
             source="page_chat", status="awaiting_approval", response_payload={"_page_chat": audit},
         )
         approval = {
             "type": "approval_required", "execution_id": execution_id, "call_id": call_id,
-            "tool": name, "arguments": arguments, "endpoint": endpoint, "expires_in": APPROVAL_SECONDS,
+            "tool": name, "arguments": arguments, "endpoint": endpoint, "expires_in": ceil(approval_seconds),
         }
         if request is not None:
             approval["request"] = request
@@ -266,6 +278,8 @@ class PageToolPolicy:
             if row.status == "approved":
                 _actor(self.user_id)
                 self._check_agent()
+                if self.execution_guard:
+                    self.execution_guard()
                 if meta.get("source") == "http":
                     _http_config(meta)
                 else:
@@ -325,14 +339,29 @@ def stream_page_chat(user, data):
         "base_url": servers[0]["endpoint"] if servers else "", "token": servers[0]["token"] if servers else "",
         "servers": servers, "timeout_seconds": 8,
     }
-    history = list(data.get("messages", []))
+    request_id = str(uuid4())
+    recorder = None
+    if data.get("conversation_id"):
+        recorder, history = start_conversation_turn(
+            user, data, request_id, execution_timeout_seconds=STREAM_SECONDS,
+        )
+    else:
+        history = list(data.get("messages", []))
     if "page_context" in data:
         history.append({"role": "user", "content": "Untrusted current frontend page snapshot (JSON data):\n"
                         + json.dumps(data["page_context"], ensure_ascii=False)})
     cancelled, finished = Event(), Event()
+    deadline = monotonic() + STREAM_SECONDS
     events = Queue(maxsize=128)
-    request_id = str(uuid4())
     progress = {"stage": "setup"}
+
+    def persist(action, *args):
+        try:
+            return action(*args)
+        except ConversationLimit as exc:
+            raise ModelCallError("Conversation history limit reached", code="conversation_limit") from exc
+        except DatabaseError as exc:
+            raise ModelCallError("Conversation history could not be saved", code="conversation_save_failed") from exc
 
     def failure_event(details):
         event = {**details, "request_id": request_id}
@@ -352,15 +381,22 @@ def stream_page_chat(user, data):
         progress = event_progress(event, progress)
         if event.get("type") in {"error", "agent_error"}:
             event = failure_event(event)
+        event = public_event(event)
+        if recorder:
+            persist(recorder.record, event)
         while not cancelled.is_set():
             try:
-                events.put(public_event(event), timeout=0.25)
+                events.put(event, timeout=0.25)
                 return
             except Full:
                 continue
         raise ChatCancelled("Chat stopped")
 
-    policy = PageToolPolicy(user.pk, request_id, cancelled, servers_by_endpoint, event_callback=emit)
+    policy = PageToolPolicy(
+        user.pk, request_id, cancelled, servers_by_endpoint, event_callback=emit,
+        approval_seconds=APPROVAL_SECONDS, deadline=deadline,
+        execution_guard=lambda: check_actor(),
+    )
 
     def cleanup(*, close_connections=False):
         for action in [policy.cancel_pending, *([connections.close_all] if close_connections else [])]:
@@ -383,6 +419,15 @@ def stream_page_chat(user, data):
             context.pop("delegation_id", None)
         return {"type": "error", **context, **safe_chat_error(exc)}
 
+    def check_actor():
+        if recorder:
+            try:
+                recorder.check_access()
+            except ConversationConflict as exc:
+                raise ChatCancelled("The saved conversation is no longer active") from exc
+        else:
+            _actor(user.pk)
+
     def produce():
         try:
             tools = [*_builtin_tools(), *_http_tools(cancelled)]
@@ -394,14 +439,18 @@ def stream_page_chat(user, data):
                 tool_result_transform=public_event, safe_tool_errors=True,
                 audit_source="page_chat",
             )
+            if recorder:
+                worker_kwargs["model_call_guard"] = check_actor
             if agents:
                 result = run_multi_agent(
                     agents=agents, selected_names=selected_names, worker_kwargs=worker_kwargs,
-                    check_actor=lambda: _actor(user.pk),
+                    check_actor=check_actor,
                     policy_factory=lambda context: PageToolPolicy(
                         user.pk, policy.request_id, cancelled, servers_by_endpoint,
                         agent_context=context, external_denied=policy.external_denied,
                         event_callback=emit,
+                        approval_seconds=APPROVAL_SECONDS, deadline=deadline,
+                        execution_guard=check_actor,
                     ),
                 )
             else:
@@ -420,20 +469,31 @@ def stream_page_chat(user, data):
             cleanup(close_connections=True)
 
     def frames():
-        deadline = monotonic() + STREAM_SECONDS
         try:
-            Thread(target=produce, name="page-chat-agent", daemon=True).start()
-            yield "data: " + json.dumps({
+            initial = {
                 "type": "status", "message": "Connecting to AI Assistant…", "request_id": request_id,
-            }, ensure_ascii=False) + "\n\n"
+            }
+            if recorder:
+                initial.update(conversation_id=str(recorder.conversation_id), turn_id=str(recorder.turn_id))
+                persist(recorder.record, initial)
+            if monotonic() < deadline:
+                Thread(target=produce, name="page-chat-agent", daemon=True).start()
+            yield "data: " + json.dumps(initial, ensure_ascii=False) + "\n\n"
             while monotonic() < deadline:
                 try:
                     event = events.get(timeout=1)
                 except Empty:
                     if finished.is_set():
                         break
+                    if recorder:
+                        persist(recorder.flush)
                     yield ": keepalive\n\n"
                     continue
+                if recorder:
+                    if event.get("type") in {"done", "error"}:
+                        persist(recorder.finish, "done" if event["type"] == "done" else "error")
+                    else:
+                        persist(recorder.flush)
                 yield "data: " + json.dumps(event, ensure_ascii=False, default=str) + "\n\n"
                 if event.get("type") in {"done", "error"}:
                     return
@@ -450,15 +510,36 @@ def stream_page_chat(user, data):
                     "Use the request reference to check the server logs."
                 ),
             })
+            if recorder:
+                persist(recorder.record, event)
+                persist(recorder.finish, "error")
             yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
         except Exception as exc:
+            cancelled.set()
             event = failure_event(exception_event(exc))
+            if recorder:
+                try:
+                    persist(recorder.record, event)
+                    persist(recorder.finish, "error")
+                except Exception:
+                    logger.warning("Page chat history save failed: request_id=%s code=conversation_save_failed", request_id)
             yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
         finally:
-            cancelled.set()
-            cleanup()
+            close_stream()
+
+    def close_stream():
+        cancelled.set()
+        if recorder:
+            try:
+                persist(recorder.finish, "stopped")
+            except Exception:
+                logger.warning("Page chat history save failed: request_id=%s code=conversation_save_failed", request_id)
+        cleanup()
 
     response = StreamingHttpResponse(frames(), content_type="text/event-stream; charset=utf-8")
+    if recorder:
+        # Django also calls this when a response closes before iteration starts.
+        response._resource_closers.append(close_stream)
     response["Cache-Control"] = "no-cache, no-store, no-transform"
     response["X-Accel-Buffering"] = "no"
     # Django's GZipMiddleware otherwise buffers small token chunks.
