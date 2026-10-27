@@ -32,7 +32,8 @@ def check_agent(context):
         raise PermissionError("The agent configuration changed. Start a new message.")
 
 
-def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, check_actor):
+def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, check_actor,
+                    max_delegations=MAX_DELEGATIONS, coordinator_max_iterations=101):
     """The coordinator has delegation tools only; workers cannot delegate."""
     emit = worker_kwargs["event_callback"]
     cancel = worker_kwargs["cancel_event"]
@@ -45,8 +46,8 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
         }
         for name, row in available.items()
     }
-    delegation_budget = min(MAX_DELEGATIONS, sum(limit["max_delegations"] for limit in limits.values()))
-    coordinator_budget = max(6, delegation_budget + 1)
+    delegation_budget = min(max_delegations, sum(limit["max_delegations"] for limit in limits.values()))
+    coordinator_budget = min(coordinator_max_iterations, max(6, delegation_budget + 1))
     coordinator_iteration = 0
     attempted = set()
     calls = 0
@@ -155,7 +156,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
         coordinator_iteration += 1
         if coordinator_iteration >= coordinator_budget:
             if set(selected_names) - attempted:
-                raise RuntimeError("Selected agents were not dispatched within the model budget.")
+                raise ModelCallError("Selected agents were not dispatched within the model budget.", code="iteration_limit")
             return "none"
         if set(selected_names) - attempted:
             return {"type": "function", "function": {"name": "delegate_to_agent"}}

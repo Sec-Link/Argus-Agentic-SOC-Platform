@@ -146,12 +146,12 @@ export default function AgentSettings({ readonly = false }: { readonly?: boolean
         </Form.Item>
         <Form.Item name="max_iterations" label="Model rounds per task" required
           rules={[{ validator: async (_, value) => { parseAgentLimit(value); } }]}
-          extra="Maximum model calls for each delegated task (1–100, default 3). This counts model rounds, not tool calls. Optional skill selection runs outside this budget. The whole message still has a 5-minute time limit.">
+          extra="Maximum model calls for each delegated task (1–100, default 3). Model rounds used to select and read skills also count. The whole-message deadline is configured in Execution limits.">
           <Input type="text" inputMode="numeric" />
         </Form.Item>
         <Form.Item name="max_delegations" label="Delegations per message" required
           rules={[{ validator: async (_, value) => { parseAgentLimit(value); } }]}
-          extra="Maximum assignments to this role in one user message (1–100, default 3). Failed attempts count. All roles share a total limit of 100 assignments per message; the coordinator may use fewer or none.">
+          extra="Maximum assignments to this role in one user message (1–100, default 3). Failed attempts count. All roles also share the total assignment limit configured in Execution limits; the coordinator may use fewer or none.">
           <Input type="text" inputMode="numeric" />
         </Form.Item>
         <Form.Item name="instructions" label="Agent instructions" rules={[{ required: true, whitespace: true }]} extra="Describe the investigation approach and expected output. Existing permissions and tool approvals still apply.">

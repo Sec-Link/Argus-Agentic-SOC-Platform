@@ -25,6 +25,7 @@ _MESSAGES = {
     "model_error": "The model request failed. Check the AI Assistant configuration.",
     "conversation_limit": "Conversation history reached the storage limit. Saved information is retained; start a new conversation.",
     "conversation_save_failed": "Conversation history could not be saved. Refresh the history before continuing.",
+    "iteration_limit": "The agent reached its configured model round limit before completing the task. Review Execution limits or the specialist's Agent settings.",
     "permission_denied": "This action is not permitted, or its configuration changed. Check permissions and start a new message.",
     "internal_error": "An internal AI execution error occurred. Use the request ID to check the backend logs.",
 }

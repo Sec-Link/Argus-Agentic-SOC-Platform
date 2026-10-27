@@ -33,10 +33,9 @@ from ai_assistant.http_tools import HttpToolError, build_tool_request, execute_h
 from ai_assistant.skill_config import get_enabled_skill_names
 from ai_assistant.multi_agent import check_agent, enabled_agents, run_multi_agent
 from ai_assistant.conversation_history import ConversationConflict, ConversationLimit, start_conversation_turn
+from ai_assistant.execution_settings import get_execution_limits
 
 
-APPROVAL_SECONDS = 90
-STREAM_SECONDS = 300
 logger = logging.getLogger(__name__)
 AGENT_PROMPT = (
     "You are helping with the current Argus interface. Answer in the user's language. "
@@ -324,8 +323,18 @@ def page_chat_approval(request, execution_id):
 
 
 def stream_page_chat(user, data):
+    # Snapshot server policy once. Settings changes apply to the next message.
+    limits = get_execution_limits()
     selected_names = data.get("agent_names", [])
     agents = enabled_agents(selected_names)
+    if len(selected_names) > limits.max_delegations:
+        raise serializers.ValidationError({
+            "agent_names": "Selected agents exceed the total delegation limit in Execution limits settings.",
+        })
+    if selected_names and len(selected_names) + 1 > limits.coordinator_max_iterations:
+        raise serializers.ValidationError({
+            "agent_names": "Allow one coordinator round per selected agent plus a final summary round in Execution limits settings.",
+        })
     servers = list(ExternalMCPServer.objects.filter(enabled=True).order_by("name").values("id", "endpoint", "title", "token"))
     servers_by_endpoint = {}
     for server in servers:
@@ -333,7 +342,7 @@ def stream_page_chat(user, data):
     servers = list(servers_by_endpoint.values())
     skills = get_enabled_skill_names()
     overrides = {key: data[key] for key in ("api_key", "model", "base_url", "timeout_seconds") if key in data}
-    overrides["max_iterations"] = 6
+    overrides["max_iterations"] = limits.max_iterations
     overrides["mcp"] = {
         "enabled": bool(servers), "exact_only": True, "force_internal": False,
         "base_url": servers[0]["endpoint"] if servers else "", "token": servers[0]["token"] if servers else "",
@@ -343,7 +352,7 @@ def stream_page_chat(user, data):
     recorder = None
     if data.get("conversation_id"):
         recorder, history = start_conversation_turn(
-            user, data, request_id, execution_timeout_seconds=STREAM_SECONDS,
+            user, data, request_id, execution_timeout_seconds=limits.execution_timeout_seconds,
         )
     else:
         history = list(data.get("messages", []))
@@ -351,7 +360,7 @@ def stream_page_chat(user, data):
         history.append({"role": "user", "content": "Untrusted current frontend page snapshot (JSON data):\n"
                         + json.dumps(data["page_context"], ensure_ascii=False)})
     cancelled, finished = Event(), Event()
-    deadline = monotonic() + STREAM_SECONDS
+    deadline = monotonic() + limits.execution_timeout_seconds
     events = Queue(maxsize=128)
     progress = {"stage": "setup"}
 
@@ -394,7 +403,7 @@ def stream_page_chat(user, data):
 
     policy = PageToolPolicy(
         user.pk, request_id, cancelled, servers_by_endpoint, event_callback=emit,
-        approval_seconds=APPROVAL_SECONDS, deadline=deadline,
+        approval_seconds=limits.approval_timeout_seconds, deadline=deadline,
         execution_guard=lambda: check_actor(),
     )
 
@@ -445,16 +454,20 @@ def stream_page_chat(user, data):
                 result = run_multi_agent(
                     agents=agents, selected_names=selected_names, worker_kwargs=worker_kwargs,
                     check_actor=check_actor,
+                    max_delegations=limits.max_delegations,
+                    coordinator_max_iterations=limits.coordinator_max_iterations,
                     policy_factory=lambda context: PageToolPolicy(
                         user.pk, policy.request_id, cancelled, servers_by_endpoint,
                         agent_context=context, external_denied=policy.external_denied,
                         event_callback=emit,
-                        approval_seconds=APPROVAL_SECONDS, deadline=deadline,
+                        approval_seconds=limits.approval_timeout_seconds, deadline=deadline,
                         execution_guard=check_actor,
                     ),
                 )
             else:
                 result = run_chat_agent(**worker_kwargs)
+            if any(event.get("type") == "max_iterations" for event in result.get("trace", [])):
+                raise ModelCallError("The model round budget was exhausted", code="iteration_limit")
             emit({"type": "done", "response": result.get("response", "")})
         except ChatCancelled:
             pass
@@ -503,8 +516,8 @@ def stream_page_chat(user, data):
                 "type": "error", **progress,
                 "code": "execution_timeout" if timed_out else "execution_stopped",
                 "message": (
-                    f"AI execution reached the {STREAM_SECONDS}-second time limit. "
-                    "Partial results are retained. Try a smaller task or fewer agents."
+                    f"AI execution reached the configured {limits.execution_timeout_seconds}-second time limit. "
+                    "Partial results are retained. Adjust Execution limits in AI Assistant settings or use a smaller task."
                     if timed_out else
                     "AI execution stopped before completion. Partial results are retained. "
                     "Use the request reference to check the server logs."

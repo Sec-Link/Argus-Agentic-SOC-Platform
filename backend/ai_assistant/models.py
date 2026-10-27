@@ -252,3 +252,45 @@ class PageChatTurn(models.Model):
         db_table = "ai_page_chat_turns"
         ordering = ["sequence"]
         constraints = [models.UniqueConstraint(fields=["conversation", "sequence"], name="ai_page_chat_turn_sequence")]
+
+
+class ExecutionSettings(models.Model):
+    """One server-managed policy for new floating-assistant executions."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    execution_timeout_seconds = models.PositiveSmallIntegerField(
+        default=300, validators=[MinValueValidator(30), MaxValueValidator(7200)],
+    )
+    approval_timeout_seconds = models.PositiveSmallIntegerField(
+        default=90, validators=[MinValueValidator(10), MaxValueValidator(1800)],
+    )
+    max_iterations = models.PositiveSmallIntegerField(
+        default=6, validators=[MinValueValidator(1), MaxValueValidator(1000)],
+    )
+    coordinator_max_iterations = models.PositiveSmallIntegerField(
+        default=101, validators=[MinValueValidator(2), MaxValueValidator(1001)],
+    )
+    max_delegations = models.PositiveSmallIntegerField(
+        default=100, validators=[MinValueValidator(1), MaxValueValidator(1000)],
+    )
+
+    class Meta:
+        db_table = "ai_execution_settings"
+        default_permissions = ("view", "change")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(id=1), name="ai_execution_settings_singleton"),
+            models.CheckConstraint(
+                condition=models.Q(
+                    execution_timeout_seconds__gte=30, execution_timeout_seconds__lte=7200,
+                    approval_timeout_seconds__gte=10, approval_timeout_seconds__lte=1800,
+                    max_iterations__gte=1, max_iterations__lte=1000,
+                    coordinator_max_iterations__gte=2, coordinator_max_iterations__lte=1001,
+                    max_delegations__gte=1, max_delegations__lte=1000,
+                ),
+                name="ai_execution_settings_bounds",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(approval_timeout_seconds__lte=models.F("execution_timeout_seconds")),
+                name="ai_execution_approval_deadline",
+            ),
+        ]

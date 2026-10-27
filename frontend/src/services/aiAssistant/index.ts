@@ -26,3 +26,7 @@ export {
   listConversations, createConversation, getConversation, renameConversation, deleteConversation,
   type ConversationSummary, type ConversationDetail, type ConversationTurn,
 } from './conversations';
+export {
+  getAiAssistantExecutionSettings, updateAiAssistantExecutionSettings,
+  type AssistantExecutionSettings,
+} from './executionSettings';

@@ -3,6 +3,7 @@ import { Alert, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switc
 import { getIsReadonly } from '../../lib/auth';
 import HttpToolsSettings from './HttpToolsSettings';
 import AgentSettings from './AgentSettings';
+import ExecutionSettings from './ExecutionSettings';
 import {
   createAiAssistantMcpServer,
   createAiAssistantSkillConfig,
@@ -658,6 +659,11 @@ export default function AiAssistantSettings() {
                 </Form>
               </Card>
             ),
+          },
+          {
+            key: 'execution-limits',
+            label: 'Execution limits',
+            children: <ExecutionSettings readonly={isReadonly} />,
           },
           {
             key: 'agents',
