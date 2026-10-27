@@ -12,6 +12,7 @@ from .execution_settings import ExecutionSettingsViewSet
 from .page_chat import page_chat
 from .page_agent import page_chat_approval
 from .mcp_protocol_views import mcp_rpc, mcp_tools_manifest
+from .mcp_tool_config import external_mcp_tools
 from .mcp_views import (
     mcp_cmdb_asset_lookup,
     mcp_observables_extract,
@@ -38,6 +39,7 @@ app_name = 'ai_assistant'
 
 urlpatterns = [
     # AI assistant endpoints
+    re_path(r'^external-mcp/(?P<name>[^/]+)/tools/?$', external_mcp_tools, name='external_mcp_tools'),
     re_path(r'^execution-settings/?$', ExecutionSettingsViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='execution_settings'),
     re_path(r'^conversations/?$', ConversationViewSet.as_view({'get': 'list', 'post': 'create'}), name='conversations'),
     re_path(r'^conversations/(?P<pk>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', ConversationViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}), name='conversation_detail'),

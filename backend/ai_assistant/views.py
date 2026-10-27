@@ -1,5 +1,6 @@
 import requests
 from django.conf import settings
+from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -18,6 +19,7 @@ from ai_assistant.serializers import (
     SkillConfigSerializer,
 )
 from ai_assistant.models import ExternalMCPServer, SkillConfig, TicketAIChatMessage
+from ai_assistant.mcp_tool_config import audit_mcp_configuration, require_mcp_permission
 from tickets.models import EventTicket
 import re
 
@@ -329,7 +331,9 @@ def ai_chat(request):
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_servers(request):
+    require_mcp_permission(request, "view" if request.method == "GET" else "add")
     if request.method == "GET":
         rows = ExternalMCPServer.objects.all().order_by("name")
         serializer = ExternalMCPServerSerializer(rows, many=True, context={"request": request})
@@ -337,14 +341,17 @@ def external_mcp_servers(request):
 
     serializer = ExternalMCPServerSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    audit_mcp_configuration(request, serializer.save(), "create")
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_detail(request, name: str):
-    server = ExternalMCPServer.objects.filter(name=name).first()
+    require_mcp_permission(request, {"GET": "view", "PUT": "change", "DELETE": "delete"}[request.method])
+    rows = ExternalMCPServer.objects.filter(name=name)
+    server = (rows if request.method == "GET" else rows.select_for_update()).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -352,34 +359,42 @@ def external_mcp_detail(request, name: str):
         return Response(ExternalMCPServerSerializer(server, context={"request": request}).data)
 
     if request.method == "DELETE":
+        audit_mcp_configuration(request, server, "delete")
         server.delete()
         return Response({"message": "deleted"})
 
     serializer = ExternalMCPServerSerializer(server, data=request.data, partial=True, context={"request": request})
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    previous_policies = dict(server.tool_approvals)
+    audit_mcp_configuration(request, serializer.save(), "update", previous_policies)
     return Response(serializer.data)
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_start(request, name: str):
-    server = ExternalMCPServer.objects.filter(name=name).first()
+    require_mcp_permission(request, "change")
+    server = ExternalMCPServer.objects.select_for_update().filter(name=name).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
     server.enabled = True
     server.save(update_fields=["enabled", "updated_at"])
+    audit_mcp_configuration(request, server, "start")
     return Response({"message": "started", "name": server.name})
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_stop(request, name: str):
-    server = ExternalMCPServer.objects.filter(name=name).first()
+    require_mcp_permission(request, "change")
+    server = ExternalMCPServer.objects.select_for_update().filter(name=name).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
     server.enabled = False
     server.save(update_fields=["enabled", "updated_at"])
+    audit_mcp_configuration(request, server, "stop")
     return Response({"message": "stopped", "name": server.name})
 
 

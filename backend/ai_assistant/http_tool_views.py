@@ -26,12 +26,17 @@ class HttpToolSerializer(serializers.ModelSerializer):
         fields = (
             "id", "name", "description", "enabled", "method", "url", "parameters", "query_params",
             "body_template", "auth_type", "auth_header", "auth_prefix", "auth_secret", "clear_auth_secret",
-            "has_auth_secret", "timeout_seconds", "created_at", "updated_at",
+            "has_auth_secret", "timeout_seconds", "requires_approval", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
 
     def get_has_auth_secret(self, instance):
         return bool(instance.encrypted_auth_secret)
+
+    def validate_requires_approval(self, value):
+        if type(self.initial_data.get("requires_approval")) is not bool:
+            raise serializers.ValidationError("Approval policy must be a boolean.")
+        return value
 
     def validate(self, attrs):
         current = self.instance or HttpToolConfig()
@@ -103,7 +108,7 @@ class HttpToolViewSet(viewsets.ModelViewSet):
             ip_address=request_ip(self.request), user_agent=request_user_agent(self.request),
             path=self.request.path, method=self.request.method,
             metadata={"resource": "http_tool", "id": instance.pk, "name": instance.name, "actor_id": self.request.user.pk,
-                      "action": action, "enabled": instance.enabled},
+                      "action": action, "enabled": instance.enabled, "requires_approval": instance.requires_approval},
         )
 
     @transaction.atomic

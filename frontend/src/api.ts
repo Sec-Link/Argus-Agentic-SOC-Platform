@@ -812,6 +812,7 @@ export interface HttpToolFields {
   name: string;
   description: string;
   enabled: boolean;
+  requires_approval: boolean;
   method: 'GET' | 'POST';
   url: string;
   parameters: HttpToolParameter[];
@@ -916,8 +917,26 @@ export async function updateAiAssistantMcpServer(name: string, payload: Partial<
   token: string;
   enabled: boolean;
   extra: any;
+  tool_approvals: Record<string, boolean>;
+  approval_policy_version: string;
 }>) {
   const res = await client.put(`/ai-assistant/external-mcp/${encodeURIComponent(name)}/`, payload);
+  return res.data;
+}
+
+export interface AssistantMcpTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  requires_approval: boolean;
+}
+
+export async function fetchAiAssistantMcpTools(name: string, signal?: AbortSignal): Promise<{
+  tools: AssistantMcpTool[];
+  tool_approvals: Record<string, boolean>;
+  updated_at: string;
+}> {
+  const res = await client.get(`/ai-assistant/external-mcp/${encodeURIComponent(name)}/tools/`, { signal });
   return res.data;
 }
 

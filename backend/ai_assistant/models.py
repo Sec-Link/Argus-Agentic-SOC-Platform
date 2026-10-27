@@ -12,6 +12,7 @@ class ExternalMCPServer(models.Model):
     token = models.TextField(blank=True)
     enabled = models.BooleanField(default=True)
     extra = models.JSONField(default=dict, blank=True)
+    tool_approvals = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -29,6 +30,7 @@ class HttpToolConfig(models.Model):
     )
     description = models.TextField(max_length=1000)
     enabled = models.BooleanField(default=False)
+    requires_approval = models.BooleanField(default=True)
     method = models.CharField(max_length=4, choices=[("GET", "GET"), ("POST", "POST")], default="GET")
     url = models.CharField(max_length=2000)
     parameters = models.JSONField(default=list, blank=True)
@@ -56,7 +58,7 @@ class HttpToolConfig(models.Model):
         """Snapshot for runtime validation and approval; excludes credentials."""
         fields = (
             "name", "description", "enabled", "method", "url", "parameters", "query_params",
-            "body_template", "auth_type", "auth_header", "auth_prefix", "timeout_seconds",
+            "body_template", "auth_type", "auth_header", "auth_prefix", "timeout_seconds", "requires_approval",
         )
         return {
             **{field: getattr(self, field) for field in fields},

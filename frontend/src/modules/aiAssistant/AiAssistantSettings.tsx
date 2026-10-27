@@ -4,6 +4,7 @@ import { getIsReadonly } from '../../lib/auth';
 import HttpToolsSettings from './HttpToolsSettings';
 import AgentSettings from './AgentSettings';
 import ExecutionSettings from './ExecutionSettings';
+import McpToolApprovals from './McpToolApprovals';
 import {
   createAiAssistantMcpServer,
   createAiAssistantSkillConfig,
@@ -44,6 +45,7 @@ export default function AiAssistantSettings() {
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [mcpEditRow, setMcpEditRow] = useState<any | null>(null);
+  const [mcpToolsRow, setMcpToolsRow] = useState<{ name: string; title?: string } | null>(null);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState<any[]>([]);
   const [skillConfigs, setSkillConfigs] = useState<any[]>([]);
@@ -850,6 +852,7 @@ export default function AiAssistantSettings() {
                     rowKey={(r: any) => r.name}
                     loading={mcpLoading}
                     pagination={{ pageSize: 6 }}
+                    scroll={{ x: 850 }}
                     dataSource={mcpServers}
                     locale={{ emptyText: 'No MCP servers configured' }}
                     columns={[
@@ -867,10 +870,11 @@ export default function AiAssistantSettings() {
                       ...(isReadonly ? [] : [{
                         title: 'Action',
                         key: 'action',
-                        width: 180,
+                        width: 310,
                         render: (_: any, row: any) => (
                           <Space>
                             <Button size="small" onClick={() => openMcpModal(row)}>Edit</Button>
+                            <Button size="small" onClick={() => setMcpToolsRow({ name: row.name, title: row.title })}>Configure tools</Button>
                             <Button danger size="small" onClick={() => onDeleteMcp(row)}>Delete</Button>
                           </Space>
                         ),
@@ -987,6 +991,8 @@ export default function AiAssistantSettings() {
           },
         ]}
       />
+      {mcpToolsRow && <McpToolApprovals server={mcpToolsRow} readonly={isReadonly} onClose={() => setMcpToolsRow(null)}
+        onSaved={() => { setMcpToolsRow(null); message.success('MCP tool approvals saved'); void loadMcpServers(); }} />}
       <Modal
         title="Tool call details"
         open={detailOpen}
@@ -1099,6 +1105,7 @@ export default function AiAssistantSettings() {
           <Form.Item label="Token" name="token">
             <Input.Password placeholder="optional token" />
           </Form.Item>
+          {mcpEditRow && <Typography.Paragraph type="secondary">Changing the endpoint or token resets per-tool approval choices to require approval.</Typography.Paragraph>}
           <Form.Item label="Enabled" name="enabled" valuePropName="checked">
             <Switch />
           </Form.Item>

@@ -12,8 +12,9 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from langchain.mcp import as_langchain_tool
 from langchain_core.messages import ToolMessage
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, ToolException
 from mcp.types import Tool
+from .http_tools import _remove_secret
 
 
 class _SafeMCPDiagnostic(logging.Filter):
@@ -115,7 +116,16 @@ def make_mcp_tool(remote: Tool, config: dict[str, Any], *, name: str | None = No
     async def execute(**arguments):
         async with asyncio.timeout(_timeout(config)):
             tool = await make_native()
-            content, artifact = await tool.coroutine(**arguments)
+            token = config.get("token") or ""
+            try:
+                content, artifact = await tool.coroutine(**arguments)
+            except Exception as exc:
+                if token and token in str(exc):
+                    raise ToolException("MCP tool failed; a credential-bearing diagnostic was omitted.") from None
+                raise
+            if token:
+                content = _remove_secret(content, token)
+                artifact = _remove_secret(artifact, token)
             return _include_structured_content(content, artifact), artifact
 
     def execute_sync(**arguments):

@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from accounts.services import is_user_readonly
 from ai_assistant.models import ExternalMCPServer, SkillConfig
@@ -101,6 +103,8 @@ class AIChatRequestSerializer(serializers.Serializer):
 
 
 class ExternalMCPServerSerializer(serializers.ModelSerializer):
+    approval_policy_version = serializers.CharField(write_only=True, required=False, max_length=64)
+
     class Meta:
         model = ExternalMCPServer
         fields = [
@@ -111,9 +115,35 @@ class ExternalMCPServerSerializer(serializers.ModelSerializer):
             "token",
             "enabled",
             "extra",
+            "tool_approvals",
+            "approval_policy_version",
             "created_at",
             "updated_at",
         ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_tool_approvals(self, value):
+        if not isinstance(value, dict) or len(value) > 200:
+            raise serializers.ValidationError("Approval policies must be an object with at most 200 tools.")
+        for name, required in value.items():
+            if (not isinstance(name, str) or not name.strip() or len(name) > 200
+                    or re.search(r"[\x00-\x1f\x7f]", name) or type(required) is not bool):
+                raise serializers.ValidationError("Each tool must have a valid name and a boolean approval policy.")
+        return value
+
+    def validate(self, attrs):
+        version = attrs.pop("approval_policy_version", None)
+        if self.instance:
+            rebound = any(field in attrs and attrs[field] != getattr(self.instance, field)
+                          for field in ("endpoint", "token"))
+            if rebound:
+                # A previous server's exceptions never authorize a replacement server.
+                attrs["tool_approvals"] = {}
+            elif "tool_approvals" in attrs and version != self.instance.updated_at.isoformat():
+                raise serializers.ValidationError({
+                    "approval_policy_version": "MCP configuration changed. Reload its tools before saving approval policies.",
+                })
+        return attrs
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

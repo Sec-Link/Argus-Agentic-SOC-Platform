@@ -446,7 +446,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
               <div className={styles.empty}>
                 <Bot size={34} color={token.colorPrimary} />
                 <Typography.Title level={5}>How can I help with this page?</Typography.Title>
-                <Typography.Text type="secondary">The coordinator can delegate to enabled agents and use your configured skills, MCP and HTTP tools. Mention @name to choose specialists. Answers and execution steps appear as they arrive. External tool calls require your approval.</Typography.Text>
+                <Typography.Text type="secondary">The coordinator can delegate to enabled agents and use your configured skills, MCP and HTTP tools. Mention @name to choose specialists. Answers and execution steps appear as they arrive. External tools follow their configured approval settings.</Typography.Text>
               </div>
             )}
             {messages.map((item, index) => (
@@ -582,7 +582,7 @@ function StepContent({ step }: { step: ChatStep }) {
     {step.task && <><Typography.Text strong>Assigned task</Typography.Text><pre>{step.task}</pre></>}
     {step.endpoint && <Typography.Text type="secondary">Endpoint: {step.endpoint}</Typography.Text>}
     {step.arguments !== undefined && <><Typography.Text strong>Arguments</Typography.Text><pre>{JSON.stringify(step.arguments, null, 2)}</pre></>}
-    {step.request && <><Typography.Text strong>HTTP request</Typography.Text><pre>{JSON.stringify(step.request, null, 2)}</pre><Typography.Text type="secondary">Authentication is added by the server. Approving sends this request to the provider.</Typography.Text></>}
+    {step.request && <><Typography.Text strong>HTTP request</Typography.Text><pre>{JSON.stringify(step.request, null, 2)}</pre><Typography.Text type="secondary">Authentication is added by the server. This request is sent to the configured provider when the tool runs.</Typography.Text></>}
     {step.content && <><Typography.Text strong>{step.kind === 'analysis' ? 'Analysis summary' : step.kind === 'tool' || step.kind === 'agent' ? 'Result' : 'Response'}</Typography.Text><pre>{step.content}</pre></>}
     {step.kind === 'analysis' && <Typography.Text type="secondary">A concise explanation, when provided by the model.</Typography.Text>}
   </div>;

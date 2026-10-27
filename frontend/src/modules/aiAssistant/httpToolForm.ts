@@ -22,6 +22,7 @@ export function buildHttpToolPayload(values: HttpToolFormValues): HttpToolWrite 
   if (auth_secret && clear_auth_secret) throw new Error('Choose either a replacement secret or clear the stored secret.');
   return {
     ...fields,
+    requires_approval: fields.requires_approval !== false,
     query_params: parseToolTemplate(query_json, 'Query parameters', true),
     body_template: fields.method === 'POST' && body_json.trim() ? parseToolTemplate(body_json, 'JSON body') : null,
     ...(fields.auth_type === 'none' ? { auth_header: '', auth_prefix: '', clear_auth_secret: true } : {
