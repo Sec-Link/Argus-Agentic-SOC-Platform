@@ -2,10 +2,25 @@
 from typing import Any, Dict, List, Optional
 
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import Count, F, Max, Q
 from django.utils import timezone
 
-from ai_assistant.models import MCPToolExecution, MCPToolStats, SkillStats
+from ai_assistant.models import MCPToolExecution, MCPToolStats, SkillStats, PageChatConversation
+from .call_details import snapshot, unavailable
+
+
+def _detail_permissions(tool_name, context, arguments=None):
+    from .conversation_history import event_permissions
+    required = event_permissions({
+        "tool": tool_name, "arguments": arguments, "source": context.get("tool_source") or None,
+    })
+    if context.get("source") in {"ticket_chat", "ticket_analysis", "ticket_mention"}:
+        required.add("tickets.view_eventticket")
+    if context.get("conversation_id"):
+        required.update(PageChatConversation.objects.filter(pk=context["conversation_id"]).values_list(
+            "required_permissions", flat=True,
+        ).first() or [])
+    return sorted(required)
 
 
 def start_mcp_execution(
@@ -13,13 +28,23 @@ def start_mcp_execution(
     arguments: Optional[Dict[str, Any]] = None,
     source: str = "",
     endpoint: str = "",
+    *, audit_context=None,
 ) -> str:
+    context = audit_context or {}
+    attribution = {key: context[key] for key in (
+        "actor_id", "actor_label", "request_id", "conversation_id", "model_profile_id",
+        "model_name", "agent_name", "tool_source",
+    ) if key in context}
     exec_row = MCPToolExecution.objects.create(
         tool_name=tool_name or "",
         arguments=arguments or {},
         status="running",
         source=source or "",
         endpoint=endpoint or "",
+        request_detail=snapshot({"tool": tool_name or "", "arguments": arguments or {}, "endpoint": endpoint or ""}),
+        response_detail=unavailable("pending"),
+        detail_permissions=_detail_permissions(tool_name, context, arguments),
+        **attribution,
     )
     return str(exec_row.id)
 
@@ -34,11 +59,24 @@ def finish_mcp_execution(exec_id: str, success: bool, error: str = "", *, respon
     duration_ms = None
     if row.start_time:
         duration_ms = int(max(0, (now - row.start_time).total_seconds() * 1000))
-    row.status = "completed" if success else "failed"
+    if row.status not in {"rejected", "cancelled"}:
+        row.status = "completed" if success else "failed"
     row.error = (error or "")[:2000]
     row.end_time = now
     row.duration_ms = duration_ms
     update_fields = ["status", "error", "end_time", "duration_ms"]
+    if row.status == "rejected":
+        row.response_detail = unavailable("not_executed")
+    elif response_payload is not None:
+        row.response_detail = snapshot(response_payload)
+    else:
+        row.response_detail = unavailable("unavailable")
+    update_fields.append("response_detail")
+    row.detail_permissions = sorted(set(row.detail_permissions or []) | set(_detail_permissions(
+        row.tool_name, {"conversation_id": row.conversation_id, "source": row.source,
+                        "tool_source": row.tool_source}, row.arguments,
+    )))
+    update_fields.append("detail_permissions")
     page_audit = row.response_payload.get("_page_chat") if isinstance(row.response_payload, dict) else None
     # Legacy executions have no owner; do not publish new chat evidence there.
     if (response_payload is not None and row.source == "page_chat"
@@ -80,14 +118,10 @@ def _serialize_execution(row: MCPToolExecution) -> Dict[str, Any]:
     return {
         "id": str(row.id),
         "tool_name": row.tool_name,
-        "arguments": row.arguments,
-        "response_payload": row.response_payload,
         "status": row.status,
-        "error": row.error,
         "start_time": row.start_time.isoformat() if row.start_time else "",
         "end_time": row.end_time.isoformat() if row.end_time else "",
         "duration_ms": row.duration_ms,
-        "endpoint": row.endpoint,
         "source": row.source,
     }
 
@@ -120,10 +154,11 @@ def get_mcp_monitor(
 
     qs = MCPToolExecution.objects.all().order_by("-start_time")
     # Page-chat evidence belongs to its actor, including counts and pagination.
-    visible = ~Q(source="page_chat")
+    visible = Q(pk__in=[])
     if user_id is not None:
-        visible |= Q(source="page_chat", response_payload___page_chat__user_id=user_id)
-    qs = qs.filter(visible)
+        visible = Q(actor_id=user_id) | Q(actor__isnull=True, source="page_chat", response_payload___page_chat__user_id=user_id)
+    qs = qs.filter(visible).defer("arguments", "response_payload", "error", "endpoint",
+                                  "request_detail", "response_detail", "detail_permissions")
     if status:
         qs = qs.filter(status=status)
     if tool_name:
@@ -134,8 +169,11 @@ def get_mcp_monitor(
     rows = list(qs[offset : offset + page_size])
     total_pages = max(1, int(math.ceil(total / float(page_size))) if page_size else 1)
 
-    stats_rows = MCPToolStats.objects.all().order_by("tool_name")
-    stats = {row.tool_name: _serialize_stats(row) for row in stats_rows}
+    stats_rows = qs.order_by().values("tool_name").annotate(
+        total_calls=Count("pk"), success_calls=Count("pk", filter=Q(status="completed")),
+        failed_calls=Count("pk", filter=Q(status__in=("failed", "rejected", "cancelled"))), last_call_time=Max("start_time"),
+    )
+    stats = {row["tool_name"]: row for row in stats_rows}
 
     return {
         "executions": [_serialize_execution(r) for r in rows],

@@ -33,7 +33,7 @@ const SERVER_ERROR_CODES = new Set([
   'model_timeout', 'model_connection_error', 'model_dns_error', 'model_tls_error',
   'model_auth_error', 'model_rate_limited', 'model_upstream_error', 'model_bad_request', 'model_content_rejected',
   'model_not_found', 'model_http_error', 'model_key_missing', 'model_ca_invalid',
-  'model_response_invalid', 'model_error', 'permission_denied', 'internal_error',
+  'model_response_invalid', 'model_error', 'model_profile_unavailable', 'permission_denied', 'internal_error',
   'execution_timeout', 'execution_stopped', 'iteration_limit',
   'conversation_limit', 'conversation_save_failed',
 ]);

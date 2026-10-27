@@ -9,6 +9,8 @@ from .agent_views import AgentConfigViewSet, agent_catalog
 from .http_tool_views import HttpToolViewSet
 from .conversation_views import ConversationViewSet
 from .execution_settings import ExecutionSettingsViewSet
+from .model_profiles import ModelProfileViewSet, model_catalog
+from .monitor_views import model_monitor, tool_monitor, model_monitor_detail, tool_monitor_detail
 from .page_chat import page_chat
 from .page_agent import page_chat_approval
 from .mcp_protocol_views import mcp_rpc, mcp_tools_manifest
@@ -39,7 +41,10 @@ app_name = 'ai_assistant'
 
 urlpatterns = [
     # AI assistant endpoints
-    re_path(r'^external-mcp/(?P<name>[^/]+)/tools/?$', external_mcp_tools, name='external_mcp_tools'),
+    re_path(r'^models/?$', ModelProfileViewSet.as_view({'get': 'list', 'post': 'create'}), name='models'),
+    re_path(r'^models/catalog/?$', model_catalog, name='model_catalog'),
+    re_path(r'^models/(?P<pk>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/test/?$', ModelProfileViewSet.as_view({'post': 'test_connection'}), name='model_test'),
+    re_path(r'^models/(?P<pk>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', ModelProfileViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}), name='model_detail'),
     re_path(r'^execution-settings/?$', ExecutionSettingsViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='execution_settings'),
     re_path(r'^conversations/?$', ConversationViewSet.as_view({'get': 'list', 'post': 'create'}), name='conversations'),
     re_path(r'^conversations/(?P<pk>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', ConversationViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}), name='conversation_detail'),
@@ -53,6 +58,10 @@ urlpatterns = [
     re_path(r'^page-chat/?$', page_chat, name='page_chat'),
     re_path(r'^page-chat/approvals/(?P<execution_id>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', page_chat_approval, name='page_chat_approval'),
     re_path(r'^mcp-monitor/?$', mcp_monitor, name='mcp_monitor'),
+    re_path(r'^tool-monitor/?$', tool_monitor, name='tool_monitor'),
+    re_path(r'^model-monitor/?$', model_monitor, name='model_monitor'),
+    re_path(r'^tool-monitor/(?P<pk>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', tool_monitor_detail, name='tool_monitor_detail'),
+    re_path(r'^model-monitor/(?P<pk>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', model_monitor_detail, name='model_monitor_detail'),
     re_path(r'^mcp-registry/servers/?$', mcp_registry_servers, name='mcp_registry_servers'),
     re_path(r'^skill-monitor/?$', skill_monitor, name='skill_monitor'),
     re_path(r'^skills/catalog/?$', skill_catalog, name='skill_catalog'),
@@ -61,6 +70,7 @@ urlpatterns = [
     re_path(r'^skills/content/(?P<name>[^/]+)/?$', skill_content_detail, name='skill_content_detail'),
     re_path(r'^external-mcp/?$', external_mcp_servers, name='external_mcp_servers'),
     re_path(r'^external-mcp/(?P<name>[^/]+)/?$', external_mcp_detail, name='external_mcp_detail'),
+    re_path(r'^external-mcp/(?P<name>[^/]+)/tools/?$', external_mcp_tools, name='external_mcp_tools'),
     re_path(r'^external-mcp/(?P<name>[^/]+)/start/?$', external_mcp_start, name='external_mcp_start'),
     re_path(r'^external-mcp/(?P<name>[^/]+)/stop/?$', external_mcp_stop, name='external_mcp_stop'),
     # MCP JSON-RPC endpoints — /api/v1/ai-assistant/mcp/...

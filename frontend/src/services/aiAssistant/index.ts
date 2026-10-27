@@ -23,6 +23,10 @@ export {
 } from '../../api';
 export { clientChatDiagnostic, type PageChatEvent, type PageChatDiagnostic } from './stream';
 export {
+  listModelProfiles, fetchModelCatalog, createModelProfile, updateModelProfile, deleteModelProfile, testModelProfile,
+  type ModelCatalogEntry, type ModelProfile, type ModelProfileWrite,
+} from './models';
+export {
   listConversations, createConversation, getConversation, renameConversation, deleteConversation,
   type ConversationSummary, type ConversationDetail, type ConversationTurn,
 } from './conversations';

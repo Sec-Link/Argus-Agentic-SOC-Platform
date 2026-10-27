@@ -1,11 +1,21 @@
 import type { PageChatContext } from '../../services/aiAssistant';
 import type { ConversationDetail, ConversationSummary } from '../../services/aiAssistant/conversations';
+import type { ModelCatalogEntry } from '../../services/aiAssistant/models';
 import { applyChatEvent, finishChatTurn, type ChatMessage } from './chatState';
 
-export type HistoryMessage = ChatMessage & { pageContext?: PageChatContext | null };
+export type HistoryMessage = ChatMessage & { pageContext?: PageChatContext | null; modelSnapshot?: ModelCatalogEntry };
 
 export function canContinueConversation(conversation: ConversationSummary | null): boolean {
   return !conversation || (conversation.can_continue === true && conversation.readonly === false && !conversation.active);
+}
+
+function publicModelSnapshot(snapshot: Partial<ModelCatalogEntry> | undefined): ModelCatalogEntry | undefined {
+  if (!snapshot || !snapshot.id || typeof snapshot.id !== 'string' || typeof snapshot.name !== 'string' || typeof snapshot.model !== 'string') return undefined;
+  return { id: snapshot.id, name: snapshot.name, model: snapshot.model };
+}
+
+export function conversationModel(conversation: ConversationDetail): ModelCatalogEntry | undefined {
+  return publicModelSnapshot(conversation.turns.at(-1)?.model_snapshot);
 }
 
 export function hasConfirmedSavedTurn(conversation: ConversationDetail, requestId: string | undefined, saveFailed = false): boolean {
@@ -22,7 +32,7 @@ export function restoreConversation(conversation: ConversationDetail): HistoryMe
     if (saved.status === 'running') response.phase = 'This saved execution is still active. Refresh to check its result.';
     return [
       { role: 'user', content: saved.message, pageContext: saved.page_context },
-      response,
+      { ...response, modelSnapshot: publicModelSnapshot(saved.model_snapshot) },
     ];
   });
 }

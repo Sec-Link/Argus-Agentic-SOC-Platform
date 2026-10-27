@@ -1,6 +1,7 @@
 import client from '../../api';
 import type { PageChatContext } from '../../api';
 import type { PageChatEvent } from './stream';
+import type { ModelCatalogEntry } from './models';
 
 export interface ConversationSummary {
   id: string;
@@ -22,6 +23,7 @@ export interface ConversationTurn {
   page_context: PageChatContext | null;
   agent_names: string[];
   context_options: { share_page: boolean; include_content: boolean };
+  model_snapshot?: Partial<ModelCatalogEntry>;
   events: PageChatEvent[];
   response: string;
   status: 'running' | 'done' | 'error' | 'stopped';

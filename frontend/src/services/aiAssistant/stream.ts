@@ -58,9 +58,13 @@ export class PageChatStreamError extends Error {
 const STAGES = new Set<PageChatStage>(['setup', 'model', 'tool', 'approval', 'agent', 'connection', 'stream']);
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function pageChatHttpError(status: number): PageChatStreamError {
+export function pageChatHttpError(status: number, code?: string | null): PageChatStreamError {
+  if (status === 409 && code === 'model_profile_unavailable') return new PageChatStreamError({
+    code, stage: 'connection', status_code: status,
+    message: 'The selected model is unavailable or its configuration changed. Refresh the model list and select an enabled model.',
+  });
   const messages: Record<number, string> = {
-    400: 'The chat request was rejected. Check the selected agents and AI Assistant settings.',
+    400: 'The chat request was rejected. Check the selected agents, refresh available models and review AI Assistant settings.',
     401: 'Your session has expired. Sign in again before sending another message.',
     403: 'You do not have permission to use this chat.',
     404: 'The chat endpoint was not found. Check that the frontend and backend versions match.',

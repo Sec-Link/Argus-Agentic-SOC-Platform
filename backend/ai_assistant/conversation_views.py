@@ -89,7 +89,7 @@ class ConversationTurnSerializer(serializers.ModelSerializer):
         model = PageChatTurn
         fields = (
             "id", "request_id", "message", "page_context", "agent_names", "context_options", "events",
-            "response", "status", "created_at", "finished_at",
+            "response", "status", "created_at", "finished_at", "model_snapshot",
         )
 
 

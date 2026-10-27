@@ -1,17 +1,18 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, App, Button, Checkbox, Input, Mentions, Select, Spin, Tag, Typography, theme } from 'antd';
 import type { MentionsRef } from 'antd/es/mentions';
 import { ArrowLeft, Bot, History, Maximize2, Minimize2, Pencil, Plus, RefreshCw, Send, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { streamAiAssistantPageChat, decidePageChatApproval, fetchAiAssistantAgentCatalog, clientChatDiagnostic, listConversations, createConversation, getConversation, renameConversation, deleteConversation, type ConversationSummary, type ConversationDetail, type AssistantAgentCatalogEntry, type PageChatContext, type PageChatDiagnostic } from 'services/aiAssistant';
+import { streamAiAssistantPageChat, decidePageChatApproval, fetchAiAssistantAgentCatalog, fetchModelCatalog, clientChatDiagnostic, listConversations, createConversation, getConversation, renameConversation, deleteConversation, type ConversationSummary, type ConversationDetail, type ModelCatalogEntry, type AssistantAgentCatalogEntry, type PageChatContext, type PageChatDiagnostic } from 'services/aiAssistant';
 import { collectPageContext } from './pageContext';
 import { useAssistantPageContext } from './AssistantPageContext';
 import { applyChatEvent, failChatTurn, finishChatTurn, type ChatMessage, type ChatStep } from './chatState';
 import { validateAgentMentions } from './agentMentions';
-import { canContinueConversation, conversationError, hasConfirmedSavedTurn, restoreConversation, type HistoryMessage } from './conversationHistory';
+import { canContinueConversation, conversationError, conversationModel, hasConfirmedSavedTurn, restoreConversation, type HistoryMessage } from './conversationHistory';
+import { MODEL_PREFERENCE_KEY, chatModelRequest, initialModelChoice } from './chatModel';
 import styles from './FloatingAssistant.module.css';
 
 export default function FloatingAssistant({ pathname, readonly = false, docked, canDock, onDockChange }: {
@@ -48,6 +49,12 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
   const [agents, setAgents] = useState<AssistantAgentCatalogEntry[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [agentsError, setAgentsError] = useState('');
+  const [models, setModels] = useState<ModelCatalogEntry[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState('');
+  const modelSelectionRef = useRef<string | null>(null);
+  const modelsRequestRef = useRef<AbortController | null>(null);
   const inputRef = useRef<MentionsRef>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const wasOpenRef = useRef(false);
@@ -59,11 +66,48 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
   const busy = loading || historyBusy;
   const reviewing = conversation?.readonly === true;
   const canContinue = canContinueConversation(conversation);
-  const restore = (detail: ConversationDetail) => {
+  const modelUnavailable = !selectedModel || !!modelsError || !models.some((model) => model.id === selectedModel);
+
+  const chooseModel = useCallback((value: string, remember = true) => {
+    modelSelectionRef.current = value;
+    setSelectedModel(value);
+    if (remember) {
+      try { localStorage.setItem(MODEL_PREFERENCE_KEY, value); } catch { /* The choice remains available for this tab. */ }
+    }
+  }, []);
+
+  const loadModels = useCallback(async () => {
+    if (readonly) return;
+    modelsRequestRef.current?.abort();
+    const controller = new AbortController();
+    modelsRequestRef.current = controller;
+    setModelsLoading(true);
+    setModelsError('');
+    if (!modelSelectionRef.current) {
+      try {
+        const preferred = initialModelChoice([], localStorage.getItem(MODEL_PREFERENCE_KEY));
+        if (preferred) chooseModel(preferred, false);
+      } catch { /* Use the server catalog when browser storage is unavailable. */ }
+    }
+    try {
+      const catalog = await fetchModelCatalog(controller.signal);
+      if (controller.signal.aborted) return;
+      setModels(catalog);
+      if (!modelSelectionRef.current) chooseModel(initialModelChoice(catalog, null), false);
+    } catch {
+      if (!controller.signal.aborted) setModelsError('Available models could not be loaded. Refresh the model list before sending.');
+    } finally { if (!controller.signal.aborted) setModelsLoading(false); }
+  }, [chooseModel, readonly]);
+
+  const restore = (detail: ConversationDetail, resumeModel = false) => {
     setConversation(detail);
     setMessages(restoreConversation(detail));
     const options = detail.turns.at(-1)?.context_options;
     if (options) { setSharePage(options.share_page); setIncludeContent(options.include_content); }
+    if (resumeModel && !detail.readonly) {
+      const savedModel = conversationModel(detail);
+      if (savedModel) chooseModel(savedModel.id);
+    }
     setNeedsRefresh(false);
     unconfirmedSaveRef.current = null;
     setError('');
@@ -103,7 +147,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
           : 'The saved result is not yet confirmed. Your visible output is retained. Refresh again when the execution has finished.');
         return;
       }
-      restore(detail);
+      restore(detail, clearDraft);
       if (clearDraft) setDraft('');
       setApprovalBusy(new Set());
       setShowHistory(false);
@@ -194,6 +238,12 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
   }, [open, readonly]);
 
   useEffect(() => {
+    if (!open) return;
+    void loadModels();
+    return () => { modelsRequestRef.current?.abort(); };
+  }, [open, loadModels]);
+
+  useEffect(() => {
     historyRef.current?.scrollTo({ top: historyRef.current.scrollHeight });
   }, [messages, loading, open]);
 
@@ -243,7 +293,8 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || requestRef.current || readonly || historyBusy || !canContinue || needsRefresh) return;
+    if (!text || requestRef.current || readonly || historyBusy || !canContinue || needsRefresh || modelsLoading || modelUnavailable || !selectedModel) return;
+    const modelSnapshot = models.find((model) => model.id === selectedModel);
     const controller = new AbortController();
     const assistantIndex = messages.length + 1;
     let turnStarted = false;
@@ -257,10 +308,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
     setHistoryError('');
     setLoading(true);
     try {
-      if (localStorage.getItem('siem_ai_enabled') === '0') {
-        setError('AI Assistant is disabled. Enable it in Settings > AI Assistant.');
-        return;
-      }
+      const modelFields = chatModelRequest(selectedModel);
       let selectedAgents: string[];
       let catalog: AssistantAgentCatalogEntry[];
       try {
@@ -285,10 +333,9 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
       turnStarted = true;
       setMessages((previous) => [...previous,
         { role: 'user', content: text, pageContext: snapshot },
-        { role: 'assistant', content: '', steps: [], status: 'running', phase: 'Connecting…' },
+        { role: 'assistant', content: '', steps: [], status: 'running', phase: 'Connecting…', modelSnapshot },
       ]);
       setDraft('');
-      const timeout = Number(localStorage.getItem('siem_ai_timeout'));
       await streamAiAssistantPageChat({
         message: text,
         agent_names: selectedAgents.length ? selectedAgents : undefined,
@@ -296,10 +343,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
         revision: currentConversation.revision,
         context_options: { share_page: sharePage, include_content: includeContent },
         page_context: snapshot,
-        api_key: localStorage.getItem('siem_ai_api_key') || undefined,
-        model: localStorage.getItem('siem_ai_model') || undefined,
-        base_url: localStorage.getItem('siem_ai_base_url') || undefined,
-        timeout_seconds: Number.isFinite(timeout) && timeout > 0 ? Math.min(120, Math.max(1, Math.round(timeout))) : undefined,
+        ...modelFields,
       }, (event) => {
         if (controller.signal.aborted) return;
         receivedEvent = true;
@@ -452,6 +496,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
             {messages.map((item, index) => (
               <div key={index} className={styles.message} style={{ background: item.role === 'user' ? token.colorPrimaryBg : token.colorFillAlter }}>
                 <Typography.Text strong>{item.role === 'user' ? reviewing ? conversation?.owner.username : 'You' : 'Argus AI'}</Typography.Text>
+                {item.role === 'assistant' && item.modelSnapshot && <Tag title={item.modelSnapshot.model} style={{ marginInlineStart: 8, maxWidth: '100%', whiteSpace: 'normal' }}>{item.modelSnapshot.name} · {item.modelSnapshot.model}</Tag>}
                 {item.pageContext && <details className={styles.steps}>
                   <summary>Shared page snapshot: {item.pageContext.title || item.pageContext.path}</summary>
                   <pre className={styles.preview}>{item.pageContext.path}{'\n'}{item.pageContext.content || 'No page text was shared.'}</pre>
@@ -511,6 +556,21 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
             {historyError && <Alert type="error" showIcon message={historyError} closable onClose={() => setHistoryError('')} />}
             {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
             {agentsError && <Typography.Text type="warning">{agentsError}</Typography.Text>}
+            <div className={styles.actions}>
+              <Select aria-label={loading ? 'Model for next message' : 'Chat model'} placeholder="Choose a model" value={selectedModel || undefined}
+                style={{ flex: 1, minWidth: 0 }} loading={modelsLoading} disabled={readonly || historyBusy || reviewing}
+                onChange={(value) => chooseModel(value)} onDropdownVisibleChange={(visible) => { if (visible) void loadModels(); }}
+                options={[
+                  ...models.map((model) => ({ value: model.id, label: `${model.name} · ${model.model}` })),
+                  ...(selectedModel && !models.some((model) => model.id === selectedModel)
+                    ? [{ value: selectedModel, label: 'Unavailable model (choose another)', disabled: true }] : []),
+                ]} />
+              <Button type="text" size="small" icon={<RefreshCw size={14} />} aria-label="Refresh available models" title="Refresh models" disabled={readonly || historyBusy || modelsLoading} onClick={() => void loadModels()} />
+            </div>
+            {loading && <Typography.Text type="secondary" style={{ fontSize: 12 }}>Model changes apply to your next message.</Typography.Text>}
+            {modelsError && <Typography.Text type="warning">{modelsError}</Typography.Text>}
+            {!readonly && !modelsLoading && !modelsError && models.length === 0 && <Typography.Text type="warning">Add and enable a model in <Typography.Link href="/settings/ai-assistant">AI Assistant &gt; Models</Typography.Link> before sending.</Typography.Text>}
+            {!modelsLoading && !modelsError && models.length > 0 && selectedModel && modelUnavailable && <Typography.Text type="warning">The selected model is disabled or unavailable. Choose another model before sending.</Typography.Text>}
             <Mentions
               ref={inputRef}
               value={draft}
@@ -536,7 +596,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
               <Button type="text" size="small" icon={<Plus size={14} />} disabled={busy || readonly} onClick={newConversation}>New chat</Button>
               {loading
                 ? <Button icon={<Square size={14} />} onClick={stop}>Stop</Button>
-                : <Button type="primary" icon={<Send size={16} />} onClick={() => void send()} disabled={!draft.trim() || readonly || busy || !canContinue || needsRefresh}>Send</Button>}
+                : <Button type="primary" icon={<Send size={16} />} onClick={() => void send()} disabled={!draft.trim() || readonly || busy || !canContinue || needsRefresh || modelsLoading || modelUnavailable}>Send</Button>}
             </div>
           </footer>
           </>}

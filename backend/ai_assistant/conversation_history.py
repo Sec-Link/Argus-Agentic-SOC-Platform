@@ -120,6 +120,7 @@ def recover_expired(conversation):
 def _turn_payload(turn, *, events=None, response=None):
     return {
         "message": turn.message, "page_context": turn.page_context, "agent_names": turn.agent_names,
+        "model_snapshot": turn.model_snapshot,
         "context_options": turn.context_options, "events": turn.events if events is None else events,
         "response": turn.response if response is None else response,
     }
@@ -155,7 +156,7 @@ def history_messages(turns):
 
 
 @transaction.atomic
-def start_conversation_turn(user, data, request_id, *, execution_timeout_seconds=300):
+def start_conversation_turn(user, data, request_id, *, execution_timeout_seconds=300, model_snapshot=None):
     actor = current_actor(user, write=True)
     conversation = PageChatConversation.objects.select_for_update().filter(
         pk=data["conversation_id"], owner=actor,
@@ -187,6 +188,7 @@ def start_conversation_turn(user, data, request_id, *, execution_timeout_seconds
     turn = PageChatTurn(
         conversation=conversation, sequence=conversation.revision + 1, request_id=request_id,
         message=message, page_context=page, agent_names=list(data.get("agent_names") or []),
+        model_snapshot=clean_public(model_snapshot or {}),
         context_options={"share_page": bool(context_options.get("share_page", page is not None)),
                          "include_content": bool(context_options.get("include_content", True))},
     )

@@ -13,7 +13,8 @@ from django.utils import timezone
 
 from ai_assistant.models import MCPToolExecution
 from ai_assistant.mcp_tools import call_mcp_tool, discover_mcp_tools, mcp_result
-from ai_assistant.monitoring import update_mcp_stats
+from ai_assistant.monitoring import update_mcp_stats, _detail_permissions
+from .call_details import snapshot, unavailable
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ def _record_monitor(
     error: str | None = None,
     request_payload: Any | None = None,
     response_payload: Any | None = None,
+    audit_context: Dict[str, Any] | None = None,
 ) -> None:
     end_ts = time.time()
     req_text = ""
@@ -60,6 +62,10 @@ def _record_monitor(
         _MONITOR_ROWS.appendleft(row)
 
     try:
+        context = audit_context or {}
+        attribution = {key: context[key] for key in (
+            "actor_id", "actor_label", "request_id", "conversation_id", "model_profile_id", "model_name", "agent_name",
+        ) if key in context}
         exec_row = MCPToolExecution.objects.create(
             tool_name=str(tool or ""),
             arguments=request_payload or {},
@@ -68,6 +74,11 @@ def _record_monitor(
             error=(error or "")[:2000],
             endpoint=str(request_url or "")[:500],
             source="mcp_gateway",
+            tool_source="mcp_gateway",
+            request_detail=snapshot({"tool": tool, "arguments": request_payload}) if request_payload is not None else unavailable(),
+            response_detail=snapshot(response_payload) if response_payload is not None else unavailable("unavailable"),
+            detail_permissions=_detail_permissions(tool, context),
+            **attribution,
         )
         start_dt = timezone.datetime.fromtimestamp(start_ts, tz=timezone.get_current_timezone())
         end_dt = timezone.datetime.fromtimestamp(end_ts, tz=timezone.get_current_timezone())
@@ -480,6 +491,7 @@ def invoke_mcp_tool_from_prompt(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="dynamic-tool-router",
             status="failed",
             start_ts=start_ts,
@@ -491,6 +503,7 @@ def invoke_mcp_tool_from_prompt(
     prompt_tokens = set(_tokenize_text(prompt))
     if not prompt_tokens:
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="dynamic-tool-router",
             status="failed",
             start_ts=start_ts,
@@ -506,6 +519,7 @@ def invoke_mcp_tool_from_prompt(
             configs = matched
         else:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="dynamic-tool-router",
                 status="failed",
                 start_ts=start_ts,
@@ -539,6 +553,7 @@ def invoke_mcp_tool_from_prompt(
 
     if not ranked:
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="dynamic-tool-router",
             status="failed",
             start_ts=start_ts,
@@ -576,6 +591,7 @@ def invoke_mcp_tool_from_prompt(
         rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:{tool_name}"
         if tool_payload is not None:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool=f"dynamic:{tool_name}",
                 status="completed",
                 start_ts=start_ts,
@@ -594,6 +610,7 @@ def invoke_mcp_tool_from_prompt(
         break
 
     _record_monitor(
+        audit_context=(overrides or {}).get("_usage_context"),
         tool="dynamic-tool-router",
         status="failed",
         start_ts=start_ts,
@@ -656,6 +673,7 @@ def invoke_mcp_tool_explicit(
     if not _enabled(config):
         if record_execution:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool=f"dynamic:{tool_name}",
                 status="failed",
                 start_ts=start_ts,
@@ -684,6 +702,7 @@ def invoke_mcp_tool_explicit(
         if tool_payload is not None:
             if record_execution:
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool=f"dynamic:{tool_name}",
                     status="completed",
                     start_ts=start_ts,
@@ -701,6 +720,7 @@ def invoke_mcp_tool_explicit(
         last_error = err or f"tool call failed for {tool_name}"
         if record_execution:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool=f"dynamic:{tool_name}",
                 status="failed",
                 start_ts=start_ts,
@@ -714,6 +734,7 @@ def invoke_mcp_tool_explicit(
 
     if record_execution:
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool=f"dynamic:{tool_name}",
             status="failed",
             start_ts=start_ts,
@@ -768,6 +789,7 @@ def invoke_mcp_tool_exact(
             raise ValueError("MCP tool reported an error")
         if record_execution:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool=f"dynamic:{tool_name}", status="completed", start_ts=start_ts,
                 request_url=endpoint, request_payload=payload, response_payload=data,
             )
@@ -776,6 +798,7 @@ def invoke_mcp_tool_exact(
         # A timeout can happen after execution; never retry a potentially mutating call.
         if record_execution:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool=f"dynamic:{tool_name}", status="failed", start_ts=start_ts,
                 request_url=endpoint, request_payload=payload,
                 error="MCP call failed; execution status may be unknown. No retry was attempted.",
@@ -808,6 +831,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="ticket-context",
             status="failed",
             start_ts=start_ts,
@@ -834,6 +858,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                 rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:ticket_context"
                 if isinstance(payload, dict):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="ticket-context",
                         status="completed",
                         start_ts=start_ts,
@@ -844,6 +869,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                     )
                     return payload
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-context",
                     status="failed",
                     start_ts=start_ts,
@@ -859,6 +885,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
             if res.status_code >= 400:
                 logger.warning("MCP ticket context failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-context",
                     status="failed",
                     start_ts=start_ts,
@@ -870,6 +897,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
             payload = res.json()
             if isinstance(payload, dict):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-context",
                     status="completed",
                     start_ts=start_ts,
@@ -878,6 +906,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                 )
                 return payload
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-context",
                 status="failed",
                 start_ts=start_ts,
@@ -889,6 +918,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
         except Exception as exc:
             logger.warning("MCP ticket context request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-context",
                 status="failed",
                 start_ts=start_ts,
@@ -908,6 +938,7 @@ def fetch_similar_cases(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="ticket-search",
             status="failed",
             start_ts=start_ts,
@@ -941,6 +972,7 @@ def fetch_similar_cases(
                         value = tool_payload.get(key)
                         if isinstance(value, list):
                             _record_monitor(
+                                audit_context=(overrides or {}).get("_usage_context"),
                                 tool="ticket-search",
                                 status="completed",
                                 start_ts=start_ts,
@@ -952,6 +984,7 @@ def fetch_similar_cases(
                             return [d for d in value if isinstance(d, dict)]
                 if isinstance(tool_payload, list):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="ticket-search",
                         status="completed",
                         start_ts=start_ts,
@@ -962,6 +995,7 @@ def fetch_similar_cases(
                     )
                     return [d for d in tool_payload if isinstance(d, dict)]
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-search",
                     status="failed",
                     start_ts=start_ts,
@@ -977,6 +1011,7 @@ def fetch_similar_cases(
             if res.status_code >= 400:
                 logger.warning("MCP ticket search failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-search",
                     status="failed",
                     start_ts=start_ts,
@@ -988,6 +1023,7 @@ def fetch_similar_cases(
             data = res.json()
             if isinstance(data, list):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-search",
                     status="completed",
                     start_ts=start_ts,
@@ -1000,6 +1036,7 @@ def fetch_similar_cases(
                     value = data.get(key)
                     if isinstance(value, list):
                         _record_monitor(
+                            audit_context=(overrides or {}).get("_usage_context"),
                             tool="ticket-search",
                             status="completed",
                             start_ts=start_ts,
@@ -1008,6 +1045,7 @@ def fetch_similar_cases(
                         )
                         return [d for d in value if isinstance(d, dict)]
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-search",
                 status="failed",
                 start_ts=start_ts,
@@ -1019,6 +1057,7 @@ def fetch_similar_cases(
         except Exception as exc:
             logger.warning("MCP ticket search request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-search",
                 status="failed",
                 start_ts=start_ts,
@@ -1038,6 +1077,7 @@ def fetch_cmdb_assets(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="cmdb-asset-lookup",
             status="failed",
             start_ts=start_ts,
@@ -1071,6 +1111,7 @@ def fetch_cmdb_assets(
                         value = tool_payload.get(key)
                         if isinstance(value, list):
                             _record_monitor(
+                                audit_context=(overrides or {}).get("_usage_context"),
                                 tool="cmdb-asset-lookup",
                                 status="completed",
                                 start_ts=start_ts,
@@ -1082,6 +1123,7 @@ def fetch_cmdb_assets(
                             return [d for d in value if isinstance(d, dict)]
                 if isinstance(tool_payload, list):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="cmdb-asset-lookup",
                         status="completed",
                         start_ts=start_ts,
@@ -1092,6 +1134,7 @@ def fetch_cmdb_assets(
                     )
                     return [d for d in tool_payload if isinstance(d, dict)]
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="cmdb-asset-lookup",
                     status="failed",
                     start_ts=start_ts,
@@ -1107,6 +1150,7 @@ def fetch_cmdb_assets(
             if res.status_code >= 400:
                 logger.warning("MCP cmdb lookup failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="cmdb-asset-lookup",
                     status="failed",
                     start_ts=start_ts,
@@ -1118,6 +1162,7 @@ def fetch_cmdb_assets(
             data = res.json()
             if isinstance(data, list):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="cmdb-asset-lookup",
                     status="completed",
                     start_ts=start_ts,
@@ -1130,6 +1175,7 @@ def fetch_cmdb_assets(
                     value = data.get(key)
                     if isinstance(value, list):
                         _record_monitor(
+                            audit_context=(overrides or {}).get("_usage_context"),
                             tool="cmdb-asset-lookup",
                             status="completed",
                             start_ts=start_ts,
@@ -1138,6 +1184,7 @@ def fetch_cmdb_assets(
                         )
                         return [d for d in value if isinstance(d, dict)]
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="cmdb-asset-lookup",
                 status="failed",
                 start_ts=start_ts,
@@ -1149,6 +1196,7 @@ def fetch_cmdb_assets(
         except Exception as exc:
             logger.warning("MCP cmdb lookup request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="cmdb-asset-lookup",
                 status="failed",
                 start_ts=start_ts,
@@ -1169,6 +1217,7 @@ def fetch_observables(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="observables-extract",
             status="failed",
             start_ts=start_ts,
@@ -1203,6 +1252,7 @@ def fetch_observables(
                 rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:observables_extract"
                 if isinstance(tool_payload, dict):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="observables-extract",
                         status="completed",
                         start_ts=start_ts,
@@ -1213,6 +1263,7 @@ def fetch_observables(
                     )
                     return tool_payload
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="observables-extract",
                     status="failed",
                     start_ts=start_ts,
@@ -1228,6 +1279,7 @@ def fetch_observables(
             if res.status_code >= 400:
                 logger.warning("MCP observables extract failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="observables-extract",
                     status="failed",
                     start_ts=start_ts,
@@ -1239,6 +1291,7 @@ def fetch_observables(
             data = res.json()
             if isinstance(data, dict):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="observables-extract",
                     status="completed",
                     start_ts=start_ts,
@@ -1247,6 +1300,7 @@ def fetch_observables(
                 )
                 return data
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="observables-extract",
                 status="failed",
                 start_ts=start_ts,
@@ -1258,6 +1312,7 @@ def fetch_observables(
         except Exception as exc:
             logger.warning("MCP observables extract request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="observables-extract",
                 status="failed",
                 start_ts=start_ts,

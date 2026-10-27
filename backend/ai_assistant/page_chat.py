@@ -13,6 +13,7 @@ from rest_framework.settings import api_settings
 from accounts.services import is_user_readonly
 
 from ai_assistant.model_client import chat_config, message_text, normalize_base_url, open_chat_model
+from ai_assistant.usage_recording import model_usage_context
 
 
 class EventStreamRenderer(BaseRenderer):
@@ -70,6 +71,7 @@ class PageChatRequestSerializer(serializers.Serializer):
     model = serializers.CharField(max_length=200, allow_blank=True, required=False)
     base_url = serializers.URLField(max_length=2000, allow_blank=True, required=False)
     timeout_seconds = serializers.IntegerField(min_value=1, max_value=120, required=False)
+    model_profile_id = serializers.UUIDField(required=False)
     agent_names = serializers.ListField(
         child=serializers.RegexField(r"^[a-z][a-z0-9_]{0,47}$"), max_length=3, required=False,
     )
@@ -88,6 +90,11 @@ class PageChatRequestSerializer(serializers.Serializer):
         return value
 
     def validate(self, data):
+        if "model_profile_id" in data:
+            if not data["stream"]:
+                raise serializers.ValidationError({"model_profile_id": "Saved model selection requires streaming chat."})
+            if any(key in data for key in ("api_key", "model", "base_url", "timeout_seconds")):
+                raise serializers.ValidationError({"model_profile_id": "A saved model cannot be combined with model connection overrides."})
         if "conversation_id" in data:
             if not data["stream"]:
                 raise serializers.ValidationError({"conversation_id": "Saved conversations require streaming chat."})
@@ -132,7 +139,15 @@ def page_chat(request):
         if is_user_readonly(request.user):
             return Response({"error": "Readonly accounts cannot use agent chat."}, status=status.HTTP_403_FORBIDDEN)
         from ai_assistant.page_agent import stream_page_chat
-        return stream_page_chat(request.user, data)
+        from ai_assistant.model_profiles import ModelProfileUnavailable
+        try:
+            return stream_page_chat(request.user, data)
+        except ModelProfileUnavailable:
+            return Response(
+                {"error": "The selected model is unavailable. Refresh the model list and select an enabled model."},
+                status=status.HTTP_409_CONFLICT,
+                headers={"X-Argus-Chat-Error": "model_profile_unavailable"},
+            )
     messages = [{"role": "system", "content": SYSTEM_PROMPT}, *data.get("messages", [])]
     if "page_context" in data:
         messages.append({
@@ -142,6 +157,7 @@ def page_chat(request):
         })
     messages.append({"role": "user", "content": data["message"]})
     overrides = {key: data[key] for key in ("api_key", "model", "base_url", "timeout_seconds") if key in data}
+    overrides["_usage_context"] = model_usage_context(request.user, source="page_chat", overrides=overrides, agent_name="assistant")
     try:
         with open_chat_model(overrides=overrides) as model:
             response = message_text(model.invoke(messages)).strip()

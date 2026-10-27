@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
 import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
 import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
+import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
+import { fetchModelCatalog, type ModelCatalogEntry } from 'services/aiAssistant/models';
 import { buildTicketDetailContext } from '../aiContext';
 import { canContinueTicketChat, type TicketChatCapabilities, type TicketChatScope } from '../ticketChatHistory';
 import layoutStyles from './TicketLayout.module.css';
@@ -422,6 +424,11 @@ export default function SlaTicketDetailView(props: Props) {
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [aiRawResponse, setAiRawResponse] = useState('');
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiModels, setAiModels] = useState<ModelCatalogEntry[]>([]);
+  const [aiModelId, setAiModelId] = useState('');
+  const [aiModelsLoading, setAiModelsLoading] = useState(true);
+  const [aiModelsError, setAiModelsError] = useState('');
+  const aiModelsRequest = useRef<AbortController | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
   const [chatWidthTouched, setChatWidthTouched] = useState(false);
@@ -460,6 +467,66 @@ export default function SlaTicketDetailView(props: Props) {
   const aiAssistantCardRef = useRef<HTMLDivElement | null>(null);
 
   const notesCount = workLogs?.length ?? 0;
+
+  const loadAiModels = useCallback(async () => {
+    aiModelsRequest.current?.abort();
+    const controller = new AbortController();
+    aiModelsRequest.current = controller;
+    setAiModelsLoading(true);
+    setAiModelsError('');
+    try {
+      const catalog = await fetchModelCatalog(controller.signal);
+      if (controller.signal.aborted) return;
+      setAiModels(catalog);
+      setAiModelId((current) => {
+        if (current) return current;
+        let preferred = null;
+        try { preferred = localStorage.getItem(MODEL_PREFERENCE_KEY); } catch { /* Use the catalog if storage is unavailable. */ }
+        return initialModelChoice(catalog, preferred);
+      });
+    } catch {
+      if (!controller.signal.aborted) setAiModelsError('Available models could not be loaded. Refresh the model list.');
+    } finally {
+      if (!controller.signal.aborted) setAiModelsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAiModels();
+    return () => aiModelsRequest.current?.abort();
+  }, [loadAiModels]);
+
+  const aiModelAvailable = aiModels.some((model) => model.id === aiModelId);
+  const aiModelReady = aiModelAvailable && !aiModelsLoading && !aiModelsError;
+  const requireAiModel = () => {
+    if (aiModelReady) return true;
+    message.warning(aiModelsError || 'Choose an enabled model in AI Assistant > Models before using AI.');
+    return false;
+  };
+  const aiModelSelector = (
+    <div style={{ display: 'grid', gap: 4 }}>
+      <Select
+        aria-label="Ticket AI model"
+        placeholder="Choose an enabled model"
+        value={aiModelId || undefined}
+        loading={aiModelsLoading}
+        onDropdownVisibleChange={(visible) => { if (visible) void loadAiModels(); }}
+        onChange={(value) => {
+          setAiModelId(value);
+          try { localStorage.setItem(MODEL_PREFERENCE_KEY, value); } catch { /* Keep the choice in this tab. */ }
+        }}
+        options={[
+          ...(aiModelId && !aiModelAvailable ? [{ value: aiModelId, label: 'Selected model unavailable', disabled: true }] : []),
+          ...aiModels.map((model) => ({ value: model.id, label: `${model.name} (${model.model})` })),
+        ]}
+        style={{ width: '100%' }}
+      />
+      {aiModelsError ? <Typography.Text type="danger">{aiModelsError} <Typography.Link onClick={() => void loadAiModels()}>Refresh</Typography.Link></Typography.Text> : null}
+      {!aiModelsLoading && !aiModelsError && !aiModelAvailable ? (
+        <Typography.Text type="warning">Choose an enabled model or configure one in <Typography.Link href="/settings/ai-assistant">AI Assistant &gt; Models</Typography.Link>.</Typography.Text>
+      ) : null}
+    </div>
+  );
 
   useEffect(() => {
     try {
@@ -547,22 +614,7 @@ export default function SlaTicketDetailView(props: Props) {
     };
   }, [ticket.ticket_number]);
 
-  const buildAiBasePayload = () => {
-    const aiEnabled = localStorage.getItem('siem_ai_enabled') !== '0';
-    const aiApiKey = localStorage.getItem('siem_ai_api_key') || '';
-    const aiModel = localStorage.getItem('siem_ai_model') || '';
-    const aiBaseUrl = localStorage.getItem('siem_ai_base_url') || '';
-    const aiTimeoutRaw = localStorage.getItem('siem_ai_timeout') || '';
-    const aiTimeout = aiTimeoutRaw && !Number.isNaN(Number(aiTimeoutRaw)) ? Number(aiTimeoutRaw) : undefined;
-
-    return {
-      enabled: aiEnabled,
-      api_key: aiApiKey || undefined,
-      model: aiModel || undefined,
-      base_url: aiBaseUrl || undefined,
-      timeout_seconds: aiTimeout,
-    };
-  };
+  const buildAiBasePayload = () => chatModelRequest(aiModelId);
 
   const buildTicketPlaybookPayload = () => ({
     ticket_number: ticket.ticket_number,
@@ -697,6 +749,7 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   const runAiAssistant = async () => {
+    if (!requireAiModel()) return;
     setAiLoading(true);
     setAiError(null);
     try {
@@ -753,6 +806,7 @@ export default function SlaTicketDetailView(props: Props) {
     const text = chatInput.trim();
     if (!text || chatLoading || !chatCanContinue) return;
     const sequence = chatHistorySequence.current;
+    if (!requireAiModel()) return;
     const historyForApi = chatMessages.map((m) => ({ role: m.role, content: m.content }));
     setChatMessages((prev) => [...prev, { role: 'user', content: text }]);
     setChatInput('');
@@ -848,6 +902,7 @@ export default function SlaTicketDetailView(props: Props) {
   const sendComment = async () => {
     const text = (commentDraft || '').trim();
     if (!text) return;
+    if (text.toLowerCase().startsWith('@ai') && !requireAiModel()) return;
     setCommentSending(true);
     try {
       if (text.toLowerCase().startsWith('@ai')) {
@@ -1711,7 +1766,9 @@ export default function SlaTicketDetailView(props: Props) {
                 </div>
               </div>
               <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
-                <Button type="primary" onClick={runAiAssistant} loading={aiLoading}>
+                {aiModelSelector}
+                <Typography.Text type="secondary">Used for ticket analysis, chat and @AI. Changes apply to the next request.</Typography.Text>
+                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>
                   Run AI Assistant
                 </Button>
                 <Button onClick={openChat}>
@@ -2008,6 +2065,7 @@ export default function SlaTicketDetailView(props: Props) {
               <Empty description="No messages yet" />
             )}
           </div>
+          {aiModelSelector}
           <Input.TextArea
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
@@ -2021,7 +2079,7 @@ export default function SlaTicketDetailView(props: Props) {
             </Button>
             <Space>
               <Button onClick={() => setChatOpen(false)}>Close</Button>
-              <Button type="primary" onClick={sendChat} loading={chatLoading} disabled={!chatInput.trim() || !chatCanContinue}>
+              <Button type="primary" onClick={sendChat} loading={chatLoading} disabled={!chatInput.trim() || !aiModelReady || !chatCanContinue}>
                 Send
               </Button>
             </Space>

@@ -20,6 +20,7 @@ _MESSAGES = {
     "model_not_found": "The model or API endpoint was not found. Check the model name and base URL.",
     "model_http_error": "The model service returned an HTTP error. Check the AI Assistant configuration.",
     "model_key_missing": "No model API key is configured. Add one in the AI Assistant settings.",
+    "model_profile_unavailable": "The selected model was disabled, removed, or changed. Refresh the model list and select an available model before sending again.",
     "model_ca_invalid": "The model certificate bundle configuration is invalid. Check the backend CA bundle settings.",
     "model_response_invalid": "The model service returned an invalid or incomplete response. Check API compatibility.",
     "model_error": "The model request failed. Check the AI Assistant configuration.",

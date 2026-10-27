@@ -8,7 +8,7 @@ from django.conf import settings
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from ai_assistant.model_client import ModelCallError, call_responses, message_text, open_chat_model
 
@@ -367,7 +367,7 @@ def _parse_section_markdown(section: str, text: str) -> Dict[str, Any]:
     return {}
 
 def _generate_structured_sections(
-    prompt: str, overrides: Dict[str, Any] | None = None, *, skill_middleware=None,
+    prompt: str, overrides: Dict[str, Any] | None = None, *, skill_middleware=None, model_call_guard=None,
 ) -> tuple[Dict[str, Any], List[str]]:
     """Request each UI section independently so one long answer cannot erase others."""
     specs = [
@@ -405,7 +405,7 @@ def _generate_structured_sections(
         )
         response = _call_openai(section_prompt, overrides=overrides, **(
             {"skill_middleware": skill_middleware} if skill_middleware else {}
-        ))
+        ), **({"model_call_guard": model_call_guard} if model_call_guard else {}))
         response_text = _extract_response_text(response)
         parsed = _parse_structured_json(response_text)
         fallback = _parse_section_markdown(name, response_text)
@@ -432,9 +432,11 @@ def _generate_structured_sections(
     return assistant, raw_failures
 
 def _call_openai(
-    prompt: str, overrides: Dict[str, Any] | None = None, *, skill_middleware=None, tools=None,
+    prompt: str, overrides: Dict[str, Any] | None = None, *, skill_middleware=None, tools=None, model_call_guard=None,
 ) -> Dict[str, Any]:
     try:
+        if model_call_guard:
+            model_call_guard()
         if tools or (skill_middleware and skill_middleware.tools):
             # Share tool audit and thread cleanup with chat, without importing the
             # chat module during application initialization.
@@ -450,6 +452,8 @@ def _call_openai(
 
             def tool_guard(*, meta, **kwargs):
                 nonlocal external_calls
+                if model_call_guard:
+                    model_call_guard()
                 if meta.get("source") == "external":
                     if external_calls:
                         raise PermissionError("Ticket analysis allows one external MCP execution per request.")
@@ -457,7 +461,9 @@ def _call_openai(
 
             middleware = [
                 ModelCallLimitMiddleware(run_limit=limit, exit_behavior="error"),
-                _ChatCompatibility(trace, safe_tool_errors=True, tool_guard=tool_guard),
+                _ChatCompatibility(trace, safe_tool_errors=True, tool_guard=tool_guard,
+                                   model_call_guard=model_call_guard,
+                                   audit_context=(overrides or {}).get("_usage_context")),
             ]
             if skill_middleware:
                 middleware.append(skill_middleware)
@@ -480,6 +486,11 @@ def _call_openai(
             if tools:
                 payload["mcp_context"] = _mcp_context(trace, result["messages"], tools)
             return payload
+        if model_call_guard:
+            # Saved profiles advertise Chat Completions compatibility. Preserve
+            # the legacy Responses path only for older explicit configurations.
+            with open_chat_model(overrides) as model:
+                return {"output_text": message_text(model.invoke([HumanMessage(content=prompt)]))}
         return call_responses(prompt, overrides)
     except ModelCallError as exc:
         raise AIAssistantError(str(exc)) from exc
@@ -532,8 +543,13 @@ def test_openai_connectivity(overrides: Dict[str, Any] | None = None) -> Dict[st
     probe_prompt = (
         "Return STRICT JSON only: {\"ok\": true, \"message\": \"pong\"}"
     )
-    response = _call_openai(probe_prompt, overrides=overrides)
-    text = _extract_response_text(response)
+    try:
+        # Test the same Chat Completions adapter used by conversation messages,
+        # including the official MiniMax compatibility adapter, without tools.
+        with open_chat_model(overrides) as model:
+            text = message_text(model.invoke([HumanMessage(content=probe_prompt)]))
+    except ModelCallError as exc:
+        raise AIAssistantError(str(exc)) from exc
     return {
         "ok": True,
         "model": (overrides or {}).get("model") or _get_setting("OPENAI_MODEL", "gpt-5.1-codex"),
@@ -548,7 +564,11 @@ def generate_ai_assistant_output(
     related_logs: List[str],
     user_prompt: str | None = None,
     overrides: Dict[str, Any] | None = None,
+    *,
+    model_call_guard=None,
 ) -> Dict[str, Any]:
+    if model_call_guard:
+        model_call_guard()
     mcp_context: Dict[str, Any] | None = None
     observables_payload: Dict[str, Any] | None = {}
     cmdb_assets: List[Dict[str, Any]] = []
@@ -638,6 +658,8 @@ def generate_ai_assistant_output(
     enabled_skills = (overrides or {}).get("skills") if isinstance((overrides or {}).get("skills"), list) else []
     skill_middleware = SkillsMiddleware(allowed_skills=normalize_skill_names(enabled_skills)) if enabled_skills else None
     skill_options = {"skill_middleware": skill_middleware} if skill_middleware else {}
+    if model_call_guard:
+        skill_options["model_call_guard"] = model_call_guard
     raw_failures: List[str] = []
     if user_prompt:
         response = _call_openai(prompt, overrides=overrides, tools=mcp_tools, **skill_options)

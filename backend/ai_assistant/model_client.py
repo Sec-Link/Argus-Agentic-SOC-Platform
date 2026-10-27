@@ -116,7 +116,44 @@ class ModelCallError(RuntimeError):
         self.request_summary = model_request_summary_text(request_summary)
 
 
-class _MiniMaxChatOpenAI(ChatOpenAI):
+class _UsageChatOpenAI(ChatOpenAI):
+    """Keep only provider-reported counts; LangChain defaults missing counts to zero."""
+
+    def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
+        generation = super()._convert_chunk_to_generation_chunk(chunk, default_chunk_class, base_generation_info)
+        if generation is not None and isinstance(chunk.get("usage"), dict):
+            from .usage_recording import provider_token_counts
+            generation.message.response_metadata["_argus_usage"] = provider_token_counts(chunk["usage"])
+        return generation
+
+
+class _ResponsesUsageStream:
+    """Annotate completed SDK response events before their usage is normalized."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def __enter__(self):
+        self.stream.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self.stream.__exit__(*args)
+
+    def __iter__(self):
+        from .usage_recording import provider_token_counts
+
+        for event in self.stream:
+            response = getattr(event, "response", None)
+            usage = getattr(response, "usage", None)
+            if response is not None:
+                response.metadata = {**(response.metadata or {}), "_argus_usage": (
+                    provider_token_counts(usage.model_dump(), responses_api=True) if usage is not None else {}
+                )}
+            yield event
+
+
+class _MiniMaxChatOpenAI(_UsageChatOpenAI):
     """Keep MiniMax's required reasoning replay in private model history."""
 
     def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
@@ -187,6 +224,9 @@ class _ModelHTTPClient(DefaultHttpxClient):
     """Accept gateways returning JSON to a streaming request, without a retry."""
 
     def send(self, request, **kwargs):
+        recorder = getattr(self, "usage_recorder", None)
+        if recorder is not None and request.url.path.endswith(("/chat/completions", "/responses")):
+            recorder.record_request(json.loads(request.content))
         response = super().send(request, **kwargs)
         if (
             response.is_error
@@ -213,6 +253,8 @@ class _ModelHTTPClient(DefaultHttpxClient):
                     "id": payload.get("id", ""), "model": payload.get("model", ""),
                     "choices": [{"index": index, "delta": delta, "finish_reason": choice.get("finish_reason")}],
                 })
+            if isinstance(payload.get("usage"), dict):
+                events.append({"id": payload.get("id", ""), "choices": [], "usage": payload["usage"]})
         else:
             text = payload.get("output_text")
             if not isinstance(text, str):
@@ -226,6 +268,10 @@ class _ModelHTTPClient(DefaultHttpxClient):
                 "type": "response.output_text.delta", "output_index": 0,
                 "content_index": 0, "item_id": payload.get("id", ""), "delta": text,
             })
+            if isinstance(payload.get("usage"), dict):
+                events.append({"type": "response.completed", "response": {
+                    "id": payload.get("id", ""), "output": [], "usage": payload["usage"],
+                }})
         body = "".join(f"data: {json.dumps(event, ensure_ascii=False)}\n\n" for event in events) + "data: [DONE]\n\n"
         headers = {key: value for key, value in response.headers.items()
                    if key.lower() not in {"content-type", "content-length", "content-encoding", "transfer-encoding"}}
@@ -314,16 +360,28 @@ def open_chat_model(overrides=None, *, use_responses_api=False):
     config = chat_config(overrides, use_responses_api=use_responses_api)
     if not config["api_key"]:
         raise ModelCallError("OPENAI_API_KEY is not configured", code="model_key_missing")
+    usage_context = dict((overrides or {}).get("_usage_context") or {})
+    callbacks = []
+    if usage_context.get("actor_id"):
+        from .usage_recording import ModelUsageRecorder
+        callbacks.append(ModelUsageRecorder(
+            {**usage_context, "model_name": config["model"]}, require_reported=True, secrets=(config["api_key"],),
+        ))
     with _model_http_client() as client:
-        model_class = ChatOpenAI
+        if callbacks:
+            client.usage_recorder = callbacks[0]
+        model_class = _UsageChatOpenAI if callbacks else ChatOpenAI
         if not use_responses_api and urlsplit(config["base_url"]).hostname in _MINIMAX_HOSTS:
             model_class = _MiniMaxChatOpenAI
-        yield model_class(
+        model = model_class(
             **config,
             use_responses_api=use_responses_api,
             max_retries=0,
             streaming=True,
-            stream_usage=False,
+            # Unknown gateways can reject stream_options. Preserve compatibility
+            # there and still capture any usage they report in their responses.
+            stream_usage=urlsplit(config["base_url"]).hostname in {"api.openai.com", *_MINIMAX_HOSTS},
+            callbacks=callbacks,
             max_tokens=1200 if use_responses_api else None,
             temperature=0.2,
             # Keep the existing wire parameter even for gateway model aliases
@@ -331,6 +389,10 @@ def open_chat_model(overrides=None, *, use_responses_api=False):
             extra_body={"temperature": 0.2},
             http_client=client,
         )
+        if use_responses_api and callbacks:
+            create_response = model.root_client.responses.create
+            model.root_client.responses.create = lambda **kwargs: _ResponsesUsageStream(create_response(**kwargs))
+        yield model
 
 
 def message_text(message: AIMessage) -> str:

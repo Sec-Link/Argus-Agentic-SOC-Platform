@@ -8,8 +8,8 @@ from django.db.models import Avg
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
 from rest_framework import serializers, status, viewsets
-from rest_framework.exceptions import PermissionDenied
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -28,8 +28,11 @@ from .serializers import (
 
 
 from ai_assistant.assistant import AIAssistantError, generate_ai_assistant_output
-from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
+from ai_assistant.chat_errors import safe_chat_error
 from ai_assistant.conversation_history import current_actor, event_permissions, require_history_permissions
+from ai_assistant.model_selection import selected_model_config
+from ai_assistant.usage_recording import model_usage_context
+from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
 from ai_assistant.skill_config import get_enabled_skill_configs
 from ai_assistant.serializers import AIAssistantRequestSerializer
 
@@ -604,10 +607,13 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def ai_assistant(self, request, ticket_number=None):
-        ticket = self.get_object()
         serializer = AIAssistantRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        model_overrides, model_guard = selected_model_config(
+            request.user, data, permissions=("tickets.view_eventticket", "tickets.add_ticketworklog"),
+        )
+        ticket = self.get_object()
         try:
             if data.get("enabled") is False:
                 return Response({"error": "AI assistant is disabled"}, status=status.HTTP_400_BAD_REQUEST)
@@ -629,6 +635,10 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 },
                 "skills": data.get("skills") or [],
             }
+            overrides.update(model_overrides)
+            overrides["_usage_context"] = model_usage_context(
+                request.user, source="ticket_analysis", overrides=overrides, agent_name="assistant",
+            )
             if not overrides.get("skills"):
                 overrides["skills"] = get_enabled_skill_configs()
             mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
@@ -667,7 +677,10 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
+                **({"model_call_guard": model_guard} if model_guard else {}),
             )
+            if model_guard:
+                model_guard()
             try:
                 assistant = result.get("assistant") if isinstance(result, dict) else None
                 assistant_raw = result.get("assistant_raw") if isinstance(result, dict) else None
@@ -728,7 +741,15 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 # Do not block API response on logging failure
                 pass
             return Response(result)
-        except AIAssistantError as exc:
+        except Exception as exc:
+            if model_guard:
+                if isinstance(exc, APIException):
+                    raise
+                failure = safe_chat_error(exc.__cause__ or exc)
+                return Response({"error": failure["message"], "code": failure["code"]},
+                                status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            if not isinstance(exc, AIAssistantError):
+                raise
             return Response(
                 {"error": str(exc)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -875,10 +896,13 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def ai_mention(self, request, ticket_number=None):
-        ticket = self.get_object()
         serializer = AIAssistantRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        model_overrides, model_guard = selected_model_config(
+            request.user, data, permissions=("tickets.view_eventticket",),
+        )
+        ticket = self.get_object()
         try:
             if data.get("enabled") is False:
                 return Response({"error": "AI assistant is disabled"}, status=status.HTTP_400_BAD_REQUEST)
@@ -900,6 +924,10 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 },
                 "skills": data.get("skills") or [],
             }
+            overrides.update(model_overrides)
+            overrides["_usage_context"] = model_usage_context(
+                request.user, source="ticket_mention", overrides=overrides, agent_name="assistant",
+            )
             mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
             if isinstance(mcp_overrides, dict):
                 if mcp_overrides.get("enabled") and not mcp_overrides.get("base_url"):
@@ -920,9 +948,20 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
+                **({"model_call_guard": model_guard} if model_guard else {}),
             )
+            if model_guard:
+                model_guard()
             return Response(result)
-        except AIAssistantError as exc:
+        except Exception as exc:
+            if model_guard:
+                if isinstance(exc, APIException):
+                    raise
+                failure = safe_chat_error(exc.__cause__ or exc)
+                return Response({"error": failure["message"], "code": failure["code"]},
+                                status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            if not isinstance(exc, AIAssistantError):
+                raise
             return Response(
                 {"error": str(exc)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,

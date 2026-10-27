@@ -36,7 +36,10 @@ def _summarize(request) -> dict:
     path = (request.path or "").rstrip("/")
     if path == "/api/v1/ai-assistant/page-chat" or any(
         path == prefix or path.startswith(prefix + "/")
-        for prefix in ("/api/v1/ai-assistant/http-tools", "/api/v1/ai-assistant/agents", "/api/v1/ai-assistant/conversations", "/api/v1/ai-assistant/external-mcp")
+        for prefix in (
+            "/api/v1/ai-assistant/http-tools", "/api/v1/ai-assistant/agents", "/api/v1/ai-assistant/conversations",
+            "/api/v1/ai-assistant/models", "/api/v1/ai-assistant/external-mcp",
+        )
     ):
         return {}
     if request.method == "GET":

@@ -137,7 +137,8 @@ class _ChatCompatibility(AgentMiddleware):
     """Translate framework events to the existing chat trace and tool audit."""
 
     def __init__(self, trace, *, cancel_event=None, tool_guard=None,
-                 tool_result_transform=None, safe_tool_errors=False, model_call_guard=None, audit_source=None) -> None:
+                 tool_result_transform=None, safe_tool_errors=False, model_call_guard=None, audit_source=None,
+                 audit_context=None) -> None:
         self.trace = trace
         self.iteration = 0
         self.caller_thread = get_ident()
@@ -149,6 +150,7 @@ class _ChatCompatibility(AgentMiddleware):
         self.safe_tool_errors = safe_tool_errors
         self.model_call_guard = model_call_guard
         self.audit_source = audit_source
+        self.audit_context = audit_context or {}
 
     def wrap_model_call(self, request, handler):
         try:
@@ -194,7 +196,10 @@ class _ChatCompatibility(AgentMiddleware):
         source = meta.get("source", "internal")
         try:
             audit_arguments = self.tool_result_transform(call["args"]) if self.tool_result_transform else call["args"]
-            exec_id = start_mcp_execution(actual_name, audit_arguments, source=self.audit_source or source, endpoint=endpoint)
+            exec_id = start_mcp_execution(
+                actual_name, audit_arguments, source=self.audit_source or source, endpoint=endpoint,
+                audit_context={**self.audit_context, "tool_source": source},
+            )
             guard_denial = False
             try:
                 self.trace.append({
@@ -227,10 +232,13 @@ class _ChatCompatibility(AgentMiddleware):
                 result = ToolMessage(content=f"Tool execution failed: {detail}", tool_call_id=call["id"], name=name, status="error")
             success = result.status != "error"
             content = str(result.content)
-            try:
-                response_payload = json.loads(content)
-            except (TypeError, ValueError):
-                response_payload = {"content": content}
+            if isinstance(result.content, (list, dict)):
+                response_payload = result.content
+            else:
+                try:
+                    response_payload = json.loads(content)
+                except (TypeError, ValueError):
+                    response_payload = {"content": content}
             finish_mcp_execution(exec_id, success, error="" if success else content, response_payload=response_payload)
             update_mcp_stats(actual_name, success)
             self.trace.append({
@@ -263,12 +271,17 @@ def run_chat_agent(
     include_default_tools=True,
     model_call_guard=None,
     audit_source=None,
+    audit_context=None,
 ) -> Dict[str, Any]:
     """Run a chat turn; streaming callbacks must also accept events from tool threads."""
     if not user_input:
         raise RuntimeError("message is required")
 
     history_messages = history_messages or []
+    if audit_context:
+        overrides = {**(overrides or {}), "_usage_context": {
+            **((overrides or {}).get("_usage_context") or {}), **audit_context,
+        }}
     recommended_skills = recommended_skills or []
     if allowed_skills is not None:
         allowed_skills = set(allowed_skills)
@@ -324,6 +337,7 @@ def run_chat_agent(
         trace, cancel_event=cancel_event, tool_guard=tool_guard,
         tool_result_transform=tool_result_transform, safe_tool_errors=safe_tool_errors,
         model_call_guard=model_call_guard, audit_source=audit_source,
+        audit_context=(overrides or {}).get("_usage_context"),
     )
     middlewares = [ModelCallLimitMiddleware(run_limit=max_iterations, exit_behavior="error"), middleware]
     if skill_middleware is not None:

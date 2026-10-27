@@ -539,6 +539,7 @@ export async function fetchSlaTicketHandleLogs(ticketNumber: string) {
 export async function generateSlaTicketAiAssistant(
   ticketNumber: string,
   payload: {
+    model_profile_id?: string;
     alert_json?: any;
     trigger_rule?: string;
     related_logs?: string[];
@@ -570,6 +571,7 @@ export async function generateSlaTicketAiAssistant(
 export async function generateSlaTicketAiMention(
   ticketNumber: string,
   payload: {
+    model_profile_id?: string;
     prompt: string;
     alert_json?: any;
     trigger_rule?: string;
@@ -671,6 +673,7 @@ export async function fetchAiAssistantSkillMonitor() {
 }
 
 export async function aiAssistantChat(payload: {
+  model_profile_id?: string;
   message: string;
   messages?: Array<{ role: string; content: any }>;
   ticket_number?: string;
@@ -705,6 +708,7 @@ export interface PageChatRequest {
   /** Up to three enabled specialist names. Omit to let the coordinator choose. */
   agent_names?: string[];
   page_context?: PageChatContext;
+  model_profile_id?: string;
   api_key?: string;
   model?: string;
   base_url?: string;
@@ -749,7 +753,7 @@ export async function streamAiAssistantPageChat(
   }
   if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
     await response.body?.cancel().catch(() => {});
-    if (!response.ok) throw pageChatHttpError(response.status);
+    if (!response.ok) throw pageChatHttpError(response.status, response.headers.get('X-Argus-Chat-Error'));
     throw new PageChatStreamError({
       code: 'client_invalid_response', stage: 'connection', status_code: response.status,
       message: 'The chat server did not return a readable event stream. Check the backend and proxy configuration.',

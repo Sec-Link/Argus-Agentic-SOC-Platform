@@ -7,7 +7,20 @@ from ai_assistant.models import ExternalMCPServer, SkillConfig
 REDACTED_VALUE = "***"
 
 
-class AIAssistantRequestSerializer(serializers.Serializer):
+class ModelSelectionSerializer(serializers.Serializer):
+    model_profile_id = serializers.UUIDField(required=False)
+
+    def validate(self, attrs):
+        if "model_profile_id" in attrs and any(
+            key in attrs for key in ("api_key", "model", "base_url", "timeout_seconds")
+        ):
+            raise serializers.ValidationError({
+                "model_profile_id": "A saved model cannot be combined with model connection overrides.",
+            })
+        return attrs
+
+
+class AIAssistantRequestSerializer(ModelSelectionSerializer):
     alert_json = serializers.JSONField(required=False)
     trigger_rule = serializers.CharField(required=False, allow_blank=True)
     related_logs = serializers.JSONField(required=False)
@@ -70,7 +83,7 @@ class AIAssistantRequestSerializer(serializers.Serializer):
         return cleaned
 
 
-class AIChatRequestSerializer(serializers.Serializer):
+class AIChatRequestSerializer(ModelSelectionSerializer):
     message = serializers.CharField(required=True, allow_blank=False)
     messages = serializers.JSONField(required=False)
     ticket_number = serializers.CharField(required=False, allow_blank=True)

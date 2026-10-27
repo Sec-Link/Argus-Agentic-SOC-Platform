@@ -98,7 +98,7 @@ export default function ExecutionSettings({ readonly = false }: { readonly?: boo
     <Alert type="info" showIcon style={{ marginBottom: 16 }} message="Global limits for page assistant conversations"
       description="These settings are saved on the server for all users and apply when a new message starts. Running messages keep their existing limits. Specialist model rounds and assignments are configured separately in Agents." />
     <Typography.Paragraph type="secondary">
-      Each model request timeout is configured in General. Individual HTTP tool timeouts are configured in Tools. Provider and network timeouts may end a request before these execution limits.
+      Each model request timeout is configured in Models. Individual HTTP tool timeouts are configured in Tools. Provider and network timeouts may end a request before these execution limits.
     </Typography.Paragraph>
     {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 16 }} />}
     {saveError && <Alert type="error" showIcon message={saveError} style={{ marginBottom: 16 }} />}

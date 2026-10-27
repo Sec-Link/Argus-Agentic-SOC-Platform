@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
+import { Alert, Button, Card, Form, Input, Modal, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
 import { getIsReadonly } from '../../lib/auth';
 import HttpToolsSettings from './HttpToolsSettings';
 import AgentSettings from './AgentSettings';
 import ExecutionSettings from './ExecutionSettings';
+import ModelSettings from './ModelSettings';
+import AiUsageMonitor from './AiUsageMonitor';
 import McpToolApprovals from './McpToolApprovals';
 import {
   createAiAssistantMcpServer,
@@ -11,36 +13,19 @@ import {
   deleteAiAssistantMcpServer,
   deleteAiAssistantSkillConfig,
   fetchAiAssistantInternalMcpTools,
-  fetchAiAssistantMcpMonitor,
   fetchAiAssistantSkillCatalog,
   fetchAiAssistantSkillContent,
-  fetchAiAssistantSkillMonitor,
   listAiAssistantMcpServers,
   listAiAssistantSkillConfigs,
-  testAiAssistantConnectivity,
   updateAiAssistantMcpServer,
   updateAiAssistantSkillConfig,
   updateAiAssistantSkillContent,
 } from '../../api';
 
-const STORAGE_KEYS = {
-  enabled: 'siem_ai_enabled',
-  apiKey: 'siem_ai_api_key',
-  model: 'siem_ai_model',
-  baseUrl: 'siem_ai_base_url',
-  timeout: 'siem_ai_timeout',
-};
-
 export default function AiAssistantSettings() {
   const [message, messageContextHolder] = antdMessage.useMessage();
-  const [generalForm] = Form.useForm();
   const [mcpEditForm] = Form.useForm();
   const [skillEditForm] = Form.useForm();
-  const [testLoading, setTestLoading] = useState(false);
-  const [monitorLoading, setMonitorLoading] = useState(false);
-  const [monitorData, setMonitorData] = useState<any>({ executions: [], stats: {}, total: 0, page: 1, page_size: 20, total_pages: 1 });
-  const [skillMonitorLoading, setSkillMonitorLoading] = useState(false);
-  const [skillMonitorData, setSkillMonitorData] = useState<any>({ summary: {}, stats: [] });
   const [mcpLoading, setMcpLoading] = useState(false);
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
@@ -54,30 +39,8 @@ export default function AiAssistantSettings() {
   const [skillContentLoading, setSkillContentLoading] = useState(false);
   const [skillContentPreview, setSkillContentPreview] = useState('');
   const [internalMcpTools, setInternalMcpTools] = useState<any[]>([]);
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detailRow, setDetailRow] = useState<any | null>(null);
-  const [toolFilter, setToolFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'running'>('all');
   const [isReadonly, setIsReadonly] = useState(false);
   useEffect(() => { setIsReadonly(getIsReadonly()); }, []);
-  const toolStats = useMemo(() => {
-    const byTool = monitorData?.stats || {};
-    return Object.entries(byTool)
-      .map(([tool, stat]: any) => ({ tool, ...(stat || {}) }))
-      .sort((a: any, b: any) => Number(b.total_calls || 0) - Number(a.total_calls || 0))
-      .slice(0, 3);
-  }, [monitorData]);
-
-  const monitorSummary = useMemo(() => {
-    const stats = Object.values(monitorData?.stats || {}) as any[];
-    const total = stats.reduce((acc, s) => acc + Number(s?.total_calls || 0), 0);
-    const success = stats.reduce((acc, s) => acc + Number(s?.success_calls || 0), 0);
-    const failed = stats.reduce((acc, s) => acc + Number(s?.failed_calls || 0), 0);
-    const successRate = total ? Math.round((success / total) * 1000) / 10 : 0;
-    const lastInvocation = (monitorData?.executions || [])[0]?.start_time || '-';
-    return { total, success, failed, successRate, lastInvocation };
-  }, [monitorData]);
-
   const skillConfigMap = useMemo(() => {
     const map = new Map<string, any>();
     for (const row of skillConfigs) {
@@ -85,82 +48,6 @@ export default function AiAssistantSettings() {
     }
     return map;
   }, [skillConfigs]);
-
-  const filteredRows = useMemo(() => {
-    const rows = Array.isArray(monitorData?.executions) ? monitorData.executions : [];
-    const endpointMap = new Map<string, string>();
-    for (const item of mcpServers) {
-      const endpoint = String(item?.endpoint || '').trim();
-      const title = String(item?.title || '').trim();
-      if (endpoint) endpointMap.set(endpoint, title || endpoint);
-    }
-    const resolveAddedMcp = (requestUrl: string) => {
-      const u = String(requestUrl || '');
-      for (const [endpoint, title] of endpointMap.entries()) {
-        if (u.startsWith(endpoint)) return { title, endpoint };
-      }
-      return { title: '-', endpoint: '-' };
-    };
-    const mapped = rows.map((r: any, idx: number) => ({
-      ...resolveAddedMcp(r.endpoint || ''),
-        key: `${idx}_${r.start_time || ''}_${r.tool_name || ''}`,
-        tool: r.tool_name || '-',
-        status: r.status || '-',
-        startAt: r.start_time || '-',
-        duration: typeof r.duration_ms === 'number' ? `${Math.max(0, Math.round(r.duration_ms / 1000))}s` : '-',
-        requestUrl: r.endpoint || '',
-        requestPayload: r.arguments || {},
-        responsePayload: r.response_payload || {},
-        error: r.error || '',
-        httpStatus: '',
-        source: r.source || '',
-        executionId: r.id || '',
-      }));
-    return mapped;
-  }, [monitorData, mcpServers]);
-
-  useEffect(() => {
-    try {
-      generalForm.setFieldsValue({
-        enabled: localStorage.getItem(STORAGE_KEYS.enabled) !== '0',
-        apiKey: isReadonly ? '' : (localStorage.getItem(STORAGE_KEYS.apiKey) || ''),
-        model: localStorage.getItem(STORAGE_KEYS.model) || 'gpt-5.1-codex',
-        baseUrl: localStorage.getItem(STORAGE_KEYS.baseUrl) || 'https://api.openai.com/v1',
-        timeout: localStorage.getItem(STORAGE_KEYS.timeout) || '45',
-      });
-    } catch {}
-  }, [generalForm, isReadonly]);
-
-  const loadMonitor = async (silent = false) => {
-    if (!silent) setMonitorLoading(true);
-    try {
-      const res = await fetchAiAssistantMcpMonitor({
-        tool: toolFilter || undefined,
-        status: statusFilter,
-        page: 1,
-        page_size: 100,
-      });
-      setMonitorData(res || { executions: [], stats: {}, total: 0, page: 1, page_size: 20, total_pages: 1 });
-    } catch {
-      if (!silent) message.error('Failed to load MCP monitor');
-      setMonitorData({ executions: [], stats: {}, total: 0, page: 1, page_size: 20, total_pages: 1 });
-    } finally {
-      if (!silent) setMonitorLoading(false);
-    }
-  };
-
-  const loadSkillMonitor = async () => {
-    setSkillMonitorLoading(true);
-    try {
-      const res = await fetchAiAssistantSkillMonitor();
-      setSkillMonitorData(res || { summary: {}, stats: [] });
-    } catch {
-      message.error('Failed to load skill monitor');
-      setSkillMonitorData({ summary: {}, stats: [] });
-    } finally {
-      setSkillMonitorLoading(false);
-    }
-  };
 
   const loadMcpServers = async () => {
     setMcpLoading(true);
@@ -215,55 +102,11 @@ export default function AiAssistantSettings() {
   };
 
   useEffect(() => {
-    loadMonitor(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolFilter, statusFilter]);
-
-  useEffect(() => {
-    loadSkillMonitor();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
     loadMcpServers();
     loadSkills();
     loadInternalMcpTools();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const onSaveGeneral = async () => {
-    const values = await generalForm.validateFields();
-    try {
-      localStorage.setItem(STORAGE_KEYS.enabled, values.enabled ? '1' : '0');
-      localStorage.setItem(STORAGE_KEYS.apiKey, values.apiKey || '');
-      localStorage.setItem(STORAGE_KEYS.model, values.model || '');
-      localStorage.setItem(STORAGE_KEYS.baseUrl, values.baseUrl || '');
-      localStorage.setItem(STORAGE_KEYS.timeout, String(values.timeout || '45'));
-      message.success('General settings saved');
-    } catch (err) {
-      message.error('Failed to save general settings');
-    }
-  };
-
-  const onTestConnectivity = async () => {
-    setTestLoading(true);
-    try {
-      const values = await generalForm.validateFields();
-      const res = await testAiAssistantConnectivity({
-        api_key: values.apiKey || undefined,
-        model: values.model || undefined,
-        base_url: values.baseUrl || undefined,
-        timeout_seconds:
-          values.timeout && !Number.isNaN(Number(values.timeout)) ? Number(values.timeout) : undefined,
-      });
-      message.success(`Connected (${res?.model || values.model || 'model'})`);
-    } catch (err: any) {
-      const apiError = err?.response?.data?.error || err?.response?.data?.detail;
-      message.error(apiError ? String(apiError) : 'Connectivity test failed');
-    } finally {
-      setTestLoading(false);
-    }
-  };
 
   const openMcpModal = (row?: any) => {
     setMcpEditRow(row || null);
@@ -435,31 +278,6 @@ export default function AiAssistantSettings() {
     }
   };
 
-  const statusTag = (status: string) => {
-    if (status === 'completed') return <Tag color="green">Completed</Tag>;
-    if (status === 'failed') return <Tag color="red">Failed</Tag>;
-    if (status === 'running') return <Tag color="blue">Running</Tag>;
-    return <Tag>{status}</Tag>;
-  };
-
-  const copyText = async (value: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      message.success(`${label} copied`);
-    } catch {
-      message.error('Copy failed');
-    }
-  };
-
-  const formatTime = (value: string) => {
-    if (!value) return '-';
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
-  };
-
   const skillTools = useMemo(
     () => ([
       { name: 'list_skills', description: 'List skills from skill library' },
@@ -611,7 +429,7 @@ export default function AiAssistantSettings() {
         AI Assistant Settings
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        General settings are stored locally in the browser. Agents, MCP, Skills and HTTP Tools are managed server-side.
+        Models, Execution limits, Agents, MCP, Skills and HTTP Tools are managed server-side. Enable a model in Models to make it available in conversations.
       </Typography.Paragraph>
       {isReadonly ? (
         <Alert
@@ -624,43 +442,12 @@ export default function AiAssistantSettings() {
       ) : null}
 
       <Tabs
+        defaultActiveKey="models"
         items={[
           {
-            key: 'general',
-            label: 'General',
-            children: (
-              <Card>
-                <Form form={generalForm} layout="vertical" disabled={isReadonly}>
-                  <Form.Item label="Enable AI Assistant" name="enabled" valuePropName="checked">
-                    <Switch />
-                  </Form.Item>
-                  <Form.Item label="OpenAI API Key" name="apiKey">
-                    <Input.Password placeholder={isReadonly ? 'Hidden for read-only users' : 'sk-...'} />
-                  </Form.Item>
-                  <Form.Item label="Model" name="model">
-                    <Input placeholder="gpt-5.1-codex" />
-                  </Form.Item>
-                  <Form.Item label="Base URL" name="baseUrl">
-                    <Input placeholder="https://api.openai.com/v1" />
-                  </Form.Item>
-                  <Form.Item label="Timeout (seconds)" name="timeout">
-                    <Input />
-                  </Form.Item>
-                  {isReadonly ? null : (
-                    <Form.Item>
-                      <Space>
-                        <Button type="primary" onClick={onSaveGeneral}>
-                          Save General
-                        </Button>
-                        <Button onClick={onTestConnectivity} loading={testLoading}>
-                          Test Connectivity
-                        </Button>
-                      </Space>
-                    </Form.Item>
-                  )}
-                </Form>
-              </Card>
-            ),
+            key: 'models',
+            label: 'Models',
+            children: <ModelSettings readonly={isReadonly} />,
           },
           {
             key: 'execution-limits',
@@ -678,160 +465,14 @@ export default function AiAssistantSettings() {
             children: <HttpToolsSettings readonly={isReadonly} />,
           },
           {
-            key: 'mcp-monitor',
-            label: 'MCP Status Monitor',
-            children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Card
-                  title="Execution Statistics"
-                  extra={
-                    <Button size="small" loading={monitorLoading} onClick={() => loadMonitor()}>
-                      Refresh
-                    </Button>
-                  }
-                >
-                  <Row gutter={[12, 12]}>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Total Calls</Typography.Text>
-                        <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{monitorSummary.total || 0}</div>
-                        <Typography.Text type="secondary">
-                          Success {monitorSummary.success || 0} / Failed {monitorSummary.failed || 0}
-                        </Typography.Text>
-                      </Card>
-                    </Col>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Success Rate</Typography.Text>
-                        <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{monitorSummary.successRate || 0}%</div>
-                        <Typography.Text type="secondary">Across all MCP tools</Typography.Text>
-                      </Card>
-                    </Col>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Last Invocation</Typography.Text>
-                        <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6 }}>
-                          {monitorSummary.lastInvocation || '-'}
-                        </div>
-                        <Typography.Text type="secondary">Current filter scope</Typography.Text>
-                      </Card>
-                    </Col>
-                    {toolStats.map((s: any) => (
-                      <Col key={s.tool} xs={24} sm={12} md={8} lg={6}>
-                        <Card size="small">
-                          <Typography.Text type="secondary">{s.tool}</Typography.Text>
-                          <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{s.total_calls || 0}</div>
-                          <Typography.Text type="secondary">
-                            Success {s.success_calls || 0} / Failed {s.failed_calls || 0}
-                          </Typography.Text>
-                        </Card>
-                      </Col>
-                    ))}
-                  </Row>
-                </Card>
-
-                <Card title="Recent Executions">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-                    <Input
-                      placeholder="Search tool name"
-                      style={{ width: 260 }}
-                      value={toolFilter}
-                      onChange={(e) => setToolFilter(e.target.value)}
-                    />
-                    <Select
-                      style={{ width: 180 }}
-                      value={statusFilter}
-                      onChange={(v) => setStatusFilter(v)}
-                      options={[
-                        { value: 'all', label: 'All Status' },
-                        { value: 'completed', label: 'Completed' },
-                        { value: 'failed', label: 'Failed' },
-                        { value: 'running', label: 'Running' },
-                      ]}
-                    />
-                  </div>
-                  <Table
-                    rowKey="key"
-                    loading={monitorLoading}
-                    pagination={{ pageSize: 6 }}
-                    dataSource={filteredRows}
-                    columns={[
-                      { title: 'Tool', dataIndex: 'tool', key: 'tool' },
-                      { title: 'Source', dataIndex: 'source', key: 'source' },
-                      {
-                        title: 'Status',
-                        dataIndex: 'status',
-                        key: 'status',
-                        render: (v: string) => statusTag(v),
-                      },
-                      { title: 'Start Time', dataIndex: 'startAt', key: 'startAt' },
-                      { title: 'Duration', dataIndex: 'duration', key: 'duration' },
-                      {
-                        title: 'Action',
-                        key: 'action',
-                        render: (_: any, row: any) => (
-                          <Space>
-                            <Button
-                              size="small"
-                              onClick={() => {
-                                setDetailRow(row);
-                                setDetailOpen(true);
-                              }}
-                            >
-                              Details
-                            </Button>
-                          </Space>
-                        ),
-                      },
-                    ]}
-                  />
-                </Card>
-              </Space>
-            ),
+            key: 'tool-monitor',
+            label: 'AI tool monitor',
+            children: <AiUsageMonitor kind="tools" />,
           },
           {
-            key: 'skill-monitor',
-            label: 'Skill Monitor',
-            children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Card
-                  title="Skill Execution Statistics"
-                  extra={
-                    <Button size="small" loading={skillMonitorLoading} onClick={() => loadSkillMonitor()}>
-                      Refresh
-                    </Button>
-                  }
-                >
-                  <Row gutter={[12, 12]}>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Total Calls</Typography.Text>
-                        <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{skillMonitorData?.summary?.total_calls || 0}</div>
-                        <Typography.Text type="secondary">
-                          Success {skillMonitorData?.summary?.success || 0} / Failed {skillMonitorData?.summary?.failed || 0}
-                        </Typography.Text>
-                      </Card>
-                    </Col>
-                  </Row>
-                </Card>
-
-                <Card title="Skill Usage">
-                  <Table
-                    rowKey={(row: any) => row.skill_name}
-                    loading={skillMonitorLoading}
-                    pagination={{ pageSize: 8 }}
-                    dataSource={Array.isArray(skillMonitorData?.stats) ? skillMonitorData.stats : []}
-                    columns={[
-                      { title: 'Skill', dataIndex: 'skill_name', key: 'skill_name' },
-                      { title: 'Total', dataIndex: 'total_calls', key: 'total_calls' },
-                      { title: 'Success', dataIndex: 'success_calls', key: 'success_calls' },
-                      { title: 'Failed', dataIndex: 'failed_calls', key: 'failed_calls' },
-                      { title: 'Last Call', dataIndex: 'last_call_time', key: 'last_call_time' },
-                    ]}
-                  />
-                </Card>
-              </Space>
-            ),
+            key: 'model-monitor',
+            label: 'Model usage',
+            children: <AiUsageMonitor kind="models" />,
           },
           {
             key: 'mcp',
@@ -993,89 +634,6 @@ export default function AiAssistantSettings() {
       />
       {mcpToolsRow && <McpToolApprovals server={mcpToolsRow} readonly={isReadonly} onClose={() => setMcpToolsRow(null)}
         onSaved={() => { setMcpToolsRow(null); message.success('MCP tool approvals saved'); void loadMcpServers(); }} />}
-      <Modal
-        title="Tool call details"
-        open={detailOpen}
-        onCancel={() => setDetailOpen(false)}
-        width={980}
-        styles={{ body: { maxHeight: '75vh', overflow: 'auto' } }}
-        footer={[
-          <Button key="ok" type="primary" onClick={() => setDetailOpen(false)}>
-            OK
-          </Button>,
-        ]}
-      >
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Card size="small" title="Execution info">
-            <Row gutter={[12, 12]}>
-              <Col xs={24} sm={12} md={8}>
-                <Card size="small">
-                  <Typography.Text type="secondary">TOOL</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 700 }}>{detailRow?.tool || '-'}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <Card size="small">
-                  <Typography.Text type="secondary">STATUS</Typography.Text>
-                  <div style={{ marginTop: 6 }}>{statusTag(detailRow?.status || '')}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <Card size="small">
-                  <Typography.Text type="secondary">TIME</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 600 }}>{formatTime(detailRow?.startAt || '')}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={12}>
-                <Card size="small">
-                  <Typography.Text type="secondary">EXECUTION ID</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 600, wordBreak: 'break-all' }}>{detailRow?.executionId || '-'}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={12}>
-                <Card size="small">
-                  <Typography.Text type="secondary">ENDPOINT</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 600, wordBreak: 'break-all' }}>{detailRow?.requestUrl || '-'}</div>
-                </Card>
-              </Col>
-            </Row>
-          </Card>
-
-          <Card
-            size="small"
-            title="Request params"
-            extra={(
-              <Button size="small" onClick={() => copyText(JSON.stringify({ tool: detailRow?.tool, arguments: detailRow?.requestPayload || {} }, null, 2), 'Request JSON')}>
-                Copy JSON
-              </Button>
-            )}
-          >
-            <pre style={{ margin: 0, background: '#f6f8fa', border: '1px solid #f0f0f0', padding: 12, borderRadius: 6, whiteSpace: 'pre', maxHeight: 360, overflow: 'auto' }}>
-{JSON.stringify({ tool: detailRow?.tool, arguments: detailRow?.requestPayload || {} }, null, 2)}
-            </pre>
-          </Card>
-
-          <Card
-            size="small"
-            title="Response"
-            extra={(
-              <Button size="small" onClick={() => copyText(JSON.stringify(detailRow?.responsePayload || {}, null, 2), 'Response content')}>
-                Copy content
-              </Button>
-            )}
-          >
-            <pre style={{ margin: 0, background: '#f6f8fa', border: '1px solid #f0f0f0', padding: 12, borderRadius: 6, whiteSpace: 'pre', maxHeight: 420, overflow: 'auto' }}>
-{JSON.stringify(detailRow?.responsePayload || {}, null, 2)}
-            </pre>
-          </Card>
-
-          {detailRow?.error ? (
-            <Card size="small" title="Error">
-              <div style={{ whiteSpace: 'pre-wrap', color: '#cf1322' }}>{detailRow.error}</div>
-            </Card>
-          ) : null}
-        </Space>
-      </Modal>
 
       <Modal
         title={mcpEditRow ? 'Edit MCP Server' : 'Add MCP Server'}

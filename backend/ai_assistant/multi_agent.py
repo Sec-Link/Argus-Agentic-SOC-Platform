@@ -107,6 +107,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
                     "overrides": {**worker_kwargs["overrides"], "max_iterations": worker_iterations},
                     "event_callback": worker_event,
                     "model_call_guard": guard,
+                    "audit_context": {**(worker_kwargs.get("audit_context") or {}), "agent_name": row.name},
                     "tool_guard": policy_factory(context),
                     "system_prompt_extra": (
                         f"Your specialist role is {row.title}: {row.role}\n"
@@ -187,6 +188,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
             "include_default_tools": False,
             "extra_tools": [delegation_tool],
             "model_call_guard": coordinator_guard,
+            "audit_context": {**(worker_kwargs.get("audit_context") or {}), "agent_name": "coordinator"},
             "event_callback": lambda event: emit({**event, "agent": "coordinator", "agent_title": "Coordinator"}),
             "system_prompt_extra": (
                 "You are the coordinating agent. Decide how to divide the user's request among the available "

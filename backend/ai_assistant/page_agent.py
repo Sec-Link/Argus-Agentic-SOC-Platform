@@ -25,6 +25,7 @@ from accounts.permissions import DenyReadonlyUser
 from accounts.services import is_user_readonly
 from ai_assistant.chat_agent import ChatCancelled, run_chat_agent
 from ai_assistant.chat_errors import event_progress, safe_chat_error
+from ai_assistant.call_details import snapshot
 from ai_assistant.model_client import ModelCallError, model_request_summary_text
 from ai_assistant.mcp_protocol_views import _call_tool, _tool_defs
 from ai_assistant.models import ExternalMCPServer, HttpToolConfig, MCPToolExecution, SkillConfig
@@ -34,6 +35,8 @@ from ai_assistant.skill_config import get_enabled_skill_names
 from ai_assistant.multi_agent import check_agent, enabled_agents, run_multi_agent
 from ai_assistant.conversation_history import ConversationConflict, ConversationLimit, start_conversation_turn
 from ai_assistant.execution_settings import get_execution_limits
+from ai_assistant.model_profiles import resolve_model_profile
+from ai_assistant.usage_recording import model_usage_context
 
 
 logger = logging.getLogger(__name__)
@@ -257,6 +260,10 @@ class PageToolPolicy:
             audit.update(mcp_server_id=server["id"], config_version=str(server.get("updated_at", "")),
                          remote_tool=raw_name)
         audit["requires_approval"] = requires_approval
+        MCPToolExecution.objects.filter(pk=execution_id).update(request_detail=snapshot({
+            "tool": name, "arguments": arguments, "endpoint": endpoint,
+            **({"request": request} if request is not None else {}),
+        }))
         if not requires_approval:
             # Only administrator-owned configuration can authorize this path.
             if self.cancel_event.is_set() or (self.deadline is not None and monotonic() >= self.deadline):
@@ -366,6 +373,9 @@ def stream_page_chat(user, data):
     servers = list(servers_by_endpoint.values())
     skills = get_enabled_skill_names()
     overrides = {key: data[key] for key in ("api_key", "model", "base_url", "timeout_seconds") if key in data}
+    model_snapshot, model_guard = {}, None
+    if data.get("model_profile_id"):
+        overrides, model_snapshot, model_guard = resolve_model_profile(user, data["model_profile_id"])
     overrides["max_iterations"] = limits.max_iterations
     overrides["mcp"] = {
         "enabled": bool(servers), "exact_only": True, "force_internal": False,
@@ -377,9 +387,14 @@ def stream_page_chat(user, data):
     if data.get("conversation_id"):
         recorder, history = start_conversation_turn(
             user, data, request_id, execution_timeout_seconds=limits.execution_timeout_seconds,
+            model_snapshot=model_snapshot,
         )
     else:
         history = list(data.get("messages", []))
+    audit_context = model_usage_context(
+        user, source="page_chat", overrides=overrides, request_id=request_id,
+        conversation_id=recorder.conversation_id if recorder else None, agent_name="assistant",
+    )
     if "page_context" in data:
         history.append({"role": "user", "content": "Untrusted current frontend page snapshot (JSON data):\n"
                         + json.dumps(data["page_context"], ensure_ascii=False)})
@@ -453,6 +468,8 @@ def stream_page_chat(user, data):
         return {"type": "error", **context, **safe_chat_error(exc)}
 
     def check_actor():
+        if model_guard:
+            model_guard()
         if recorder:
             try:
                 recorder.check_access()
@@ -471,8 +488,9 @@ def stream_page_chat(user, data):
                 event_callback=emit, cancel_event=cancelled, tool_guard=policy, system_prompt_extra=AGENT_PROMPT,
                 tool_result_transform=public_event, safe_tool_errors=True,
                 audit_source="page_chat",
+                audit_context=audit_context,
             )
-            if recorder:
+            if recorder or model_guard:
                 worker_kwargs["model_call_guard"] = check_actor
             if agents:
                 result = run_multi_agent(

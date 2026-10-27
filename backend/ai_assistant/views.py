@@ -3,14 +3,16 @@ from django.conf import settings
 from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import APIException
 
 from ai_assistant.assistant import AIAssistantError, test_openai_connectivity
 from ai_assistant.chat_agent import run_chat_agent
 from ai_assistant.chat_errors import safe_chat_error
 from ai_assistant.conversation_history import current_actor, require_history_permissions
+from ai_assistant.model_selection import selected_model_config
+from ai_assistant.usage_recording import model_usage_context
 from ai_assistant.monitoring import get_mcp_monitor, get_skill_monitor
 from ai_assistant.serializers import (
     AIAssistantRequestSerializer,
@@ -77,6 +79,9 @@ def test_connectivity(request):
     serializer = AIAssistantRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
+    if data.get("model_profile_id"):
+        return Response({"error": "Test saved models using /models/{id}/test/."},
+                        status=status.HTTP_400_BAD_REQUEST)
 
     overrides = {
         "api_key": data.get("api_key"),
@@ -86,6 +91,7 @@ def test_connectivity(request):
     }
 
     try:
+        overrides["_usage_context"] = model_usage_context(request.user, source="connectivity_test", overrides=overrides)
         result = test_openai_connectivity(overrides=overrides)
         return Response(result)
     except AIAssistantError as exc:
@@ -95,6 +101,7 @@ def test_connectivity(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def mcp_monitor(request):
+    actor = current_actor(request.user)
     tool = str(request.query_params.get("tool") or "").strip()
     status_filter = str(request.query_params.get("status") or "").strip()
     if status_filter == "all":
@@ -111,9 +118,11 @@ def mcp_monitor(request):
         page_size = 20
 
     payload = get_mcp_monitor(
-        page=page, page_size=page_size, status=status_filter, tool_name=tool, user_id=request.user.pk,
+        page=page, page_size=page_size, status=status_filter, tool_name=tool, user_id=actor.pk,
     )
-    return Response(payload)
+    response = Response(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @api_view(["POST"])
@@ -189,8 +198,14 @@ def mcp_registry_servers(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def skill_monitor(request):
+    from django.contrib.auth import get_user_model
+    actor = get_user_model().objects.filter(pk=request.user.pk, is_active=True).first()
+    if actor is None or not actor.has_perm("ai_assistant.review_all_modelusage"):
+        raise PermissionDenied("Review-all AI usage permission is required for legacy skill totals.")
     payload = get_skill_monitor()
-    return Response(payload)
+    response = Response(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @api_view(["POST"])
@@ -203,10 +218,16 @@ def ai_chat(request):
     actor = current_actor(request.user, write=True)
     if ticket_number:
         require_history_permissions(actor, ("tickets.view_eventticket",))
+    model_overrides, profile_guard = selected_model_config(
+        request.user, data, permissions=("tickets.view_eventticket",) if ticket_number else (),
+    )
+
     def model_guard():
         live_actor = current_actor(actor, write=True)
         if ticket_number:
             require_history_permissions(live_actor, ("tickets.view_eventticket",))
+        if profile_guard:
+            profile_guard()
     ticket = None
     if ticket_number:
         ticket = EventTicket.objects.filter(ticket_number=ticket_number, is_deleted=False).first()
@@ -227,6 +248,11 @@ def ai_chat(request):
             "timeout_seconds": data.get("mcp_timeout_seconds"),
         },
     }
+    overrides.update(model_overrides)
+    overrides["_usage_context"] = model_usage_context(
+        request.user, source="ticket_chat" if ticket else "chat", overrides=overrides, agent_name="assistant",
+    )
+
     mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
     if isinstance(mcp_overrides, dict):
         if mcp_overrides.get("enabled") is not False:
