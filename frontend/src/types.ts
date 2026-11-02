@@ -51,6 +51,130 @@ export interface ConversionStats {
   incidents: number;
 }
 
+export interface AttackCoverageTechnique {
+  technique_id: string;
+  name: string;
+  rule_count: number;
+}
+
+export interface AttackCoverageTactic {
+  tactic_id: string;
+  name: string;
+  slug: string;
+  covered_techniques: number;
+  total_techniques: number | null;
+  techniques: AttackCoverageTechnique[];
+}
+
+export interface AttackCoverage {
+  catalog_loaded: boolean;
+  covered_techniques: number;
+  total_techniques: number | null;
+  coverage_percent: number | null;
+  enabled_rules: number;
+  tactics: AttackCoverageTactic[];
+}
+
+export interface LogSourceCategory {
+  id: number;
+  name: string;
+  matchers: string[];
+  asset_types: string[];
+  host_field: string;
+  enabled: boolean;
+  sort_order: number;
+}
+
+export interface LogSourceCoverageSource {
+  source_key: string;
+  docs: number;
+  last_seen: string | null;
+  origin: 'auto' | 'manual';
+  enabled_rules: number;
+  total_rules: number;
+}
+
+export interface DiscoveredLogSource {
+  source_key: string;
+  index_count: number;
+  docs: number;
+  last_seen: string | null;
+  hosts_approx: number;
+  auto_category: string;
+  auto_category_id: number | null;
+  auto_confidence: 'high' | 'medium' | 'none';
+  auto_reason: string;
+  manual: { category_id: number | null; ignored: boolean } | null;
+  ignored: boolean;
+  effective_category_id: number | null;
+  origin: 'auto' | 'manual';
+}
+
+export interface LogSourceDiscovery {
+  initialized: boolean;
+  scanned_at: string | null;
+  scan_age_seconds: number | null;
+  es_available: boolean;
+  reason: string | null;
+  window_days: number;
+  truncated: boolean;
+  sources: DiscoveredLogSource[];
+}
+
+export interface LogSourceBrief {
+  source_key: string;
+  docs: number;
+  last_seen: string | null;
+  auto_category: string;
+  auto_confidence: 'high' | 'medium' | 'none';
+  auto_reason: string;
+  enabled_rules: number;
+  total_rules: number;
+}
+
+export interface LogSourceRuleCoverage {
+  total_rules: number;
+  enabled_rules: number;
+  enabled_percent: number | null;
+  enabled_with_data: number;
+  enabled_without_data: number;
+  enabled_unmapped: number;
+}
+
+export interface LogSourceCoverage {
+  window_days: number;
+  initialized: boolean;
+  scanned_at: string | null;
+  scan_age_seconds: number | null;
+  rules: LogSourceRuleCoverage | null;
+  unclassified: LogSourceBrief[];
+  ignored: LogSourceBrief[];
+  es_available: boolean;
+  es_reason: string | null;
+  unclassified_sources: number;
+  ignored_sources: number;
+  total_categories: number;
+  configured_categories: number;
+  active_categories: number;
+  unconfigured_categories: number;
+  coverage_percent: number | null;
+  categories: Array<{
+    id: number;
+    name: string;
+    configured: boolean;
+    source_count: number;
+    enabled_rules: number;
+    total_rules: number;
+    sources: LogSourceCoverageSource[];
+    active: boolean;
+    last_seen: string | null;
+    expected_assets: number | null;
+    observed_assets: number | null;
+    asset_coverage_percent: number | null;
+    data_source: 'elasticsearch' | 'alerts' | null;
+  }>;
+}
+
 export interface SankeyLink {
   source: string;
   target: string;

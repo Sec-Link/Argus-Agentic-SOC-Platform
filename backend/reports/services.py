@@ -12,7 +12,7 @@ import zlib
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
-from django.db.models import Avg, Count, Max, QuerySet, Sum
+from django.db.models import Avg, Count, Max, QuerySet, Sum, Min
 from django.db.models.functions import Lower, Trim, TruncDate, TruncHour
 from django.utils import timezone
 
@@ -58,12 +58,15 @@ PLACEHOLDER_CATALOG = (
     {"key": "metrics.mttd", "label": "MTTD", "group": "Metrics", "description": "Mean time to detect."},
     {"key": "metrics.mttr", "label": "MTTR", "group": "Metrics", "description": "Mean time to respond or resolve."},
     {"key": "metrics.open_priority_incidents", "label": "Open priority incidents", "group": "Metrics", "description": "Open critical and high-priority incidents."},
+    {"key": "metrics.log_source_coverage", "label": "Log source coverage", "group": "Metrics", "description": "Share of configured log source categories currently receiving logs."},
+    {"key": "metrics.attack_coverage", "label": "ATT&CK coverage", "group": "Metrics", "description": "Share of MITRE ATT&CK techniques covered by enabled detection rules."},
     {"key": "charts.category", "label": "Category breakdown", "group": "Charts", "description": "Generated alert category chart."},
     {"key": "charts.severity", "label": "Severity distribution", "group": "Charts", "description": "Generated alert severity chart."},
     {"key": "charts.alert_trend", "label": "Alert trend", "group": "Charts", "description": "Generated alert trend chart."},
     {"key": "charts.score_trend", "label": "Score trend", "group": "Charts", "description": "Generated alert score trend chart."},
     {"key": "charts.funnel", "label": "Alert funnel", "group": "Charts", "description": "Overview conversion funnel for alerts and incident handling."},
     {"key": "charts.sankey", "label": "Detection pipeline", "group": "Charts", "description": "MITRE-to-event-level detection pipeline flow."},
+    {"key": "charts.attack_heatmap", "label": "ATT&CK coverage heatmap", "group": "Charts", "description": "Technique coverage by enabled rules, grouped by tactic."},
 )
 
 TACTIC_TO_USE_CASE = {
@@ -586,6 +589,16 @@ def _window(time_range: str, start_time: datetime | None, end_time: datetime | N
     if time_range == "custom" and start_time:
         start = timezone.make_aware(start_time, timezone.get_current_timezone()) if timezone.is_naive(start_time) else start_time
         return start, anchor
+    if time_range == "all":
+        alerts = Alert.objects.all()
+        field = _populated_alert_time_field(alerts)
+        earliest = alerts.aggregate(value=Min(field))["value"] if field else None
+        if earliest is None:
+            earliest = EventTicket.objects.filter(is_deleted=False).aggregate(value=Min("created_time"))["value"]
+        if earliest is not None:
+            earliest = timezone.make_aware(earliest, timezone.get_current_timezone()) if timezone.is_naive(earliest) else earliest
+            return min(earliest, anchor - timedelta(hours=1)), anchor
+        return anchor - timedelta(days=365), anchor
     duration = RANGES.get(time_range, RANGES["7d"])
     return anchor - duration, anchor
 
@@ -804,6 +817,113 @@ def _extract_trend(dashboard: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [{"label": key, "count": value} for key, value in daily.items()] if isinstance(daily, Mapping) else []
 
 
+_HEAT_COLORS = ("#cbd5e1", "#93c5fd", "#3b82f6", "#1d4ed8")
+
+
+def _heat_color(rule_count: int) -> str:
+    return _HEAT_COLORS[0 if rule_count <= 0 else 1 if rule_count == 1 else 2 if rule_count <= 3 else 3]
+
+
+def _attack_heatmap_chart(attack: Mapping[str, Any]) -> str:
+    title = "MITRE ATT&CK Coverage"
+    tactics = [t for t in attack.get("tactics") or [] if t.get("techniques")]
+    if not tactics:
+        return _empty_chart(title, "ATT&CK catalog not loaded")
+    plt = _pyplot()
+    if plt is None:
+        return _fallback_png_data_uri("RENDER ERROR")
+    fig = None
+    try:
+        from matplotlib.patches import Rectangle
+
+        per_row = 5
+        gap = 1.2
+        fig, ax = plt.subplots(figsize=(10.8, 4.8), facecolor=CHART_BACKGROUND)
+        ax.set_facecolor(CHART_BACKGROUND)
+        max_rows = 0
+        for index, tactic in enumerate(tactics):
+            x0 = index * (per_row + gap)
+            techniques = tactic["techniques"]
+            max_rows = max(max_rows, -(-len(techniques) // per_row))
+            for n, tech in enumerate(techniques):
+                row, col = divmod(n, per_row)
+                ax.add_patch(Rectangle((x0 + col, -row - 1), .82, .82, color=_heat_color(int(tech.get("rule_count") or 0)), linewidth=0))
+            ax.text(x0, .35, str(tactic["name"]).replace(" and ", " & ").replace(" ", "\n", 1), fontsize=6.5, color=CHART_TEXT, weight="bold", va="bottom")
+        ax.set_xlim(-.2, len(tactics) * (per_row + gap))
+        ax.set_ylim(-max_rows - 1.2, 2.2)
+        ax.set_aspect("equal")
+        ax.set_axis_off()
+        ax.set_title(title, color=CHART_TEXT, fontsize=16, weight="semibold", loc="left", pad=18)
+        labels = ("0 rules", "1 rule", "2–3 rules", "4+ rules")
+        for i, (color, label) in enumerate(zip(_HEAT_COLORS, labels)):
+            ax.add_patch(Rectangle((i * 6, -max_rows - 1.1), .6, .6, color=color, linewidth=0))
+            ax.text(i * 6 + .9, -max_rows - .8, label, fontsize=7, color=CHART_MUTED, va="center")
+        fig.tight_layout()
+        return _png_data_uri(fig, plt)
+    except Exception:
+        if fig is not None:
+            plt.close(fig)
+        logger.exception("Failed to render %s", title)
+        return _fallback_png_data_uri("RENDER ERROR")
+
+
+def _coverage_report_data() -> dict[str, Any]:
+    """Detection coverage snapshot for the report; each half degrades independently."""
+    data: dict[str, Any] = {"log_sources": None, "attack": None}
+    try:
+        from dashboards.log_source_coverage import compute_log_source_coverage
+
+        logs = compute_log_source_coverage()
+        if logs.get("initialized") and any(c["source_count"] > 0 for c in logs["categories"]):
+            data["log_sources"] = logs
+    except Exception:
+        logger.exception("report: log source coverage unavailable")
+    try:
+        from dashboards.attack_coverage import compute_attack_coverage
+
+        attack = compute_attack_coverage()
+        if attack.get("catalog_loaded"):
+            data["attack"] = attack
+    except Exception:
+        logger.exception("report: ATT&CK coverage unavailable")
+    return data
+
+
+def _coverage_markdown(data: Mapping[str, Any], heatmap_section: str) -> str:
+    logs, attack = data["log_sources"], data["attack"]
+    if logs is None and attack is None:
+        return "Detection coverage has not been configured. Classify log sources and sync the ATT&CK catalog in **Dashboard → Coverage settings** to include coverage in this report."
+    parts = []
+    if logs is not None:
+        rules = logs.get("rules") or {}
+        pct = logs.get("coverage_percent")
+        rows = "\n".join(
+            f"| {_cell(c['name'])} | {c['source_count']} | {'Yes' if c['active'] else 'No'} | {c['enabled_rules']} / {c['total_rules']} |"
+            for c in logs["categories"] if c["configured"]
+        ) or "| - | - | - | - |"
+        parts.append(
+            "### Log Source Coverage\n\n"
+            f"**{logs['active_categories']} of {logs['configured_categories']}** configured log source categories are receiving logs"
+            + (f" (**{pct}%**)" if pct is not None else "")
+            + f"; **{rules.get('enabled_rules', 0)} of {rules.get('total_rules', 0)}** detection rules are enabled.\n\n"
+            "| Category | Sources | Receiving Logs | Enabled Rules |\n|---|---:|:---:|---:|\n" + rows
+        )
+    if attack is not None:
+        rows = "\n".join(
+            f"| {_cell(t['name'])} | {t['covered_techniques']} | {t['total_techniques'] if t['total_techniques'] is not None else '-'} |"
+            for t in attack["tactics"]
+        )
+        pct = attack.get("coverage_percent")
+        parts.append(
+            "### MITRE ATT&CK Coverage\n\n"
+            f"Enabled rules cover **{attack['covered_techniques']} of {attack.get('total_techniques') or '?'}** ATT&CK techniques"
+            + (f" (**{pct}%**)" if pct is not None else "")
+            + ".\n\n" + heatmap_section + "\n\n"
+            "| Tactic | Covered Techniques | Total Techniques |\n|---|---:|---:|\n" + rows
+        )
+    return "\n\n".join(parts)
+
+
 def generate_soc_report_md(time_range: str = "7d", start_time: datetime | None = None, end_time: datetime | None = None) -> dict[str, Any]:
     start, end = _window(time_range, start_time, end_time)
     dashboard, alert_time_field = _aggregate_alerts(start, end)
@@ -872,6 +992,13 @@ def generate_soc_report_md(time_range: str = "7d", start_time: datetime | None =
     funnel_section = f'<img src="{{{{charts.funnel}}}}" alt="Alert Conversion Funnel" style="{chart_style}" />'
     sankey_section = f'<img src="{{{{charts.sankey}}}}" alt="Alert Correlation Detection Pipeline" style="{chart_style}" />'
 
+    coverage = _coverage_report_data()
+    attack_heatmap = _attack_heatmap_chart(coverage["attack"]) if coverage["attack"] else ""
+    heatmap_section = f'<img src="{{{{charts.attack_heatmap}}}}" alt="ATT&CK Coverage Heatmap" style="{chart_style}" />' if attack_heatmap else ""
+    coverage_section = _coverage_markdown(coverage, heatmap_section)
+    ls_pct = (coverage["log_sources"] or {}).get("coverage_percent")
+    at_pct = (coverage["attack"] or {}).get("coverage_percent")
+
     report_window = f"{start.strftime('%Y-%m-%d %H:%M UTC')} — {end.strftime('%Y-%m-%d %H:%M UTC')}"
     generated_at = timezone.now().strftime('%Y-%m-%d %H:%M UTC')
     template_context = {
@@ -895,6 +1022,9 @@ def generate_soc_report_md(time_range: str = "7d", start_time: datetime | None =
         "charts.score_trend": score_chart,
         "charts.funnel": funnel_chart,
         "charts.sankey": sankey_chart,
+        "charts.attack_heatmap": attack_heatmap or _fallback_png_data_uri("NO COVERAGE DATA"),
+        "metrics.log_source_coverage": f"{ls_pct}%" if ls_pct is not None else "N/A",
+        "metrics.attack_coverage": f"{at_pct}%" if at_pct is not None else "N/A",
     }
 
     markdown = f"""<div class="argus-report-header" style="display:flex; align-items:center; gap:14px; border-bottom:2px solid #3b82f6; padding-bottom:14px; margin-bottom:20px;">
@@ -973,18 +1103,23 @@ The environment's current security posture is **{posture}**. The SOC analyzed **
 |---|---|---|---|
 {ticket_rows}
 
-## 4. Top RBA Risk Entities
+## 4. Detection Coverage
+
+{coverage_section}
+
+## 5. Top RBA Risk Entities
 
 | Rank | Risk Entity | Type | Risk Score | Tier |
 |---:|---|---|---:|---|
 {entity_rows}
 
-## 5. SOC Operational Recommendations
+## 6. SOC Operational Recommendations
 
 1. **Accelerate priority incident handling:** Assign named owners and containment deadlines to the **{len(open_tickets)}** open critical/high-priority incidents; validate isolation, credential revocation, and evidence preservation.
 2. **Reduce concentrated detection risk:** {f"Hunt across the top RBA entities—beginning with `{_cell(entities[0].get('risk_object'))}`—and correlate identity, endpoint, network, and threat-intelligence telemetry." if entities else "No risk entities were returned for this time range; validate risk telemetry coverage."}
 3. **Tune high-volume detections:** {f"Review the top triggered rule, **{_cell(top_rules[0].get('name'))}**, for false-positive concentration while preserving coverage for confirmed malicious behavior." if top_rules else "No detection rules were returned for this time range; validate alert rule telemetry."}
 4. **Improve response efficiency:** Compare current MTTD (**{{{{metrics.mttd}}}}**) and MTTR (**{{{{metrics.mttr}}}}**) against SLA objectives and automate repetitive enrichment and containment steps.
+5. **Close detection coverage gaps:** Log source coverage is **{{{{metrics.log_source_coverage}}}}** and ATT&CK technique coverage is **{{{{metrics.attack_coverage}}}}**; prioritize enabling rules for log sources that receive data but have no active detections, and for uncovered high-impact techniques.
 
 ---
 
@@ -1004,6 +1139,12 @@ _This report is generated from the SOC platform's alert, incident, and risk aggr
         "top_risk_entities": entities,
         "conversion_funnel": funnel_stats,
         "detection_pipeline": pipeline_stats,
+        "detection_coverage": {
+            "log_source_coverage_percent": ls_pct,
+            "attack_coverage_percent": at_pct,
+            "attack_covered_techniques": (coverage["attack"] or {}).get("covered_techniques"),
+            "attack_total_techniques": (coverage["attack"] or {}).get("total_techniques"),
+        },
         "data_provenance": {
             "risk_entities": "risk.RiskEvent grouped by profile within the report window",
             "conversion_funnel": "alerts.Alert and tickets.EventTicket using Overview stage definitions",
@@ -1016,6 +1157,7 @@ _This report is generated from the SOC platform's alert, incident, and risk aggr
             "score_trend": score_chart,
             "funnel": funnel_chart,
             "sankey": sankey_chart,
+            "attack_heatmap": attack_heatmap,
             "trend": trend_chart,
         },
     }

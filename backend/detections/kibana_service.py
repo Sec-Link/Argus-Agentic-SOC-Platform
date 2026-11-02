@@ -13,7 +13,12 @@ from integrations.models import Integration
 
 from .models import LocalDetectionRule
 from .sigma import build_kibana_threat_from_tags
-from .services import append_rule_version, summarize_payload_changes, user_name_from_request
+from .services import (
+    append_rule_version,
+    summarize_payload_changes,
+    sync_rule_mitre_attack_mappings,
+    user_name_from_request,
+)
 
 
 def kibana_integration() -> Integration | None:
@@ -494,6 +499,7 @@ def create_published_rule(payload: dict, actor: str) -> tuple[int, dict]:
             version = 1
             change_type = "create"
             payload_for_version = normalized
+        sync_rule_mitre_attack_mappings(rule, payload_for_version.get("tags"))
         append_rule_version(
             rule,
             version=version,
@@ -592,6 +598,7 @@ def rollback_published_rule(rule: LocalDetectionRule, target_version: int, actor
         rule.risk_score = int(payload.get("risk_score") or 50)
         rule.updated_by = actor
         rule.save()
+        sync_rule_mitre_attack_mappings(rule, payload.get("tags"))
         append_rule_version(
             rule,
             version=rule.version,

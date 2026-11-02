@@ -2,19 +2,41 @@ import logging
 import re
 from datetime import datetime, time
 
+from django.db import transaction
 from django.db.models import Count
 from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
 from alerts.models import Alert
-from detections.models import LocalDetectionRule
+from detections.mitre_catalog import (
+    MITRE_ATTACK_ENTERPRISE_URL,
+    CatalogError,
+    build_attack_dicts,
+    catalog_status,
+    fetch_bundle_from_url,
+    replace_catalog,
+)
+from detections.models import (
+    LocalDetectionRule,
+    LocalDetectionRuleMitreAttack,
+    MitreAttackTactic,
+    MitreAttackTechnique,
+    MitreAttackTechniqueTactic,
+)
+from detections.services import backfill_rule_mitre_mappings
 from detections.sigma import ATTACK_TACTIC_MAP
 from tickets.models import EventTicket
+
+from .attack_coverage import compute_attack_coverage
+from .log_source_coverage import compute_log_source_coverage, preview_matchers
+from .log_source_discovery import resolve_sources
+from .models import LogSourceCategory, LogSourceMapping
+from .serializers import LogSourceCategorySerializer
 
 # Maps each MITRE ATT&CK tactic slug to one of the three use-case buckets shown
 # in the Sankey chart's second column.
@@ -41,6 +63,13 @@ logger = logging.getLogger(__name__)
 class DashboardViewSet(viewsets.ViewSet):
     # The deprecated dashboard editor CRUD has been retired; only live chart stats remain here.
     permission_classes = [IsAuthenticated]
+    admin_actions = ("attack_catalog", "attack_catalog_sync")
+
+    def get_permissions(self):
+        # Routes are wired with explicit as_view() mappings, so per-action permissions live here.
+        if self.action in self.admin_actions:
+            return [IsAdminUser()]
+        return super().get_permissions()
 
     @staticmethod
     def _parse_dt(value, end_of_day=False):
@@ -98,6 +127,73 @@ class DashboardViewSet(viewsets.ViewSet):
             ).count(),
         })
 
+    @action(detail=False, methods=["get"], url_path="funnel-stats")
+    def funnel_stats(self, request):
+        """Alerts -> Detections -> Tickets -> True positives -> Incidents with step conversion rates."""
+        data = self.conversion_stats(request).data
+        stages = [
+            ("alerts", "Alerts"),
+            ("detection_rules", "Detections"),
+            ("tickets", "Tickets"),
+            ("true_positive", "True Positives"),
+            ("incidents", "Incidents"),
+        ]
+        out = []
+        prev = None
+        top = int(data.get("alerts") or 0)
+        for key, label in stages:
+            count = int(data.get(key) or 0)
+            out.append({
+                "key": key,
+                "label": label,
+                "count": count,
+                "rate_from_previous": round(count / prev * 100, 1) if prev else None,
+                "rate_from_top": round(count / top * 100, 1) if top else None,
+            })
+            prev = count
+        return Response({"stages": out})
+
+    @action(detail=False, methods=["get"], url_path="attack-coverage")
+    def attack_coverage(self, request):
+        """MITRE ATT&CK coverage: techniques covered by enabled rules / all known techniques."""
+        try:
+            return Response(compute_attack_coverage())
+        except Exception:
+            logger.exception("attack_coverage failed")
+            return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["get"], url_path="attack-catalog")
+    def attack_catalog(self, request):
+        """Status of the MITRE ATT&CK reference catalog (admin only)."""
+        return Response({**catalog_status(), "default_url": MITRE_ATTACK_ENTERPRISE_URL})
+
+    @action(detail=False, methods=["post"], url_path="attack-catalog/sync")
+    def attack_catalog_sync(self, request):
+        """Replace the ATT&CK catalog from a STIX bundle URL, then rebuild every rule's mappings."""
+        url = str(request.data.get("url") or "").strip() or MITRE_ATTACK_ENTERPRISE_URL
+        try:
+            summary = replace_catalog(build_attack_dicts(fetch_bundle_from_url(url)))
+        except CatalogError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("attack_catalog_sync failed")
+            return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        summary["rules_rebuilt"] = backfill_rule_mitre_mappings()
+        return Response(summary)
+
+    @action(detail=False, methods=["get"], url_path="log-source-coverage")
+    def log_source_coverage(self, request):
+        """Coverage of expected log source categories, based on data seen in the last N days."""
+        try:
+            days = min(max(int(request.query_params.get("days", 7)), 1), 90)
+        except (TypeError, ValueError):
+            days = 7
+        try:
+            return Response(compute_log_source_coverage(days=days))
+        except Exception:
+            logger.exception("log_source_coverage failed")
+            return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=["get"], url_path="sankey-stats")
     def sankey_stats(self, request):
         """Return dashboard Sankey data: MITRE -> Use Cases -> Alerts -> Resolution -> Event Level."""
@@ -130,7 +226,7 @@ class DashboardViewSet(viewsets.ViewSet):
                 return {
                     "source": source,
                     "target": target,
-                    "value": max(int(value or 0), 1),
+                    "value": int(value or 0),
                     "stage": stage,
                 }
 
@@ -148,8 +244,17 @@ class DashboardViewSet(viewsets.ViewSet):
                         result.append(suffix)
                 return result
 
+            params = request.query_params
+            created_from = self._parse_dt(params.get("created_from") or params.get("start_time"))
+            created_to = self._parse_dt(params.get("created_to") or params.get("end_time"), end_of_day=True)
+            ticket_qs = EventTicket.objects.filter(is_deleted=False)
+            if created_from:
+                ticket_qs = ticket_qs.filter(created_time__gte=created_from)
+            if created_to:
+                ticket_qs = ticket_qs.filter(created_time__lte=created_to)
+
             base_qs = (
-                EventTicket.objects.filter(is_deleted=False)
+                ticket_qs
                 # Normalize noisy values before grouping to avoid fragmented Sankey nodes.
                 .annotate(
                     category_key=Lower(Trim("event_category")),
@@ -198,14 +303,28 @@ class DashboardViewSet(viewsets.ViewSet):
                     ticket_to_rule_ids.setdefault(alert_row["ticket_number"], set()).add(alert_row["rule_id"])
 
             all_rule_ids = {rid for rids in ticket_to_rule_ids.values() for rid in rids}
-            rule_tag_map: dict[str, list] = {}
+            # Prefer the normalized MITRE mapping table; fall back to raw Sigma tags
+            # for rules that have not been synced into it yet.
+            tactic_id_to_slug = {v["id"]: slug for slug, v in ATTACK_TACTIC_MAP.items()}
+            rule_tactics: dict[str, set] = {}
             if all_rule_ids:
+                for row in (
+                    LocalDetectionRuleMitreAttack.objects.filter(rule_id__in=all_rule_ids)
+                    .values("rule_id", "tactic_id")
+                    .distinct()
+                ):
+                    slug = tactic_id_to_slug.get(str(row["tactic_id"]).upper())
+                    if slug:
+                        rule_tactics.setdefault(row["rule_id"], set()).add(slug)
                 for rule in LocalDetectionRule.objects.filter(
                     rule_uuid__in=all_rule_ids, is_deleted=False
                 ).values("rule_uuid", "payload"):
-                    payload = rule["payload"] or {}
-                    tags = payload.get("tags") or []
-                    rule_tag_map[rule["rule_uuid"]] = [str(t).strip() for t in tags if str(t).strip()]
+                    if rule["rule_uuid"] in rule_tactics:
+                        continue
+                    tags = (rule["payload"] or {}).get("tags") or []
+                    slugs = _tactic_tags_from_sigma([str(t).strip() for t in tags if str(t).strip()])
+                    if slugs:
+                        rule_tactics[rule["rule_uuid"]] = set(slugs)
 
             # Build tactic_slug → count and (tactic_slug, use_case) → count and
             # (use_case, category_name) → count from per-ticket rule tags.
@@ -216,8 +335,7 @@ class DashboardViewSet(viewsets.ViewSet):
                 cat_name = category_labels.get(cat_key, labelize(cat_key)) if cat_key else ""
                 seen_tactics: set = set()
                 for rid in rule_ids:
-                    for tactic_slug in _tactic_tags_from_sigma(rule_tag_map.get(rid, [])):
-                        seen_tactics.add(tactic_slug)
+                    seen_tactics.update(rule_tactics.get(rid, set()))
                 for tactic_slug in seen_tactics:
                     tactic_counts[tactic_slug] = tactic_counts.get(tactic_slug, 0) + 1
                     use_case = TACTIC_TO_USE_CASE.get(tactic_slug, "Behavior-Based Use Cases")
@@ -244,36 +362,6 @@ class DashboardViewSet(viewsets.ViewSet):
                     nodes_by_name[use_case] = nodes_by_name.get(use_case) or node(use_case, "Developed Use Cases")
                     nodes_by_name[cat_name] = node(cat_name, "Alerts")
                     links.append(link(use_case, cat_name, count, "Use Cases -> Alerts"))
-            else:
-                # Fallback: static MITRE structure when no rule-tag data is available yet.
-                static_mitre = [
-                    ("Reconnaissance", "Behavior-Based Use Cases", 26),
-                    ("Initial Access", "Behavior-Based Use Cases", 11),
-                    ("Execution", "Behavior-Based Use Cases", 4),
-                    ("Persistence", "Behavior-Based Use Cases", 11),
-                    ("Privilege Escalation", "Device-Based Use Cases", 8),
-                    ("Defense Evasion", "Device-Based Use Cases", 4),
-                    ("Credential Access", "Health-Based Use Cases", 13),
-                    ("Command and Control", "Behavior-Based Use Cases", 9),
-                ]
-                use_case_labels = {"Behavior-Based Use Cases", "Device-Based Use Cases", "Health-Based Use Cases"}
-                for tactic_label, uc_label, weight in static_mitre:
-                    nodes_by_name[tactic_label] = node(tactic_label, "MITRE ATT&CK Framework")
-                    nodes_by_name[uc_label] = node(uc_label, "Developed Use Cases")
-                    links.append(link(tactic_label, uc_label, weight, "MITRE -> Use Cases"))
-
-                live_total_fallback = sum(category_counts.values())
-                category_names_list = []
-                for raw_key, count in category_counts.items():
-                    category_name = category_labels.get(raw_key, labelize(raw_key))
-                    if category_name:
-                        category_names_list.append((category_name, count))
-                        nodes_by_name[category_name] = node(category_name, "Alerts")
-
-                if category_names_list:
-                    uc_cycle = list(use_case_labels)
-                    for idx, (category_name, count) in enumerate(category_names_list):
-                        links.append(link(uc_cycle[idx % len(uc_cycle)], category_name, count, "Use Cases -> Alerts"))
 
             for row in category_result_rows:
                 count = int(row.get("count") or 0)
@@ -314,3 +402,93 @@ class DashboardViewSet(viewsets.ViewSet):
         except Exception:
             logger.exception("sankey_stats failed")
             return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class LogSourceCategoryViewSet(viewsets.ModelViewSet):
+    """Read for any authenticated user; only admins can change which categories are expected."""
+
+    queryset = LogSourceCategory.objects.all()
+    serializer_class = LogSourceCategorySerializer
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve"):
+            return [IsAuthenticated()]
+        return [IsAdminUser()]
+
+    @action(detail=False, methods=["post"], url_path="preview")
+    def preview(self, request):
+        """Show which ES indices a matcher list hits and how much data they received recently."""
+        matchers = request.data.get("matchers")
+        if not isinstance(matchers, list) or not all(isinstance(m, str) and m.strip() for m in matchers):
+            return Response({"detail": "matchers must be a list of non-empty strings."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(preview_matchers([m.strip() for m in matchers]))
+
+    @action(detail=False, methods=["get"], url_path="options")
+    def options(self, request):
+        """Existing CMDB asset types, offered as choices for the category's asset type mapping."""
+        from cmdb.models import Asset
+
+        asset_types = (
+            Asset.objects.exclude(asset_type="")
+            .values_list("asset_type", flat=True)
+            .distinct()
+            .order_by("asset_type")
+        )
+        return Response({"asset_types": list(asset_types)})
+
+    @action(detail=False, methods=["get"], url_path="discover")
+    def discover(self, request):
+        """Stored log source scan with auto classification and manual overrides (never re-scans)."""
+        try:
+            return Response(resolve_sources())
+        except Exception:
+            logger.exception("log source discovery failed")
+            return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["post"], url_path="discover/rescan")
+    def rescan(self, request):
+        """Scan Elasticsearch again and store the result (admin only via get_permissions)."""
+        try:
+            return Response(resolve_sources(rescan_actor=getattr(request.user, "username", "") or "admin"))
+        except Exception:
+            logger.exception("log source rescan failed")
+            return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["post"], url_path="mappings")
+    def mappings(self, request):
+        """Bulk upsert manual decisions: [{source_key, category_id?, ignored?}]."""
+        items = request.data.get("mappings")
+        if not isinstance(items, list) or not items or len(items) > 500:
+            return Response({"detail": "mappings must be a non-empty list (max 500)."}, status=status.HTTP_400_BAD_REQUEST)
+        category_ids = {c.id for c in LogSourceCategory.objects.all()}
+        cleaned = []
+        for item in items:
+            key = item.get("source_key") if isinstance(item, dict) else None
+            if not isinstance(key, str) or not key.strip() or len(key) > 255:
+                return Response({"detail": "Each mapping needs a source_key."}, status=status.HTTP_400_BAD_REQUEST)
+            ignored = bool(item.get("ignored"))
+            category_id = item.get("category_id")
+            if ignored:
+                category_id = None
+            elif category_id is None:
+                pass  # explicitly unassigned: keeps the source out of every category
+            elif category_id not in category_ids:
+                return Response({"detail": f"Unknown category for {key}."}, status=status.HTTP_400_BAD_REQUEST)
+            cleaned.append((key.strip(), category_id, ignored))
+        actor = getattr(request.user, "username", "") or ""
+        with transaction.atomic():
+            for key, category_id, ignored in cleaned:
+                LogSourceMapping.objects.update_or_create(
+                    source_key=key,
+                    defaults={"category_id": category_id, "ignored": ignored, "updated_by": actor},
+                )
+        return Response({"updated": len(cleaned)})
+
+    @action(detail=False, methods=["post"], url_path="mappings/reset")
+    def reset_mappings(self, request):
+        """Drop manual decisions so the sources fall back to automatic classification."""
+        keys = request.data.get("source_keys")
+        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+            return Response({"detail": "source_keys must be a list of strings."}, status=status.HTTP_400_BAD_REQUEST)
+        deleted, _ = LogSourceMapping.objects.filter(source_key__in=keys).delete()
+        return Response({"reset": deleted})

@@ -80,27 +80,15 @@ html, body {
   overflow-x: hidden;
 }
 
-/* Dashboard toolbar: protect the title width while docking the time control as a compact top-right unit. */
+/* Dashboard toolbar: holds only the time control, docked top-right inside the Overview tab. */
 .dashboard-toolbar-shell {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   width: 100%;
   margin-top: 0;
   margin-bottom: 2px;
-}
-
-.dashboard-toolbar-title-shell {
-  flex-shrink: 0;
-  min-width: 0;
-}
-
-.dashboard-toolbar-title {
-  display: inline-block;
-  white-space: nowrap;
-  font-size: 16px;
-  font-weight: 700;
 }
 
 /* Time anchor owns the trigger box and the absolute-positioned popover panel. */
@@ -316,6 +304,11 @@ html, body {
 
 .dashboard-section-block {
   width: 100%;
+}
+
+/* Coverage cards size to their content instead of the fixed-height equal cards. */
+.dashboard-coverage-card {
+  height: auto;
 }
 
 .dashboard-equal-card,
@@ -2197,4 +2190,76 @@ html, body {
 }
 .alert-rule-link:hover {
   text-decoration: underline;
+}
+
+/* ---- Log source chips: colour = alerting status, border/marker = classification ---- */
+.ls-chip.ant-tag {
+  --ls-bg: #f1f3f7;
+  --ls-border: #cfd6e2;
+  --ls-fg: #5b6b84;
+  margin: 0;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--ls-bg);
+  border: 1px solid var(--ls-border);
+  color: var(--ls-fg);
+  line-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+.ls-chip.ant-tag .anticon-close { color: var(--ls-fg); opacity: 0.7; }
+.ls-chip.ant-tag .anticon-close:hover { opacity: 1; }
+.ls-chip--alerting.ant-tag { --ls-bg: #e8f7ef; --ls-border: #9fdcb9; --ls-fg: #0f6b3c; }
+.ls-chip--unmonitored.ant-tag { --ls-bg: #fff4e0; --ls-border: #f5c87a; --ls-fg: #8a5300; }
+.ls-chip--blind.ant-tag { --ls-bg: #fdecee; --ls-border: #f5a3ab; --ls-fg: #a31d2b; }
+.ls-chip--silent.ant-tag { --ls-bg: #f1f3f7; --ls-border: #cfd6e2; --ls-fg: #5b6b84; }
+.theme-dark .ls-chip--alerting.ant-tag { --ls-bg: rgba(52, 211, 153, 0.12); --ls-border: rgba(52, 211, 153, 0.4); --ls-fg: #6ee7b7; }
+.theme-dark .ls-chip--unmonitored.ant-tag { --ls-bg: rgba(251, 191, 36, 0.12); --ls-border: rgba(251, 191, 36, 0.4); --ls-fg: #fcd34d; }
+.theme-dark .ls-chip--blind.ant-tag { --ls-bg: rgba(248, 113, 113, 0.12); --ls-border: rgba(248, 113, 113, 0.4); --ls-fg: #fca5a5; }
+.theme-dark .ls-chip--silent.ant-tag { --ls-bg: rgba(148, 163, 184, 0.1); --ls-border: rgba(148, 163, 184, 0.3); --ls-fg: #94a3b8; }
+.ls-chip--unclassified.ant-tag { border-style: dashed; }
+.ls-chip--ignored.ant-tag { opacity: 0.55; text-decoration: line-through; }
+.ls-chip__pin { font-size: 10px; }
+
+/* Rules progress row inside a category tile. */
+.ls-tile { min-width: 0; overflow: hidden; }
+.ls-bar-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.ls-bar-label > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Unclassified pool: two rows by default, scrolls inside, expandable. */
+.ls-pool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.ls-pool.is-collapsed {
+  max-height: 64px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+/* Dashboard layout editing: panels become draggable drop targets with children inert so the drag starts on the panel. */
+.panel-editing {
+  position: relative;
+  cursor: grab;
+  outline: 1px dashed var(--menu-selected-edge, rgba(140, 140, 140, 0.6));
+  outline-offset: 4px;
+  border-radius: 8px;
+  transition: outline-color 0.15s ease, opacity 0.15s ease;
+}
+.panel-editing > * { pointer-events: none; }
+.panel-editing.panel-dragging { opacity: 0.45; cursor: grabbing; }
+.panel-editing.panel-drop-target {
+  outline: 2px solid var(--menu-selected-edge, #1677ff);
+  background: var(--menu-selected-bg, rgba(22, 119, 255, 0.08));
 }

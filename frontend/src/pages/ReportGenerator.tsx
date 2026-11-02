@@ -10,7 +10,7 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { fetchReport } from '../api';
 
-type TimeRange = '24h' | '7d' | '30d';
+type TimeRange = '24h' | '7d' | '30d' | 'all';
 type ThemeMode = 'light' | 'dark';
 type TemplateContext = Record<string, string>;
 type PlaceholderDefinition = {
@@ -455,7 +455,7 @@ export default function ReportGenerator() {
       </div>
       <div className="soc-report-toolbar">
         <Space wrap>
-          <Segmented<TimeRange> options={[{ label: '24 Hours', value: '24h' }, { label: '7 Days', value: '7d' }, { label: '30 Days', value: '30d' }]} value={range} onChange={(value) => { setRange(value); void generate(value); }} />
+          <Segmented<TimeRange> options={[{ label: '24 Hours', value: '24h' }, { label: '7 Days', value: '7d' }, { label: '30 Days', value: '30d' }, { label: 'All Time', value: 'all' }]} value={range} onChange={(value) => { setRange(value); void generate(value); }} />
           <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={() => void generate(range)}>Regenerate</Button>
         </Space>
         <Space wrap>

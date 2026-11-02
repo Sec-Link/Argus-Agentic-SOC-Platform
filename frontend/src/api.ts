@@ -88,7 +88,7 @@ const publicReportClient = axios.create({
   withCredentials: false,
 });
 
-export async function fetchReport(range: '24h' | '7d' | '30d' = '7d') {
+export async function fetchReport(range: '24h' | '7d' | '30d' | 'all' = '7d') {
   const r = await publicReportClient.post('/reports/generate/', { time_range: range });
   return r.data as {
     markdown_content: string;
@@ -952,6 +952,77 @@ export async function fetchDashboardSankeyStats(params?: { start_time?: string; 
   const suffix = qp.toString() ? `?${qp.toString()}` : '';
   const r = await client.get(`/dashboards/sankey-stats/${suffix}`);
   return r.data;
+}
+
+export async function fetchDashboardAttackCoverage() {
+  const r = await client.get('/dashboards/attack-coverage/');
+  return r.data;
+}
+
+export async function fetchDashboardLogSourceCoverage(days = 7) {
+  const r = await client.get(`/dashboards/log-source-coverage/?days=${days}`);
+  return r.data;
+}
+
+export async function fetchAttackCatalog() {
+  const r = await client.get('/dashboards/attack-catalog/');
+  return r.data;
+}
+
+export async function syncAttackCatalog(url?: string) {
+  const r = await client.post('/dashboards/attack-catalog/sync/', url ? { url } : {});
+  return r.data;
+}
+
+export async function fetchLogSourceCategories() {
+  const r = await client.get('/dashboards/log-source-categories/');
+  return Array.isArray(r.data) ? r.data : r.data?.results ?? [];
+}
+
+export async function createLogSourceCategory(payload: Record<string, unknown>) {
+  const r = await client.post('/dashboards/log-source-categories/', payload);
+  return r.data;
+}
+
+export async function updateLogSourceCategory(id: number, payload: Record<string, unknown>) {
+  const r = await client.patch(`/dashboards/log-source-categories/${id}/`, payload);
+  return r.data;
+}
+
+export async function deleteLogSourceCategory(id: number) {
+  await client.delete(`/dashboards/log-source-categories/${id}/`);
+}
+
+export async function previewLogSourceMatchers(matchers: string[]) {
+  const r = await client.post('/dashboards/log-source-categories/preview/', { matchers });
+  return r.data as { es_available: boolean; window_days?: number; indices: Array<{ index: string; docs: number }> };
+}
+
+export async function fetchDiscoveredLogSources() {
+  const r = await client.get('/dashboards/log-source-categories/discover/');
+  return r.data as import('./types').LogSourceDiscovery;
+}
+
+export async function rescanLogSources() {
+  const r = await client.post('/dashboards/log-source-categories/discover/rescan/');
+  return r.data as import('./types').LogSourceDiscovery;
+}
+
+export async function saveLogSourceMappings(
+  mappings: Array<{ source_key: string; category_id?: number | null; ignored?: boolean }>,
+) {
+  const r = await client.post('/dashboards/log-source-categories/mappings/', { mappings });
+  return r.data as { updated: number };
+}
+
+export async function resetLogSourceMappings(sourceKeys: string[]) {
+  const r = await client.post('/dashboards/log-source-categories/mappings/reset/', { source_keys: sourceKeys });
+  return r.data as { reset: number };
+}
+
+export async function fetchLogSourceCategoryOptions() {
+  const r = await client.get('/dashboards/log-source-categories/options/');
+  return r.data as { asset_types: string[] };
 }
 
 export async function fetchRiskFunnel() {

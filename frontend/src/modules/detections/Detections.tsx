@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Badge, Button, Card, Checkbox, Collapse, Input, Modal, Space, Statistic, Switch, Table, Tag, Tabs, Tooltip, Typography } from "antd";
+import { App, Badge, Button, Card, Checkbox, Collapse, Input, Modal, Select, Space, Statistic, Switch, Table, Tag, Tabs, Tooltip, Typography } from "antd";
+import { readSigmaTags, writeSigmaTags } from "./sigmaTags";
 import type { ColumnsType } from "antd/es/table";
 
 import {
@@ -795,6 +796,24 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     }
   };
 
+  const saveRuleTags = async (tags: string[]) => {
+    if (!selectedId || !detail) return;
+    try {
+      await saveDetectionRule(selectedId, writeSigmaTags(detail.yaml || "", tags), {
+        ...scheduleConfigurationPayload(),
+        ...esqlConfigurationPayload(),
+        elastic_actions: dedupeElasticActions(parseElasticActions(elasticActionsText)),
+        elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
+        kibana_metadata: kibanaMetadata,
+      });
+      await loadDetail(selectedId);
+      await loadRules();
+      message.success("Tags saved; publish to sync them to Kibana");
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || "Failed to save tags");
+    }
+  };
+
   const saveSchedule = async () => {
     if (!selectedId || !detail) return;
     try {
@@ -1177,6 +1196,7 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
                 }}
                 onSetRiskEnabled={setRiskEnabled}
                 onSaveRiskConfig={() => saveRiskConfig(selectedId)}
+                onSaveTags={saveRuleTags}
                 onSaveElasticActions={saveElasticActions}
                 onSaveSchedule={saveSchedule}
                 onSaveEsql={saveEsql}
@@ -1402,6 +1422,20 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
       <Modal title={editorId ? `Edit Rule ${editorId}` : "New Rule"} open={editorOpen} onCancel={() => setEditorOpen(false)} onOk={saveRule} width={980}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Input placeholder="Rule ID" value={editorId} onChange={(e) => setEditorId(e.target.value)} />
+          <div>
+            <Select
+              mode="tags"
+              style={{ width: "100%" }}
+              tokenSeparators={[",", " "]}
+              open={false}
+              value={readSigmaTags(editorYaml)}
+              onChange={(next: string[]) => setEditorYaml(writeSigmaTags(editorYaml, next))}
+              placeholder="Tags — type and press Enter, e.g. attack.execution, attack.t1059.001"
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Tags edit the YAML `tags:` list below. MITRE ATT&CK coverage reads `attack.&lt;tactic&gt;` and `attack.t&lt;technique&gt;` tags (e.g. attack.t1059.001).
+            </Typography.Text>
+          </div>
           <Input.TextArea rows={18} value={editorYaml} onChange={(e) => setEditorYaml(e.target.value)} placeholder="Paste Sigma YAML" />
         </Space>
       </Modal>

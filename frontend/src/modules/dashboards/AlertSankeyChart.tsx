@@ -109,7 +109,7 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
         textStyle: { color: labelColor },
         formatter: (params: any) => {
           if (params?.dataType === 'edge') {
-            return `${params.data.source}<br/>→ ${params.data.target}<br/><b>${params.data.value}</b> events`;
+            return `${params.data.source}<br/>→ ${params.data.target}<br/><b>${params.data.value}</b> tickets`;
           }
           const stage = params?.data?.stage ? `<br/><span>${params.data.stage}</span>` : '';
           return `<b>${params?.name || ''}</b>${stage}`;
@@ -169,7 +169,7 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
         </div>
       ) : !hasData ? (
         <div style={{ height: 620, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Empty description="No correlation data available — tickets need category, resolution, and priority fields filled in" />
+          <Empty description="No correlation data available — no tickets with category, resolution, and priority in the selected time range" />
         </div>
       ) : (
         <div className="dashboard-sankey-panel" style={{ background: panelBg }}>
@@ -214,7 +214,7 @@ const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
               className="dashboard-sankey-subtitle"
               style={{ color: mutedColor }}
             >
-              Static MITRE/use-case context flows into live ticket categories, resolutions, and event levels.
+              Detection-rule ATT&CK tactics flow into live ticket categories, resolutions, and event levels.
             </Typography.Text>
             <ReactECharts option={option} style={{ position: 'relative', zIndex: 1, height: 540, width: '100%' }} notMerge lazyUpdate />
           </div>

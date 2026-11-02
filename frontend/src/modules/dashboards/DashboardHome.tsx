@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
-import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input } from 'antd';
-import { ClockCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input, Tabs } from 'antd';
+import { ClockCircleOutlined, DragOutlined, ReloadOutlined } from '@ant-design/icons';
 import { fetchDashboard } from 'services/alerts';
 import type { DashboardData } from 'types';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import AlertFunnelChart from './AlertFunnelChart';
 import AlertSankeyChart from './AlertSankeyChart';
+import CoverageTab from './CoverageTab';
+import CoverageOverviewSection from './CoverageOverviewSection';
+import { usePanelOrder } from './usePanelOrder';
 
 type TimeRangePreset = '1h' | '24h' | '7d' | 'all' | 'custom';
 type TimeWindow = {
@@ -19,6 +22,10 @@ type TimeWindow = {
   preset: TimeRangePreset;
 };
 
+const DEFAULT_PANEL_ORDER = [
+  'kpi_last_hour', 'kpi_total_alerts', 'kpi_data_sources', 'kpi_enabled_rules', 'kpi_detections_1h',
+  'coverage', 'category', 'trend', 'severity', 'score', 'ips', 'users', 'sources', 'rules', 'funnel', 'sankey',
+];
 const CACHE_KEY = 'siem_dashboard_cache_v1';
 const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v3';
 const DEFAULT_TIME_WINDOW_CACHE_KEY = 'siem_dashboard_default_time_window_v1';
@@ -47,6 +54,15 @@ const writeStoredDefaultTimeWindow = (value: TimeWindow) => {
 };
 
 const Dashboard: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'coverage'>('overview');
+  const {
+    order: panelOrder,
+    editing: layoutEditing,
+    setEditing: setLayoutEditing,
+    panelProps: pp,
+    reset: resetLayout,
+    isDefault: layoutIsDefault,
+  } = usePanelOrder('siem_dashboard_panel_order_v1', DEFAULT_PANEL_ORDER, (id) => (id.startsWith('kpi_') ? 'kpi' : 'panel'));
   const [data, setData] = useState<DashboardData | null>(null);
   // keep last successful data to avoid UI blanking during reloads
   const [displayData, setDisplayData] = useState<DashboardData | null>(null);
@@ -539,7 +555,9 @@ const Dashboard: React.FC = () => {
   const renderOverviewMetricCard = (title: string, value: number, panelKey: string, ariaLabel: string) => (
     // Shared card renderer keeps all overview KPI cards visually symmetric.
     <Card
-      className="dashboard-kpi-card"
+      key={panelKey}
+      {...pp(panelKey)}
+      className={`dashboard-kpi-card${pp(panelKey).className ? ` ${pp(panelKey).className}` : ''}`}
       title={title}
       extra={panelRefresh(panelKey, ariaLabel)}
       style={{ width: '100%', minWidth: 0 }}
@@ -610,12 +628,359 @@ const Dashboard: React.FC = () => {
 
   const isCustomPresetActive = timePreset === 'custom';
 
-  return (
-  <div className="dashboard-home-shell">
-      <div className="dashboard-toolbar-shell">
-        <div className="dashboard-toolbar-title-shell">
-          <span className="dashboard-toolbar-title">Dashboard Overview</span>
-        </div>
+  const kpiDefs: Record<string, [string, number, string]> = {
+    kpi_last_hour: ['Alerts in Last Hour', animatedRecentAlerts, 'Refresh Alerts in Last Hour'],
+    kpi_total_alerts: ['Total Alerts', animatedTotalAlerts, 'Refresh Total Alerts'],
+    kpi_data_sources: ['Data Sources', animatedDataSources, 'Refresh Data Sources'],
+    kpi_enabled_rules: ['Enabled SIEM Rules', animatedEnabledRules, 'Refresh Enabled SIEM Rules'],
+    kpi_detections_1h: ['Detections (Last Hour)', animatedDetections, 'Refresh Detections in Last Hour'],
+  };
+
+  const panels: Record<string, React.ReactNode> = {
+    coverage: (
+      <Col span={24} {...pp('coverage')}>
+        <CoverageOverviewSection onConfigure={() => setActiveTab('coverage')} />
+      </Col>
+    ),
+    category: (
+      <Col {...pp('category')} xs={24} lg={10}>
+        <Card className="dashboard-equal-card" title="Alert Category Breakdown" extra={panelRefresh('category_breakdown', 'Refresh Alert Category Breakdown')}>
+          {hasEntries(categoryBreakdown) ? (
+            <Pie
+              key={`category-pie-${themeMode}`}
+              data={Object.entries(categoryBreakdown as Record<string, number>).map(([type, value]) => ({ type, value }))}
+              angleField="value"
+              colorField="type"
+              radius={0.8}
+              height={320}
+              padding={[12, 12, 72, 12]}
+              label={false}
+              legend={{
+                color: {
+                  title: false,
+                  position: 'bottom',
+                  rowPadding: 8,
+                  itemMarkerSize: 10,
+                  itemLabelFill: chartTextColor,
+                  itemValueFill: chartSubtleTextColor,
+                },
+              }}
+              tooltip={{
+                title: (d: any) => `${d?.type ?? ''}`,
+                items: [
+                  (d: any) => ({ name: 'Count', value: String(d?.value ?? 0) }),
+                ],
+              }}
+            />
+          ) : (
+            <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Empty description="No category data" />
+            </div>
+          )}
+        </Card>
+      </Col>
+    ),
+    trend: (
+      <Col {...pp('trend')} xs={24} lg={14}>
+        {displayData && (
+          <Card
+            className="dashboard-equal-card"
+            title="Alert Trend"
+            extra={
+              <Space>
+                {panelRefresh('alert_trend', 'Refresh Alert Trend')}
+                <span style={{ color: chartTextColor }}>Group by</span>
+                <Select
+                  size="small"
+                  value={trendGroupBy}
+                  onChange={(v) => setTrendGroupBy(v as 'hour' | 'day')}
+                  style={{ width: 120 }}
+                  options={[
+                    { label: '1 hour', value: 'hour' },
+                    { label: '1 day', value: 'day' },
+                  ]}
+                />
+                <Button size="small" onClick={() => openDebugModal('alert_trend')}>View data</Button>
+              </Space>
+            }
+          >
+            {hasSeriesRows(displayData?.alert_trend_series) ? (
+              <Column
+                data={bucketizeStackedSeries(displayData.alert_trend_series, trendGroupBy).map((r) => ({
+                  time: r.time,
+                  severity: r.series,
+                  count: r.value,
+                }))}
+                xField="time"
+                yField="count"
+                colorField="severity"
+                stack={{
+                  // bottom -> top
+                  orderBy: (d: any) =>
+                    ({ low: 0, medium: 1, high: 2, critical: 3, unknown: 4 } as any)[
+                      String(d?.severity ?? 'unknown').toLowerCase()
+                    ] ?? 99,
+                }}
+                scale={{
+                  x: { type: 'band' },
+                  color: {
+                    domain: ['low', 'medium', 'high', 'critical', 'unknown'],
+                    range: ['#1677ff', '#fadb14', '#fa8c16', '#ff4d4f', '#8c8c8c'],
+                  },
+                }}
+                height={320}
+                label={false}
+                tooltip={{ showMarkers: false }}
+                axis={{
+                  x: {
+                    title: false,
+                    labelFill: chartTextColor,
+                    labelAutoRotate: true,
+                    labelFormatter: (v: any) => {
+                      const s = String(v ?? '');
+                      // show timestamp under x-axis
+                      if (s.includes('T')) return s.replace('T', ' ') + ':00';
+                      return s;
+                    },
+                  },
+                  y: { title: false, labelFill: chartTextColor },
+                }}
+                legend={{
+                  color: {
+                    title: false,
+                    position: 'top',
+                    itemLabelFill: chartTextColor,
+                  },
+                }}
+              />
+            ) : hasTrendMap(displayData?.alert_trend) ? (
+              <Column
+                data={bucketizeTimeSeries(displayData.alert_trend, trendGroupBy).map((d) => ({ time: d.time, count: d.value }))}
+                xField="time"
+                yField="count"
+                colorField="time"
+                legend={false}
+                height={320}
+                label={false}
+                tooltip={{ showMarkers: false }}
+                axis={{ x: false }}
+              />
+            ) : renderTrendEmpty()}
+          </Card>
+        )}
+      </Col>
+    ),
+    severity: (
+      <Col {...pp('severity')} xs={24} lg={10}>
+        <Card className="dashboard-equal-card" title="Alert Severity Distribution" extra={panelRefresh('severity_distribution', 'Refresh Alert Severity Distribution')}>
+          {hasEntries(severityDistribution) ? (
+            <Pie
+              key={`severity-pie-${themeMode}`}
+              data={Object.entries(severityDistribution as Record<string, number>).map(([type, value]) => ({ type, value }))}
+              angleField="value"
+              colorField="type"
+              radius={0.8}
+              height={320}
+              padding={[12, 12, 72, 12]}
+              label={false}
+              legend={{
+                color: {
+                  title: false,
+                  position: 'bottom',
+                  rowPadding: 8,
+                  itemMarkerSize: 10,
+                  itemLabelFill: chartTextColor,
+                  itemValueFill: chartSubtleTextColor,
+                },
+              }}
+              tooltip={{
+                title: (d: any) => `${d?.type ?? ''}`,
+                items: [
+                  (d: any) => ({ name: 'Count', value: String(d?.value ?? 0) }),
+                ],
+              }}
+            />
+          ) : (
+            <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Empty description="No severity data" />
+            </div>
+          )}
+        </Card>
+      </Col>
+    ),
+    score: (
+      <Col {...pp('score')} xs={24} lg={14}>
+        {displayData && (
+          <Card
+            className="dashboard-equal-card"
+            title="Alert Score Trend"
+            extra={
+              <Space>
+                {panelRefresh('alert_score_trend', 'Refresh Alert Score Trend')}
+                <span style={{ color: chartTextColor }}>Group by</span>
+                <Select
+                  size="small"
+                  value={scoreGroupBy}
+                  onChange={(v) => setScoreGroupBy(v as 'hour' | 'day')}
+                  style={{ width: 120 }}
+                  options={[
+                    { label: '1 hour', value: 'hour' },
+                    { label: '1 day', value: 'day' },
+                  ]}
+                />
+                <Button size="small" onClick={() => openDebugModal('alert_score_trend')}>View data</Button>
+              </Space>
+            }
+          >
+            {hasSeriesRows(displayData?.alert_score_trend_series) ? (
+              <Column
+                data={bucketizeStackedSeries(displayData.alert_score_trend_series, scoreGroupBy).map((r) => ({
+                  time: r.time,
+                  severity: r.series,
+                  score: r.value,
+                }))}
+                xField="time"
+                yField="score"
+                colorField="severity"
+                stack={{
+                  // bottom -> top
+                  orderBy: (d: any) =>
+                    ({ low: 0, medium: 1, high: 2, critical: 3, unknown: 4 } as any)[
+                      String(d?.severity ?? 'unknown').toLowerCase()
+                    ] ?? 99,
+                }}
+                scale={{
+                  x: { type: 'band' },
+                  color: {
+                    domain: ['low', 'medium', 'high', 'critical', 'unknown'],
+                    range: ['#1677ff', '#fadb14', '#fa8c16', '#ff4d4f', '#8c8c8c'],
+                  },
+                }}
+                height={320}
+                label={false}
+                tooltip={{ showMarkers: false }}
+                axis={{
+                  x: {
+                    title: false,
+                    labelFill: chartTextColor,
+                    labelAutoRotate: true,
+                    labelFormatter: (v: any) => {
+                      const s = String(v ?? '');
+                      if (s.includes('T')) return s.replace('T', ' ') + ':00';
+                      return s;
+                    },
+                  },
+                  y: { title: false, labelFill: chartTextColor },
+                }}
+                legend={{
+                  color: {
+                    title: false,
+                    position: 'top',
+                    itemLabelFill: chartTextColor,
+                  },
+                }}
+              />
+            ) : hasTrendMap(displayData?.alert_score_trend) ? (
+              <Column
+                data={bucketizeTimeSeries(displayData.alert_score_trend, scoreGroupBy).map((d) => ({ time: d.time, score: d.value }))}
+                xField="time"
+                yField="score"
+                colorField="time"
+                legend={false}
+                height={320}
+                label={false}
+                tooltip={{ showMarkers: false }}
+                axis={{ x: false }}
+              />
+            ) : renderTrendEmpty()}
+          </Card>
+        )}
+      </Col>
+    ),
+    ips: (
+      <Col {...pp('ips')} xs={24} md={12} xl={6}>
+        {renderPagedTableCard(
+          'Top Source 10 IP',
+          'top_source_ips',
+          'Refresh Top Source 10 IP',
+          [
+            { title: 'IP', dataIndex: 'name', ellipsis: true },
+            { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+          ],
+          (displayData?.top_source_ips ?? []) as any[],
+        )}
+      </Col>
+    ),
+    users: (
+      <Col {...pp('users')} xs={24} md={12} xl={6}>
+        {renderPagedTableCard(
+          'Top 10 Users',
+          'top_users',
+          'Refresh Top 10 Users',
+          [
+            { title: 'User', dataIndex: 'name', ellipsis: true },
+            { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+          ],
+          (displayData?.top_users ?? []) as any[],
+        )}
+      </Col>
+    ),
+    sources: (
+      <Col {...pp('sources')} xs={24} md={12} xl={6}>
+        {renderPagedTableCard(
+          'Top 10 Sources',
+          'top_sources',
+          'Refresh Top 10 Sources',
+          [
+            { title: 'Source', dataIndex: 'name', ellipsis: true },
+            { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+          ],
+          (displayData?.top_sources ?? []) as any[],
+        )}
+      </Col>
+    ),
+    rules: (
+      <Col {...pp('rules')} xs={24} md={12} xl={6}>
+        {renderPagedTableCard(
+          'Top 10 Rules',
+          'top_rules',
+          'Refresh Top 10 Rules',
+          [
+            {
+              title: 'Rule',
+              dataIndex: 'name',
+              ellipsis: true,
+              render: (value: string) => (
+                <span style={{ display: 'inline-block', width: '100%', wordBreak: 'break-all' }}>{value}</span>
+              ),
+            },
+            { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
+          ],
+          (displayData?.top_rules ?? []) as any[],
+        )}
+      </Col>
+    ),
+    funnel: (
+      <Col span={24} {...pp('funnel')}>
+    <div className="dashboard-section-block">
+      <AlertFunnelChart
+        startTime={timeParams.start_time}
+        endTime={timeParams.end_time}
+        allTime={timeParams.all_time}
+      />
+    </div>
+      </Col>
+    ),
+    sankey: (
+      <Col span={24} {...pp('sankey')}>
+    <div className="dashboard-section-block">
+      <AlertSankeyChart startTime={timeParams.start_time} endTime={timeParams.end_time} />
+    </div>
+      </Col>
+    ),
+  };
+
+  const timePicker = (
         <div className="dashboard-time-anchor" ref={timeMenuRef}>
           {/* Collapse the time controls into a compact trigger so the header preserves title space. */}
           <button
@@ -732,347 +1097,56 @@ const Dashboard: React.FC = () => {
             </div>
           ) : null}
         </div>
-      </div>
+  );
 
-      {/* Merge the former sub-tabs into one command-center flow so all analytics stay visible at once. */}
+  return (
+  <div className="dashboard-home-shell">
+      <Tabs
+        activeKey={activeTab}
+        tabBarExtraContent={
+          activeTab === 'overview' ? (
+            <Space size={8} align="center">
+              {layoutEditing && !layoutIsDefault ? (
+                <Button size="small" onClick={resetLayout}>Reset layout</Button>
+              ) : null}
+              <Button
+                size="small"
+                type={layoutEditing ? 'primary' : 'default'}
+                icon={<DragOutlined />}
+                onClick={() => setLayoutEditing(!layoutEditing)}
+              >
+                {layoutEditing ? 'Done' : 'Customize layout'}
+              </Button>
+              {timePicker}
+            </Space>
+          ) : null
+        }
+        onChange={(key) => setActiveTab(key as 'overview' | 'coverage')}
+        items={[
+          {
+            key: 'overview',
+            label: 'Overview',
+            children: (
       <div className="dashboard-section-stack">
       {/* Flatten KPI wrappers so the grid itself owns the spacing and sizing contract. */}
       <div className="dashboard-kpi-grid dashboard-kpi-grid-compact">
-        {renderOverviewMetricCard('Alerts in Last Hour', animatedRecentAlerts, 'kpi_last_hour', 'Refresh Alerts in Last Hour')}
-        {renderOverviewMetricCard('Total Alerts', animatedTotalAlerts, 'kpi_total_alerts', 'Refresh Total Alerts')}
-        {renderOverviewMetricCard('Data Sources', animatedDataSources, 'kpi_data_sources', 'Refresh Data Sources')}
-        {renderOverviewMetricCard('Enabled SIEM Rules', animatedEnabledRules, 'kpi_enabled_rules', 'Refresh Enabled SIEM Rules')}
-        {renderOverviewMetricCard('Detections (Last Hour)', animatedDetections, 'kpi_detections_1h', 'Refresh Detections in Last Hour')}
+        {panelOrder.filter((id) => id.startsWith('kpi_')).map((id) => {
+          const [title, value, aria] = kpiDefs[id];
+          return renderOverviewMetricCard(title, value, id, aria);
+        })}
       </div>
 
-      {/* Row 1: Pie#1 + Bar#1 */}
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} lg={10}>
-          <Card className="dashboard-equal-card" title="Alert Category Breakdown" extra={panelRefresh('category_breakdown', 'Refresh Alert Category Breakdown')}>
-            {hasEntries(categoryBreakdown) ? (
-              <Pie
-                key={`category-pie-${themeMode}`}
-                data={Object.entries(categoryBreakdown as Record<string, number>).map(([type, value]) => ({ type, value }))}
-                angleField="value"
-                colorField="type"
-                radius={0.8}
-                height={320}
-                padding={[12, 12, 72, 12]}
-                label={false}
-                legend={{
-                  color: {
-                    title: false,
-                    position: 'bottom',
-                    rowPadding: 8,
-                    itemMarkerSize: 10,
-                    itemLabelFill: chartTextColor,
-                    itemValueFill: chartSubtleTextColor,
-                  },
-                }}
-                tooltip={{
-                  title: (d: any) => `${d?.type ?? ''}`,
-                  items: [
-                    (d: any) => ({ name: 'Count', value: String(d?.value ?? 0) }),
-                  ],
-                }}
-              />
-            ) : (
-              <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Empty description="No category data" />
-              </div>
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} lg={14}>
-          {displayData && (
-            <Card
-              className="dashboard-equal-card"
-              title="Alert Trend"
-              extra={
-                <Space>
-                  {panelRefresh('alert_trend', 'Refresh Alert Trend')}
-                  <span style={{ color: chartTextColor }}>Group by</span>
-                  <Select
-                    size="small"
-                    value={trendGroupBy}
-                    onChange={(v) => setTrendGroupBy(v as 'hour' | 'day')}
-                    style={{ width: 120 }}
-                    options={[
-                      { label: '1 hour', value: 'hour' },
-                      { label: '1 day', value: 'day' },
-                    ]}
-                  />
-                  <Button size="small" onClick={() => openDebugModal('alert_trend')}>View data</Button>
-                </Space>
-              }
-            >
-              {hasSeriesRows(displayData?.alert_trend_series) ? (
-                <Column
-                  data={bucketizeStackedSeries(displayData.alert_trend_series, trendGroupBy).map((r) => ({
-                    time: r.time,
-                    severity: r.series,
-                    count: r.value,
-                  }))}
-                  xField="time"
-                  yField="count"
-                  colorField="severity"
-                  stack={{
-                    // bottom -> top
-                    orderBy: (d: any) =>
-                      ({ low: 0, medium: 1, high: 2, critical: 3, unknown: 4 } as any)[
-                        String(d?.severity ?? 'unknown').toLowerCase()
-                      ] ?? 99,
-                  }}
-                  scale={{
-                    x: { type: 'band' },
-                    color: {
-                      domain: ['low', 'medium', 'high', 'critical', 'unknown'],
-                      range: ['#1677ff', '#fadb14', '#fa8c16', '#ff4d4f', '#8c8c8c'],
-                    },
-                  }}
-                  height={320}
-                  label={false}
-                  tooltip={{ showMarkers: false }}
-                  axis={{
-                    x: {
-                      title: false,
-                      labelFill: chartTextColor,
-                      labelAutoRotate: true,
-                      labelFormatter: (v: any) => {
-                        const s = String(v ?? '');
-                        // show timestamp under x-axis
-                        if (s.includes('T')) return s.replace('T', ' ') + ':00';
-                        return s;
-                      },
-                    },
-                    y: { title: false, labelFill: chartTextColor },
-                  }}
-                  legend={{
-                    color: {
-                      title: false,
-                      position: 'top',
-                      itemLabelFill: chartTextColor,
-                    },
-                  }}
-                />
-              ) : hasTrendMap(displayData?.alert_trend) ? (
-                <Column
-                  data={bucketizeTimeSeries(displayData.alert_trend, trendGroupBy).map((d) => ({ time: d.time, count: d.value }))}
-                  xField="time"
-                  yField="count"
-                  colorField="time"
-                  legend={false}
-                  height={320}
-                  label={false}
-                  tooltip={{ showMarkers: false }}
-                  axis={{ x: false }}
-                />
-              ) : renderTrendEmpty()}
-            </Card>
-          )}
-        </Col>
+      <Row gutter={[16, 16]} style={{ alignItems: 'stretch' }}>
+        {panelOrder.filter((id) => !id.startsWith('kpi_')).map((id) => (
+          <React.Fragment key={id}>{panels[id]}</React.Fragment>
+        ))}
       </Row>
-
-      {/* Row 2: Pie#2 + Bar#2 */}
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} lg={10}>
-          <Card className="dashboard-equal-card" title="Alert Severity Distribution" extra={panelRefresh('severity_distribution', 'Refresh Alert Severity Distribution')}>
-            {hasEntries(severityDistribution) ? (
-              <Pie
-                key={`severity-pie-${themeMode}`}
-                data={Object.entries(severityDistribution as Record<string, number>).map(([type, value]) => ({ type, value }))}
-                angleField="value"
-                colorField="type"
-                radius={0.8}
-                height={320}
-                padding={[12, 12, 72, 12]}
-                label={false}
-                legend={{
-                  color: {
-                    title: false,
-                    position: 'bottom',
-                    rowPadding: 8,
-                    itemMarkerSize: 10,
-                    itemLabelFill: chartTextColor,
-                    itemValueFill: chartSubtleTextColor,
-                  },
-                }}
-                tooltip={{
-                  title: (d: any) => `${d?.type ?? ''}`,
-                  items: [
-                    (d: any) => ({ name: 'Count', value: String(d?.value ?? 0) }),
-                  ],
-                }}
-              />
-            ) : (
-              <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Empty description="No severity data" />
-              </div>
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} lg={14}>
-          {displayData && (
-            <Card
-              className="dashboard-equal-card"
-              title="Alert Score Trend"
-              extra={
-                <Space>
-                  {panelRefresh('alert_score_trend', 'Refresh Alert Score Trend')}
-                  <span style={{ color: chartTextColor }}>Group by</span>
-                  <Select
-                    size="small"
-                    value={scoreGroupBy}
-                    onChange={(v) => setScoreGroupBy(v as 'hour' | 'day')}
-                    style={{ width: 120 }}
-                    options={[
-                      { label: '1 hour', value: 'hour' },
-                      { label: '1 day', value: 'day' },
-                    ]}
-                  />
-                  <Button size="small" onClick={() => openDebugModal('alert_score_trend')}>View data</Button>
-                </Space>
-              }
-            >
-              {hasSeriesRows(displayData?.alert_score_trend_series) ? (
-                <Column
-                  data={bucketizeStackedSeries(displayData.alert_score_trend_series, scoreGroupBy).map((r) => ({
-                    time: r.time,
-                    severity: r.series,
-                    score: r.value,
-                  }))}
-                  xField="time"
-                  yField="score"
-                  colorField="severity"
-                  stack={{
-                    // bottom -> top
-                    orderBy: (d: any) =>
-                      ({ low: 0, medium: 1, high: 2, critical: 3, unknown: 4 } as any)[
-                        String(d?.severity ?? 'unknown').toLowerCase()
-                      ] ?? 99,
-                  }}
-                  scale={{
-                    x: { type: 'band' },
-                    color: {
-                      domain: ['low', 'medium', 'high', 'critical', 'unknown'],
-                      range: ['#1677ff', '#fadb14', '#fa8c16', '#ff4d4f', '#8c8c8c'],
-                    },
-                  }}
-                  height={320}
-                  label={false}
-                  tooltip={{ showMarkers: false }}
-                  axis={{
-                    x: {
-                      title: false,
-                      labelFill: chartTextColor,
-                      labelAutoRotate: true,
-                      labelFormatter: (v: any) => {
-                        const s = String(v ?? '');
-                        if (s.includes('T')) return s.replace('T', ' ') + ':00';
-                        return s;
-                      },
-                    },
-                    y: { title: false, labelFill: chartTextColor },
-                  }}
-                  legend={{
-                    color: {
-                      title: false,
-                      position: 'top',
-                      itemLabelFill: chartTextColor,
-                    },
-                  }}
-                />
-              ) : hasTrendMap(displayData?.alert_score_trend) ? (
-                <Column
-                  data={bucketizeTimeSeries(displayData.alert_score_trend, scoreGroupBy).map((d) => ({ time: d.time, score: d.value }))}
-                  xField="time"
-                  yField="score"
-                  colorField="time"
-                  legend={false}
-                  height={320}
-                  label={false}
-                  tooltip={{ showMarkers: false }}
-                  axis={{ x: false }}
-                />
-              ) : renderTrendEmpty()}
-            </Card>
-          )}
-        </Col>
-      </Row>
-
-      {/* Table row uses one stretch-aligned grid line so all cards hold the same height baseline. */}
-      <Row gutter={[16, 16]} style={{ marginTop: 16, alignItems: 'stretch' }}>
-        <Col xs={24} md={12} xl={6}>
-          {renderPagedTableCard(
-            'Top Source 10 IP',
-            'top_source_ips',
-            'Refresh Top Source 10 IP',
-            [
-              { title: 'IP', dataIndex: 'name', ellipsis: true },
-              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-            ],
-            (displayData?.top_source_ips ?? []) as any[],
-          )}
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          {renderPagedTableCard(
-            'Top 10 Users',
-            'top_users',
-            'Refresh Top 10 Users',
-            [
-              { title: 'User', dataIndex: 'name', ellipsis: true },
-              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-            ],
-            (displayData?.top_users ?? []) as any[],
-          )}
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          {renderPagedTableCard(
-            'Top 10 Sources',
-            'top_sources',
-            'Refresh Top 10 Sources',
-            [
-              { title: 'Source', dataIndex: 'name', ellipsis: true },
-              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-            ],
-            (displayData?.top_sources ?? []) as any[],
-          )}
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          {renderPagedTableCard(
-            'Top 10 Rules',
-            'top_rules',
-            'Refresh Top 10 Rules',
-            [
-              {
-                title: 'Rule',
-                dataIndex: 'name',
-                ellipsis: true,
-                render: (value: string) => (
-                  <span style={{ display: 'inline-block', width: '100%', wordBreak: 'break-all' }}>{value}</span>
-                ),
-              },
-              { title: 'Count', dataIndex: 'count', width: 90, align: 'right' as const },
-            ],
-            (displayData?.top_rules ?? []) as any[],
-          )}
-        </Col>
-      </Row>
-
-      {/* Surface the funnel directly after overview metrics to remove the extra tab hop. */}
-      <div className="dashboard-section-block">
-        <AlertFunnelChart
-          startTime={timeParams.start_time}
-          endTime={timeParams.end_time}
-          allTime={timeParams.all_time}
-        />
       </div>
-
-      {/* Keep the 5-stage correlation pipeline continuously visible beneath the conversion funnel. */}
-      <div className="dashboard-section-block">
-        <AlertSankeyChart startTime={timeParams.start_time} endTime={timeParams.end_time} />
-      </div>
-      </div>
+            ),
+          },
+          { key: 'coverage', label: 'Coverage settings', children: <CoverageTab /> },
+        ]}
+      />
 
       <Modal title={`Raw dashboard data ${debugKey ? ` - ${debugKey}` : ''}`} open={debugModalVisible} onCancel={() => setDebugModalVisible(false)} footer={<Button onClick={() => setDebugModalVisible(false)}>Close</Button>} width={800}>
         <pre style={{ maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{getDebugContent()}</pre>
