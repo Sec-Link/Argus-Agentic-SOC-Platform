@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Bot, CheckCircle2, CirclePause, Clock3, ListChecks, MessageCircleQuestion, Plus, Send, ShieldCheck, Wrench } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
-import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
+import { aiAssistantChat, askTicketInvestigationSideQuestion, cancelTicketInvestigationSideQuestion, clearSlaTicketAiChatHistory, clearTicketInvestigationSideQuestions, controlTicketInvestigationRun, createTicketInvestigation, createTicketInvestigationWorker, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketInvestigation, fetchTicketInvestigationSideQuestions, fetchTicketInvestigations, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, sendTicketInvestigationMessage, toggleSlaTicketPending, type TicketInvestigationRun, type TicketInvestigationSession, type TicketInvestigationSideConversation, updateSlaTicket } from 'services/tickets';
 import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
 import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
+import { fetchAlerts } from 'services/alerts';
 import { fetchModelCatalog, type ModelCatalogEntry } from 'services/aiAssistant/models';
 import { buildTicketDetailContext } from '../aiContext';
 import { canContinueTicketChat, type TicketChatCapabilities, type TicketChatScope } from '../ticketChatHistory';
@@ -415,6 +417,11 @@ export default function SlaTicketDetailView(props: Props) {
   const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, onRefreshWorkLogs, loading } = props;
   const [showEmpty, setShowEmpty] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('incident');
+  const [assistantInnerTab, setAssistantInnerTab] = useState<string>('sessions');
+  const [relatedAlerts, setRelatedAlerts] = useState<any[]>([]);
+  const [relatedAlertsLoading, setRelatedAlertsLoading] = useState(false);
+  const [relatedAlertsLoaded, setRelatedAlertsLoaded] = useState(false);
+  const [relatedAlertsError, setRelatedAlertsError] = useState('');
   const [incidentTab, setIncidentTab] = useState<string>('timeline');
   const [isPending, setIsPending] = useState(false);
   const [pendingLoading, setPendingLoading] = useState(false);
@@ -432,8 +439,22 @@ export default function SlaTicketDetailView(props: Props) {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
   const [chatWidthTouched, setChatWidthTouched] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; hidden?: boolean; trace?: any[]; owner?: string }>>([]);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; hidden?: boolean; trace?: any[]; owner?: string; created_at?: string }>>([]);
   const [chatInput, setChatInput] = useState('');
+  const [investigationSessions, setInvestigationSessions] = useState<TicketInvestigationSession[]>([]);
+  const [activeInvestigation, setActiveInvestigation] = useState<TicketInvestigationSession | null>(null);
+  const [activeInvestigationRunId, setActiveInvestigationRunId] = useState('');
+  const [investigationLoading, setInvestigationLoading] = useState(false);
+  const [investigationSending, setInvestigationSending] = useState(false);
+  const [investigationError, setInvestigationError] = useState('');
+  const [investigationDraft, setInvestigationDraft] = useState('');
+  const [workerObjective, setWorkerObjective] = useState('');
+  const [workerCreating, setWorkerCreating] = useState(false);
+  const [sideQuestionOpen, setSideQuestionOpen] = useState(false);
+  const [sideConversation, setSideConversation] = useState<TicketInvestigationSideConversation | null>(null);
+  const [sideQuestionDraft, setSideQuestionDraft] = useState('');
+  const [sideQuestionLoading, setSideQuestionLoading] = useState(false);
+  const [sideQuestionError, setSideQuestionError] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [chatMoreLoading, setChatMoreLoading] = useState(false);
@@ -573,9 +594,27 @@ export default function SlaTicketDetailView(props: Props) {
     setAiResult(null);
     setAiRawResponse('');
     setAiError(null);
+    setAssistantInnerTab('sessions');
+    setRelatedAlerts([]);
+    setRelatedAlertsLoaded(false);
+    setRelatedAlertsError('');
     setChatOpen(false);
     setChatMessages([]);
     setChatInput('');
+    setInvestigationSessions([]);
+    setActiveInvestigation(null);
+    setActiveInvestigationRunId('');
+    setInvestigationLoading(false);
+    setInvestigationSending(false);
+    setInvestigationError('');
+    setSideQuestionOpen(false);
+    setSideConversation(null);
+    setSideQuestionDraft('');
+    setSideQuestionLoading(false);
+    setSideQuestionError('');
+    setInvestigationDraft('');
+    setWorkerObjective('');
+    setWorkerCreating(false);
     setCollapsedTraces({});
     setChatNextBefore(null);
     chatHistorySequence.current++;
@@ -701,6 +740,7 @@ export default function SlaTicketDetailView(props: Props) {
           content: fixMojibake(String(row.content)),
           trace: Array.isArray(row.trace) ? row.trace : [],
           owner: typeof row.created_by === 'string' ? row.created_by : 'Unknown legacy owner',
+          created_at: typeof row.created_at === 'string' ? row.created_at : undefined,
         }));
       setChatCapabilities(res);
       setChatNextBefore(res?.next_before || null);
@@ -731,6 +771,7 @@ export default function SlaTicketDetailView(props: Props) {
           content: fixMojibake(String(row.content)),
           trace: Array.isArray(row.trace) ? row.trace : [],
           owner: typeof row.created_by === 'string' ? row.created_by : 'Unknown legacy owner',
+          created_at: typeof row.created_at === 'string' ? row.created_at : undefined,
         }));
       setChatNextBefore(res?.next_before || null);
       setChatMessages((prev) => {
@@ -808,7 +849,7 @@ export default function SlaTicketDetailView(props: Props) {
     const sequence = chatHistorySequence.current;
     if (!requireAiModel()) return;
     const historyForApi = chatMessages.map((m) => ({ role: m.role, content: m.content }));
-    setChatMessages((prev) => [...prev, { role: 'user', content: text }]);
+    setChatMessages((prev) => [...prev, { role: 'user', content: text, created_at: new Date().toISOString() }]);
     setChatInput('');
     setChatLoading(true);
     try {
@@ -823,7 +864,7 @@ export default function SlaTicketDetailView(props: Props) {
       const reply = fixMojibake(String(res?.response || ''));
       const trace = Array.isArray(res?.trace) ? res.trace : [];
       setChatMessages((prev) => {
-        const next = [...prev, { role: 'assistant', content: reply || 'No response', trace }];
+        const next = [...prev, { role: 'assistant', content: reply || 'No response', trace, created_at: new Date().toISOString() }];
         const index = next.length - 1;
         setCollapsedTraces((state) => ({ ...state, [index]: true }));
         return next;
@@ -832,7 +873,7 @@ export default function SlaTicketDetailView(props: Props) {
       if (sequence !== chatHistorySequence.current) return;
       const apiError = err?.response?.data?.error || err?.response?.data?.detail || 'Chat failed';
       setChatMessages((prev) => {
-        const next = [...prev, { role: 'assistant', content: fixMojibake(String(apiError)), trace: [] }];
+        const next = [...prev, { role: 'assistant', content: fixMojibake(String(apiError)), trace: [], created_at: new Date().toISOString() }];
         const index = next.length - 1;
         setCollapsedTraces((state) => ({ ...state, [index]: true }));
         return next;
@@ -1174,6 +1215,59 @@ export default function SlaTicketDetailView(props: Props) {
     }
     return null;
   }, [aiResult, workLogs]);
+  const assistantAsset = useMemo(() => {
+    const direct = [aiHeader?.host_name, aiHeader?.hostname, aiHeader?.host, aiHeader?.asset_name, aiHeader?.asset]
+      .find((value) => typeof value === 'string' && value.trim());
+    if (direct) return String(direct).trim();
+    const observable = observableEvidenceItems.find((item) => /^(host|hostname|host_name|asset|asset_name)$/i.test(item.type));
+    if (observable?.value) return observable.value;
+
+    let payload: any = ticket.alert_message;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch { return ''; }
+    }
+    const findHost = (value: any, depth = 0): string => {
+      if (!value || typeof value !== 'object' || depth > 5) return '';
+      for (const [key, item] of Object.entries(value)) {
+        if (/^(host_name|hostname|asset_name)$/i.test(key) && typeof item === 'string' && item.trim()) return item.trim();
+        if (key === 'host' && typeof item === 'string' && item.trim()) return item.trim();
+        if (key === 'host' && item && typeof item === 'object' && typeof (item as any).name === 'string') return (item as any).name.trim();
+      }
+      for (const item of Object.values(value)) {
+        const nested = findHost(item, depth + 1);
+        if (nested) return nested;
+      }
+      return '';
+    };
+    return findHost(payload);
+  }, [aiHeader, observableEvidenceItems, ticket.alert_message]);
+
+  const loadRelatedAlerts = async () => {
+    if (!assistantAsset) {
+      setRelatedAlerts([]);
+      setRelatedAlertsLoaded(true);
+      setRelatedAlertsError('No asset identifier is available in this ticket context.');
+      return;
+    }
+    setRelatedAlertsLoading(true);
+    setRelatedAlertsError('');
+    try {
+      const response = await fetchAlerts(1, 50, undefined, { q: assistantAsset, ordering: '-timestamp' });
+      const rows = Array.isArray(response?.alerts) ? response.alerts : [];
+      const normalize = (value: any) => String(value ?? '').trim().toLowerCase();
+      const hostOf = (row: any) => row?.host_name ?? row?.body?.host_name ?? row?.host?.name ?? row?.hostname ?? row?.agent?.name ?? (typeof row?.host === 'string' ? row.host : '');
+      const currentId = normalize(ticket.event_siem_id);
+      setRelatedAlerts(rows.filter((row: any) => normalize(hostOf(row)) === normalize(assistantAsset)
+        && (!currentId || normalize(row?.alert_id ?? row?._id) !== currentId)));
+      setRelatedAlertsLoaded(true);
+    } catch {
+      setRelatedAlertsError('Could not load alerts for this asset.');
+      setRelatedAlertsLoaded(true);
+    } finally {
+      setRelatedAlertsLoading(false);
+    }
+  };
+
   const aiTasks = useMemo(() => {
     if (Array.isArray(aiResult?.completed_tasks)) {
       return aiResult.completed_tasks;
@@ -1246,6 +1340,129 @@ export default function SlaTicketDetailView(props: Props) {
   }), [ticket, workLogs, handleLogs, attachments, workplanItems, observableEvidenceItems,
     aiResult, rawSummaryText, aiHeader, aiTasks, nextTasks, activeTab, incidentTab, isPending, editableLabels, handleLogsState, workplanState]);
   useRegisterAssistantContext(assistantContext);
+
+  const applyInvestigation = (next: TicketInvestigationSession, preferredRunId = '') => {
+    setActiveInvestigation(next);
+    setInvestigationSessions((previous) => {
+      const summary = { ...next, runs: undefined };
+      const remaining = previous.filter((item) => item.id !== next.id);
+      return [summary, ...remaining];
+    });
+    const nextRun = preferredRunId && next.runs?.some((run) => run.id === preferredRunId)
+      ? preferredRunId
+      : activeInvestigationRunId && next.runs?.some((run) => run.id === activeInvestigationRunId)
+        ? activeInvestigationRunId
+        : next.runs?.find((run) => run.role === 'main')?.id || next.runs?.[0]?.id || '';
+    setActiveInvestigationRunId(nextRun);
+  };
+
+  const loadInvestigations = async (selectFirst = false) => {
+    setInvestigationLoading(true);
+    setInvestigationError('');
+    try {
+      const response = await fetchTicketInvestigations(ticket.ticket_number);
+      const rows = Array.isArray(response?.results) ? response.results : [];
+      setInvestigationSessions(rows);
+      if ((selectFirst || !activeInvestigation) && rows.length) {
+        const detail = await fetchTicketInvestigation(ticket.ticket_number, rows[0].id);
+        applyInvestigation(detail);
+      }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not load investigation sessions.');
+    } finally {
+      setInvestigationLoading(false);
+    }
+  };
+
+  const openInvestigation = async (sessionId: string) => {
+    if (investigationSending) return;
+    setInvestigationLoading(true);
+    setInvestigationError('');
+    try {
+      const detail = await fetchTicketInvestigation(ticket.ticket_number, sessionId);
+      applyInvestigation(detail);
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not open this investigation session.');
+    } finally {
+      setInvestigationLoading(false);
+    }
+  };
+
+  const createInvestigation = async () => {
+    if (investigationSending || !requireAiModel()) return;
+    setInvestigationLoading(true);
+    setInvestigationError('');
+    try {
+      const detail = await createTicketInvestigation(ticket.ticket_number, { model_profile_id: aiModelId });
+      applyInvestigation(detail);
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not create an investigation session.');
+    } finally {
+      setInvestigationLoading(false);
+    }
+  };
+
+  const sendInvestigationMessage = async () => {
+    const messageText = investigationDraft.trim();
+    if (!activeInvestigation || !activeInvestigationRunId || !messageText || investigationSending || !requireAiModel()) return;
+    setInvestigationSending(true);
+    setInvestigationError('');
+    try {
+      const detail = await sendTicketInvestigationMessage(ticket.ticket_number, activeInvestigation.id, {
+        run_id: activeInvestigationRunId, message: messageText, model_profile_id: aiModelId,
+      });
+      applyInvestigation(detail, activeInvestigationRunId);
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      const failedSession = err?.response?.data?.session;
+      if (failedSession?.id) applyInvestigation(failedSession, activeInvestigationRunId);
+      setInvestigationError(detail ? String(detail) : 'The role could not complete this message.');
+    } finally {
+      setInvestigationSending(false);
+    }
+  };
+
+  const createInvestigationWorker = async () => {
+    const objective = workerObjective.trim();
+    if (!activeInvestigation || !objective || workerCreating) return;
+    setWorkerCreating(true);
+    setInvestigationError('');
+    try {
+      const planner = activeInvestigation.runs?.find((run) => run.role === 'planner');
+      const detail = await createTicketInvestigationWorker(ticket.ticket_number, activeInvestigation.id, {
+        objective, parent_id: planner?.id,
+      });
+      const created = detail.runs?.find((run) => run.role === 'worker' && run.objective === objective);
+      applyInvestigation(detail, created?.id);
+      setWorkerObjective('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not create the Worker.');
+    } finally {
+      setWorkerCreating(false);
+    }
+  };
+
+  const controlInvestigationRun = async (run: TicketInvestigationRun, action: 'pause' | 'resume' | 'cancel') => {
+    if (!activeInvestigation || investigationSending) return;
+    setInvestigationSending(true);
+    setInvestigationError('');
+    try {
+      const detail = await controlTicketInvestigationRun(ticket.ticket_number, activeInvestigation.id, run.id, action);
+      applyInvestigation(detail, run.id);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not update the Worker state.');
+    } finally {
+      setInvestigationSending(false);
+    }
+  };
 
   const caseDetailsItems = useMemo(() => {
     const rows: Array<{ label: string; value: any }> = [
@@ -1347,6 +1564,342 @@ export default function SlaTicketDetailView(props: Props) {
     await saveLabels(next, 'Label deleted');
   };
 
+  const activeInvestigationRun = activeInvestigation?.runs?.find((run) => run.id === activeInvestigationRunId) || null;
+  const investigationRunsByRole = (role: TicketInvestigationRun['role']) => activeInvestigation?.runs?.filter((run) => run.role === role) || [];
+  const sideQuestionParent = activeInvestigationRun && ['main', 'planner', 'worker'].includes(activeInvestigationRun.role) ? activeInvestigationRun : null;
+  const sideQuestionRunning = Boolean(sideConversation?.messages.some((item) => item.role === 'user' && ['queued', 'running'].includes(item.status)));
+
+  const loadSideQuestions = async (run = sideQuestionParent) => {
+    if (!activeInvestigation || !run) return;
+    setSideQuestionLoading(true);
+    setSideQuestionError('');
+    try {
+      const detail = await fetchTicketInvestigationSideQuestions(ticket.ticket_number, activeInvestigation.id, run.id);
+      setSideConversation(detail);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setSideQuestionError(detail ? String(detail) : 'Could not load Side Question history.');
+    } finally {
+      setSideQuestionLoading(false);
+    }
+  };
+
+  const openSideQuestions = () => {
+    if (!sideQuestionParent) {
+      setInvestigationError('Select Main Agent, Planner, or a Worker before opening Side Question.');
+      return;
+    }
+    setSideQuestionOpen(true);
+    setSideQuestionDraft('');
+    void loadSideQuestions(sideQuestionParent);
+  };
+
+  const askSideQuestion = async () => {
+    const question = sideQuestionDraft.trim();
+    if (!activeInvestigation || !sideQuestionParent || !question || sideQuestionLoading || sideQuestionRunning || !requireAiModel()) return;
+    setSideQuestionLoading(true);
+    setSideQuestionError('');
+    try {
+      const detail = await askTicketInvestigationSideQuestion(ticket.ticket_number, activeInvestigation.id, sideQuestionParent.id, {
+        question, model_profile_id: aiModelId,
+      });
+      setSideConversation(detail);
+      setSideQuestionDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setSideQuestionError(detail ? String(detail) : 'Could not start Side Question.');
+    } finally {
+      setSideQuestionLoading(false);
+    }
+  };
+
+  const cancelSideQuestion = async () => {
+    if (!activeInvestigation || !sideQuestionParent) return;
+    const current = sideConversation?.messages.find((item) => item.role === 'user' && ['queued', 'running'].includes(item.status));
+    if (!current) return;
+    setSideQuestionLoading(true);
+    try {
+      const detail = await cancelTicketInvestigationSideQuestion(ticket.ticket_number, activeInvestigation.id, sideQuestionParent.id, current.id);
+      setSideConversation(detail);
+      setSideQuestionError('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setSideQuestionError(detail ? String(detail) : 'Could not stop Side Question.');
+    } finally {
+      setSideQuestionLoading(false);
+    }
+  };
+
+  const clearSideQuestions = () => {
+    if (!activeInvestigation || !sideQuestionParent) return;
+    Modal.confirm({
+      title: '清空旁路提问历史？',
+      content: '只会删除当前 Agent 的独立旁路讨论；主会话和该 Agent 的调查上下文会保留。',
+      okText: '清空历史', cancelText: '取消', okButtonProps: { danger: true },
+      onOk: async () => {
+        await clearTicketInvestigationSideQuestions(ticket.ticket_number, activeInvestigation.id, sideQuestionParent.id);
+        setSideConversation({ id: null, parent_run_id: sideQuestionParent.id, model_profile_id: null, snapshot_available: true, messages: [] });
+        setSideQuestionError('');
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (!sideQuestionOpen || !sideQuestionRunning || !activeInvestigation || !sideQuestionParent) return undefined;
+    const timer = window.setInterval(() => { void loadSideQuestions(sideQuestionParent); }, 1000);
+    return () => window.clearInterval(timer);
+  }, [sideQuestionOpen, sideQuestionRunning, activeInvestigation?.id, sideQuestionParent?.id]);
+
+  const assistantTabs = [
+    {
+      key: 'sessions', label: '会话', children: (
+        <section className={`${layoutStyles.ticketSessions} ${sideQuestionOpen ? layoutStyles.ticketSessionsWithSide : ''}`}>
+          <aside className={layoutStyles.ticketSessionSidebar}>
+            <header className={layoutStyles.ticketSessionSidebarHead}>
+              <div className={layoutStyles.ticketSessionSidebarTitle}>
+                <Typography.Text type="secondary">会话列表</Typography.Text>
+                <Typography.Text type="secondary" className={layoutStyles.ticketSessionRunState}>
+                  {investigationSending ? '● 执行中' : investigationLoading ? '◌ 加载中' : '○ 可交互'}
+                </Typography.Text>
+              </div>
+              <div className={layoutStyles.ticketSessionMetrics}>
+                <span>Ticket</span><b>{ticket.ticket_number}</b>
+                <span>会话</span><b>{investigationSessions.length}</b>
+              </div>
+            </header>
+            <div className={layoutStyles.ticketSessionSidebarBody}>
+              <section className={layoutStyles.ticketSessionBlock}>
+                <div className={layoutStyles.ticketSessionGroup}>
+                  <Bot size={16} /><span>Main Agent</span><span className={layoutStyles.ticketSessionGrow} />
+                  <Button type="text" size="small" icon={<Plus size={13} />} onClick={() => void createInvestigation()} loading={investigationLoading} disabled={investigationSending || !aiModelReady}>新建</Button>
+                </div>
+                {investigationSessions.map((session) => (
+                  <button key={session.id} type="button" className={`${layoutStyles.ticketSessionItem} ${activeInvestigation?.id === session.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => void openInvestigation(session.id)}>
+                    <span className={layoutStyles.ticketSessionItemMain}>主 Agent · 会话 #{session.sequence}</span>
+                    {session.id !== activeInvestigation?.id ? <small>已归档</small> : null}
+                  </button>
+                ))}
+                {!investigationSessions.length && !investigationLoading ? <div className={layoutStyles.ticketSessionEmpty}>新建一个会话开始调查</div> : null}
+              </section>
+
+              {activeInvestigation ? <>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><ListChecks size={16} /><span>规划 Planner</span></div>
+                  {investigationRunsByRole('planner').map((run) => (
+                    <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => setActiveInvestigationRunId(run.id)}>
+                      <CheckCircle2 size={15} /><span className={layoutStyles.ticketSessionItemMain}>{run.title}</span>
+                    </button>
+                  ))}
+                </section>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><ShieldCheck size={16} /><span>系统审计</span></div>
+                  <div className={layoutStyles.ticketSessionReadonly}>系统事件 · 调用、范围与人工复核</div>
+                </section>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><Wrench size={16} /><span>Workers</span><Typography.Text type="secondary">· {investigationRunsByRole('worker').length}</Typography.Text></div>
+                  {investigationRunsByRole('worker').map((run) => (
+                    <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => setActiveInvestigationRunId(run.id)}>
+                      {run.status === 'paused' ? <CirclePause size={15} /> : run.status === 'completed' ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
+                      <span className={layoutStyles.ticketSessionItemMain}>#{run.title.replace(/^Worker · /, '')}</span>
+                    </button>
+                  ))}
+                  <details className={layoutStyles.ticketWorkerCreate}>
+                    <summary>+ 新建 Worker</summary>
+                    <Input.TextArea value={workerObjective} onChange={(event) => setWorkerObjective(event.target.value)} placeholder="Worker 调查目标" maxLength={4000} autoSize={{ minRows: 2, maxRows: 4 }} />
+                    <Button size="small" type="primary" loading={workerCreating} disabled={!workerObjective.trim()} onClick={() => void createInvestigationWorker()}>创建 Worker</Button>
+                  </details>
+                </section>
+              </> : null}
+            </div>
+          </aside>
+
+          <section className={layoutStyles.ticketSessionMain}>
+            <header className={layoutStyles.ticketSessionMainHead}>
+              <div className={layoutStyles.ticketSessionHeading}>
+                <Typography.Text strong>{activeInvestigationRun?.role === 'main' ? `主 Agent · 会话 #${activeInvestigation?.sequence || ''}` : activeInvestigationRun?.title || '选择或新建一个会话'}</Typography.Text>
+                {activeInvestigationRun ? <Button size="small" icon={<MessageCircleQuestion size={15} />} onClick={openSideQuestions}>旁路提问</Button> : null}
+                <Tag>平台默认模型</Tag>
+              </div>
+              <div className={layoutStyles.ticketSessionHeaderActions}>
+                <div className={layoutStyles.ticketSessionModel}>{aiModelSelector}</div>
+                <span>{investigationSending ? '执行中 · 请等待' : activeInvestigationRun?.status === 'paused' ? '只读' : '可交互'}</span>
+                <details className={layoutStyles.ticketSessionOptions}>
+                  <summary>会话详情</summary>
+                  <div className={layoutStyles.ticketSessionOptionsBody}>
+                  <Button size="small" onClick={() => void loadInvestigations()} loading={investigationLoading}>Reload sessions</Button>
+                  {activeInvestigationRun?.role === 'worker' && activeInvestigationRun.status !== 'cancelled' ? (
+                    <>
+                      {activeInvestigationRun.status === 'paused'
+                        ? <Button size="small" onClick={() => void controlInvestigationRun(activeInvestigationRun, 'resume')}>Resume Worker</Button>
+                        : <Button size="small" onClick={() => void controlInvestigationRun(activeInvestigationRun, 'pause')}>Pause Worker</Button>}
+                      <Button size="small" danger onClick={() => void controlInvestigationRun(activeInvestigationRun, 'cancel')}>Cancel Worker</Button>
+                    </>
+                  ) : null}
+                  </div>
+                </details>
+              </div>
+            </header>
+            {investigationError ? <Alert type="error" showIcon message={investigationError} /> : null}
+            <div className={layoutStyles.ticketSessionTranscript} aria-live="polite">
+              {investigationLoading ? <Typography.Text type="secondary">Loading investigation session...</Typography.Text> : activeInvestigationRun?.messages.length ? (
+                activeInvestigationRun.messages.map((msg, index) => (
+                  <article key={msg.id || `${msg.role}_${index}`} className={`${layoutStyles.ticketChatMessage} ${msg.role === 'user' ? layoutStyles.ticketChatMessageUser : layoutStyles.ticketChatMessageAssistant}`}>
+                    <div className={layoutStyles.ticketChatMessageText}>{msg.content}</div>
+                    {msg.trace?.length ? (
+                      <details className={layoutStyles.ticketChatTrace}>
+                        <summary>工具调用记录</summary>
+                        <pre>{JSON.stringify(msg.trace, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                    <time className={layoutStyles.ticketChatMessageTime}>{formatTimestamp(msg.created_at)}</time>
+                  </article>
+                ))
+              ) : <Empty description={activeInvestigationRun ? 'No messages in this role yet' : 'Create an investigation session to begin'} />}
+              {activeInvestigationRun?.role === 'worker' && activeInvestigationRun.objective ? <Alert type="info" showIcon message={`Worker objective: ${activeInvestigationRun.objective}`} /> : null}
+            </div>
+            <form className={layoutStyles.ticketSessionComposer} onSubmit={(event) => { event.preventDefault(); void sendInvestigationMessage(); }}>
+              <div className={layoutStyles.ticketSessionInputBox}>
+                <Input.TextArea value={investigationDraft} onChange={(event) => setInvestigationDraft(event.target.value)}
+                  onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); void sendInvestigationMessage(); } }}
+                  placeholder={activeInvestigationRun?.role === 'worker' ? '向 Worker 补充调查指令…' : '继续当前调查会话…'} maxLength={4000}
+                  autoSize={{ minRows: 3, maxRows: 6 }} disabled={!activeInvestigationRun || investigationSending || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'} />
+              </div>
+              <div className={layoutStyles.ticketSessionComposerFoot}>
+                <Typography.Text type="secondary">Enter 发送 · Shift + Enter 换行</Typography.Text>
+                <Button type="primary" htmlType="submit" loading={investigationSending} disabled={!investigationDraft.trim() || !activeInvestigationRun || !aiModelReady || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'} aria-label="发送消息" icon={<Send size={15} />}>发送</Button>
+              </div>
+            </form>
+          </section>
+          {sideQuestionOpen ? <aside className={layoutStyles.ticketSideQuestionPanel} aria-label="Side Question">
+            <header className={layoutStyles.ticketSideQuestionHead}>
+              <div>
+                <strong>Side Question</strong>
+                <code>/btw</code>
+                <small>{sideQuestionParent?.title || ''}</small>
+              </div>
+              <Space size={2}>
+                <Button type="text" size="small" onClick={() => void loadSideQuestions()} loading={sideQuestionLoading} aria-label="刷新旁路提问">↻</Button>
+                <Button type="text" size="small" onClick={clearSideQuestions} disabled={!sideConversation?.messages.length || sideQuestionLoading} aria-label="清空旁路提问">⌫</Button>
+                <Button type="text" size="small" onClick={() => setSideQuestionOpen(false)} aria-label="关闭旁路提问">×</Button>
+              </Space>
+            </header>
+            <div className={layoutStyles.ticketSideQuestionMeta}>
+              <span>{aiModels.find((model) => model.id === aiModelId)?.model || 'Agent model'}</span>
+              <span>独立讨论 · 不执行工具</span>
+            </div>
+            <div className={layoutStyles.ticketSideQuestionHistory} aria-live="polite">
+              {sideQuestionError ? <Alert type="error" showIcon message={sideQuestionError} /> : null}
+              {!sideConversation?.messages.length && !sideQuestionLoading ? <div className={layoutStyles.ticketSideQuestionEmpty}>随时提问。回答会使用当前 Agent 的已保存上下文，主调查会继续独立运行。</div> : null}
+              {sideConversation?.messages.map((item) => (
+                <article key={item.id} className={layoutStyles.ticketSideQuestionEntry}>
+                  <div className={item.role === 'user' ? layoutStyles.ticketSideQuestionPrompt : item.role === 'system' ? layoutStyles.ticketSideQuestionSystem : layoutStyles.ticketSideQuestionAnswer}>{item.content}</div>
+                  <div className={layoutStyles.ticketSideQuestionStatus}>
+                    <Tag>{item.status === 'queued' || item.status === 'running' ? '回答中' : item.status === 'completed' ? '已完成' : item.status === 'cancelled' ? '已停止' : '失败'}</Tag>
+                    <time>{formatTimestamp(item.created_at)}</time>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <form className={layoutStyles.ticketSideQuestionComposer} onSubmit={(event) => { event.preventDefault(); void askSideQuestion(); }}>
+              <Input.TextArea value={sideQuestionDraft} onChange={(event) => setSideQuestionDraft(event.target.value)} maxLength={4000} autoSize={{ minRows: 2, maxRows: 5 }}
+                onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); void askSideQuestion(); } }} placeholder="询问当前 Agent 的上下文…" disabled={sideQuestionLoading || sideQuestionRunning || !sideQuestionParent} />
+              <div className={layoutStyles.ticketSideQuestionFoot}>
+                <Typography.Text type="secondary">独立讨论 · 不执行工具</Typography.Text>
+                {sideQuestionRunning ? <Button size="small" onClick={() => void cancelSideQuestion()} loading={sideQuestionLoading}>■ 停止</Button> : <Button type="primary" size="small" htmlType="submit" disabled={!sideQuestionDraft.trim() || !sideQuestionParent || sideQuestionLoading || !aiModelReady} icon={<Send size={14} />}>发送</Button>}
+              </div>
+            </form>
+          </aside> : null}
+        </section>
+      ),
+    },
+    {
+      key: 'alerts', label: `同资产其他告警${relatedAlertsLoaded ? ` (${relatedAlerts.length})` : ''}`, children: (
+        <Card size="small" title="同资产其他告警" extra={<Button size="small" onClick={() => void loadRelatedAlerts()} loading={relatedAlertsLoading}>刷新</Button>}>
+          <Alert type="info" showIcon message={`当前资产：${assistantAsset || '工单中没有可用的资产标识'}`} style={{ marginBottom: 12 }} />
+          {relatedAlertsError ? <Alert type="warning" showIcon message={relatedAlertsError} style={{ marginBottom: 12 }} /> : null}
+          {relatedAlertsLoading ? <Typography.Text type="secondary">正在查询现有告警接口...</Typography.Text> : relatedAlerts.length ? (
+            <List dataSource={relatedAlerts} renderItem={(row: any) => (
+              <List.Item>
+                <List.Item.Meta title={<Space wrap><Typography.Text strong>{row.alert_id || row._id || 'Alert'}</Typography.Text>{row.severity ? <Tag>{row.severity}</Tag> : null}</Space>}
+                  description={<><div>{row.description || row.message || row.title || '-'}</div><Typography.Text type="secondary">{formatTimestamp(row.timestamp || row['@timestamp'])}</Typography.Text></>} />
+              </List.Item>
+            )} />
+          ) : <Empty description={relatedAlertsLoaded ? '没有找到该资产的其他告警' : '打开此标签后查询该资产的告警'} />}
+        </Card>
+      ),
+    },
+    {
+      key: 'reasoning', label: '研判理由', children: (
+        <div style={{ display: 'grid', gap: 14 }}>
+          <Card size="small" title="AI 研判摘要">
+            {summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="当前工单还没有 AI 研判摘要" />}
+          </Card>
+          {rawSummaryText ? <Card size="small" title="AI 原始响应"><div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div></Card> : null}
+        </div>
+      ),
+    },
+    {
+      key: 'timeline', label: '资产时间线', children: (
+        <Card size="small" title="工单时间线">
+          {timelineItems.length ? <List dataSource={timelineItems} renderItem={(item) => (
+            <List.Item><Space align="start"><Tag color="blue">{formatTimestamp(item.time)}</Tag><Typography.Text style={{ whiteSpace: 'pre-wrap' }}>{item.text}</Typography.Text></Space></List.Item>
+          )} /> : <Empty description="当前工单没有时间线记录" />}
+        </Card>
+      ),
+    },
+    {
+      key: 'tasks', label: '调查计划', children: (
+        <div style={{ display: 'grid', gap: 14 }}>
+          <Card size="small" title="AI 已完成任务">
+            {aiTasks.length ? <List dataSource={aiTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || item?.task || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="暂无 AI 任务记录" />}
+          </Card>
+          <Card size="small" title="建议的下一步">
+            {nextTasks.length ? <List dataSource={nextTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="暂无下一步建议" />}
+          </Card>
+          <Card size="small" title="现有 Work Plan" loading={workplanLoading}>
+            {workplanItems.length ? <List dataSource={workplanItems} renderItem={(item) => <List.Item><List.Item.Meta title={item.workflow_name} description={`${item.status} · ${formatTimestamp(item.created_at)}`} /></List.Item>} /> : <Empty description="当前工单没有 Work Plan 执行记录" />}
+          </Card>
+        </div>
+      ),
+    },
+    {
+      key: 'evidence', label: '证据与查询', children: (
+        <div style={{ display: 'grid', gap: 14 }}>
+          <Card size="small" title={`Observable Evidence (${observableEvidenceItems.length})`}>
+            {observableEvidenceItems.length ? <Table rowKey="key" size="small" pagination={false} columns={observableColumns} dataSource={observableEvidenceItems} scroll={{ x: 'max-content' }} /> : <Empty description="当前工单没有 Observable Evidence" />}
+          </Card>
+          <Card size="small" title={`附件 (${attachments.length})`}>
+            {attachments.length ? <Table rowKey="id" size="small" pagination={false} columns={attachmentColumns} dataSource={attachments} scroll={{ x: 'max-content' }} /> : <Empty description="当前工单没有附件" />}
+          </Card>
+        </div>
+      ),
+    },
+    {
+      key: 'approval', label: '处置审批', children: (
+        <Card size="small" title="工单处置动作">
+          <Alert type="info" showIcon message="以下动作使用工单现有状态更新接口；AI 不会自动执行处置。" style={{ marginBottom: 14 }} />
+          <Space wrap>
+            <Button onClick={() => updateDecisionStatus('acknowledged')} disabled={!canAcknowledge}>Acknowledge</Button>
+            <Button type="primary" onClick={() => updateDecisionStatus('triaged')} disabled={!canTriaged}>Triaged</Button>
+            <Button onClick={() => updateDecisionStatus('contained')} disabled={!canContained}>Contained</Button>
+            <Button onClick={() => setResolveOpen(true)} disabled={!canResolved}>Resolved</Button>
+          </Space>
+          <Descriptions size="small" column={1} style={{ marginTop: 16 }}>
+            <Descriptions.Item label="当前状态">{renderStatusTag(ticket.status)}</Descriptions.Item>
+            <Descriptions.Item label="Ticket Verdict">{ticket.event_result || '-'}</Descriptions.Item>
+          </Descriptions>
+        </Card>
+      ),
+    },
+    {
+      key: 'report', label: '调查报告', children: (
+        <Card size="small" title="AI 调查报告">
+          {rawSummaryText ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div> : summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="当前工单还没有 AI 调查报告" />}
+        </Card>
+      ),
+    },
+  ];
+
   return (
     <div className={layoutStyles.detail} style={{ padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -1370,9 +1923,14 @@ export default function SlaTicketDetailView(props: Props) {
       <div style={{ marginTop: 10 }}>
         <Tabs
           activeKey={activeTab}
-          onChange={setActiveTab}
+          onChange={(key) => {
+            setActiveTab(key);
+            if (key === 'ai_assistant' && assistantInnerTab === 'alerts' && !relatedAlertsLoaded) void loadRelatedAlerts();
+            if (key === 'ai_assistant' && assistantInnerTab === 'sessions' && !investigationSessions.length) void loadInvestigations(true);
+          }}
           items={[
             { key: 'incident', label: 'Incident Info' },
+            { key: 'ai_assistant', label: 'AI Assistant' },
             { key: 'war_room', label: 'War Room' },
             { key: 'work_plan', label: 'Work Plan (1)' },
             { key: 'evidence', label: `Evidence (${evidenceCount})` },
@@ -1382,7 +1940,47 @@ export default function SlaTicketDetailView(props: Props) {
       </div>
 
       <div>
-        {activeTab === 'war_room' ? (
+        {activeTab === 'ai_assistant' ? (
+          <div className={layoutStyles.ticketAssistantWorkbench}>
+            <div className={layoutStyles.ticketAssistantWorkbenchTitle}>
+              <Space wrap size={8}>
+                <Typography.Text strong>Case Investigation</Typography.Text>
+                <Tag>{assistantAsset || '当前资产'}</Tag>
+                <Typography.Text type="secondary">主告警驱动 · 同资产告警补充研判</Typography.Text>
+              </Space>
+              <Space wrap>
+                <Button href="/settings/ai-assistant">MCP / Skills</Button>
+                <Button onClick={() => {
+                  setAssistantInnerTab('alerts');
+                  if (!relatedAlertsLoaded) void loadRelatedAlerts();
+                }}>同资产其他告警{relatedAlertsLoaded ? `（${relatedAlerts.length}）` : ''}</Button>
+                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>启动 / 继续调查</Button>
+              </Space>
+            </div>
+
+            {assistantInnerTab !== 'sessions' ? <Alert type="info" showIcon className={layoutStyles.ticketAssistantScope} message={(
+              <Space wrap>
+                <Typography.Text strong>当前 Case：{ticket.ticket_number}</Typography.Text>
+                <span>资产：{assistantAsset || '未提供'}</span>
+                <span>事件：{ticket.title || incidentTitle}</span>
+                {renderStatusTag(ticket.status)}
+                {renderSeverityTag(ticket.priority)}
+                <Tag color="green">证据 {evidenceCount}</Tag>
+                <Tag color="blue">Worklog {workLogs.length}</Tag>
+              </Space>
+            )} /> : null}
+
+            <Tabs
+              activeKey={assistantInnerTab}
+              onChange={(key) => {
+                setAssistantInnerTab(key);
+                if (key === 'sessions' && !investigationSessions.length) void loadInvestigations(true);
+                if (key === 'alerts' && !relatedAlertsLoaded) void loadRelatedAlerts();
+              }}
+              items={assistantTabs}
+            />
+          </div>
+        ) : activeTab === 'war_room' ? (
           <WarRoomView
             ticket={ticket}
             workLogs={workLogs}

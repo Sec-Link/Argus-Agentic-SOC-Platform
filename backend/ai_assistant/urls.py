@@ -13,6 +13,15 @@ from .model_profiles import ModelProfileViewSet, model_catalog
 from .monitor_views import model_monitor, tool_monitor, model_monitor_detail, tool_monitor_detail
 from .page_chat import page_chat
 from .page_agent import page_chat_approval
+from .ticket_investigation_views import (
+    investigation_side_question_cancel,
+    investigation_side_questions,
+    investigation_message,
+    investigation_run_control,
+    investigation_session_detail,
+    investigation_sessions,
+    investigation_worker_create,
+)
 from .mcp_protocol_views import mcp_rpc, mcp_tools_manifest
 from .mcp_tool_config import external_mcp_tools
 from .mcp_views import (
@@ -57,6 +66,13 @@ urlpatterns = [
     re_path(r'^chat/?$', ai_chat, name='chat'),
     re_path(r'^page-chat/?$', page_chat, name='page_chat'),
     re_path(r'^page-chat/approvals/(?P<execution_id>[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})/?$', page_chat_approval, name='page_chat_approval'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/?$', investigation_sessions, name='ticket_investigations'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/?$', investigation_session_detail, name='ticket_investigation_detail'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/workers/?$', investigation_worker_create, name='ticket_investigation_worker'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/runs/(?P<run_id>[0-9a-fA-F-]{36})/control/?$', investigation_run_control, name='ticket_investigation_run_control'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/runs/(?P<run_id>[0-9a-fA-F-]{36})/side-questions/?$', investigation_side_questions, name='ticket_investigation_side_questions'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/runs/(?P<run_id>[0-9a-fA-F-]{36})/side-questions/(?P<message_id>[0-9a-fA-F-]{36})/cancel/?$', investigation_side_question_cancel, name='ticket_investigation_side_question_cancel'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/message/?$', investigation_message, name='ticket_investigation_message'),
     re_path(r'^mcp-monitor/?$', mcp_monitor, name='mcp_monitor'),
     re_path(r'^tool-monitor/?$', tool_monitor, name='tool_monitor'),
     re_path(r'^model-monitor/?$', model_monitor, name='model_monitor'),

@@ -228,6 +228,115 @@ class TicketAIChatMessage(models.Model):
         return f"{self.ticket_id} {self.role} @ {self.created_at}"
 
 
+class TicketInvestigationSession(models.Model):
+    """A persistent, owner-scoped investigation lane for one ticket."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ticket = models.ForeignKey(EventTicket, on_delete=models.CASCADE, to_field="ticket_number", db_column="ticket_number")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    sequence = models.PositiveIntegerField()
+    title = models.CharField(max_length=120, default="New investigation")
+    model_profile_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_sessions"
+        ordering = ["-updated_at", "-id"]
+        constraints = [models.UniqueConstraint(fields=["ticket", "owner", "sequence"], name="ai_ticket_inv_session_seq")]
+        indexes = [models.Index(fields=["ticket", "owner", "-updated_at"], name="ai_ticket_inv_owner_idx")]
+
+
+class TicketInvestigationRun(models.Model):
+    """One Main Agent, Planner, Worker, or Side Question lane in a session."""
+
+    ROLE_CHOICES = [
+        ("main", "Main Agent"), ("planner", "Planner"), ("worker", "Worker"), ("side_question", "Side Question"),
+    ]
+    STATUS_CHOICES = [
+        ("open", "Open"), ("running", "Running"), ("paused", "Paused"), ("completed", "Completed"),
+        ("failed", "Failed"), ("cancelled", "Cancelled"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(TicketInvestigationSession, on_delete=models.CASCADE, related_name="runs")
+    parent = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="children")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    role = models.CharField(max_length=16, choices=ROLE_CHOICES)
+    title = models.CharField(max_length=180)
+    objective = models.TextField(blank=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="open")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_runs"
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["session", "role", "created_at"], name="ai_ticket_inv_run_idx")]
+
+
+class TicketInvestigationMessage(models.Model):
+    """Public record of a role turn and its already-authorized tool trace."""
+
+    ROLE_CHOICES = [("user", "User"), ("assistant", "Assistant"), ("system", "System")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(TicketInvestigationSession, on_delete=models.CASCADE, related_name="messages")
+    run = models.ForeignKey(TicketInvestigationRun, on_delete=models.CASCADE, related_name="messages")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    role = models.CharField(max_length=12, choices=ROLE_CHOICES)
+    content = models.TextField()
+    trace = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_messages"
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["run", "created_at"], name="ai_ticket_inv_msg_idx")]
+
+
+class TicketInvestigationSideConversation(models.Model):
+    """An independent, read-only side discussion for one selected investigation role."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(TicketInvestigationSession, on_delete=models.CASCADE, related_name="side_conversations")
+    parent_run = models.ForeignKey(TicketInvestigationRun, on_delete=models.CASCADE, related_name="side_conversations")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    model_profile_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_side_conversations"
+        constraints = [models.UniqueConstraint(fields=["session", "parent_run", "owner"], name="ai_ticket_inv_side_unique")]
+        indexes = [models.Index(fields=["session", "parent_run", "owner"], name="ai_ticket_inv_side_idx")]
+
+
+class TicketInvestigationSideMessage(models.Model):
+    """A durable question or answer in a side conversation, with its frozen source context."""
+
+    ROLE_CHOICES = [("user", "User"), ("assistant", "Assistant"), ("system", "System")]
+    STATUS_CHOICES = [
+        ("queued", "Queued"), ("running", "Running"), ("completed", "Completed"),
+        ("failed", "Failed"), ("cancelled", "Cancelled"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(TicketInvestigationSideConversation, on_delete=models.CASCADE, related_name="messages")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    role = models.CharField(max_length=12, choices=ROLE_CHOICES)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="completed")
+    content = models.TextField()
+    context_snapshot = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_side_messages"
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["conversation", "created_at"], name="ai_ticket_inv_side_msg_idx")]
+
+
 class PageChatConversation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
