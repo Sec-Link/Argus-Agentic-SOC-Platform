@@ -383,10 +383,9 @@ def open_chat_model(overrides=None, *, use_responses_api=False):
             stream_usage=urlsplit(config["base_url"]).hostname in {"api.openai.com", *_MINIMAX_HOSTS},
             callbacks=callbacks,
             max_tokens=1200 if use_responses_api else None,
-            temperature=0.2,
-            # Keep the existing wire parameter even for gateway model aliases
-            # for which the integration otherwise strips temperature by name.
-            extra_body={"temperature": 0.2},
+            # Do not force sampling parameters. Some Responses-compatible
+            # models reject `temperature` entirely; omitting it lets each
+            # configured provider apply its supported default.
             http_client=client,
         )
         if use_responses_api and callbacks:
@@ -397,6 +396,21 @@ def open_chat_model(overrides=None, *, use_responses_api=False):
 
 def message_text(message: AIMessage) -> str:
     return str(message.text)
+
+
+def invoke_streaming_chat(model, messages):
+    """Force a streaming wire request, then assemble its final model message.
+
+    Some compatible gateways reject non-streaming requests.  `_ModelHTTPClient`
+    also converts a complete JSON reply to SSE when such a gateway accepts the
+    request but does not stream its response.
+    """
+    result = None
+    for chunk in model.stream(messages):
+        result = chunk if result is None else result + chunk
+    if result is None:
+        raise ModelCallError("Model returned an empty stream", code="model_response_invalid")
+    return result
 
 
 def chat_response(message: AIMessage) -> dict:
@@ -418,7 +432,7 @@ def chat_response(message: AIMessage) -> dict:
 
 def call_responses(prompt: str, overrides=None) -> dict:
     with open_chat_model(overrides, use_responses_api=True) as model:
-        message = model.invoke([{"role": "user", "content": prompt}])
+        message = invoke_streaming_chat(model, [{"role": "user", "content": prompt}])
     return {"output_text": message_text(message)}
 
 

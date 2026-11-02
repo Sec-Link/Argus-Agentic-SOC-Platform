@@ -10,7 +10,7 @@ from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from ai_assistant.model_client import ModelCallError, call_responses, message_text, open_chat_model
+from ai_assistant.model_client import ModelCallError, call_responses, invoke_streaming_chat, message_text, open_chat_model
 
 from ai_assistant.mcp_gateway import (
     fetch_cmdb_assets,
@@ -490,7 +490,7 @@ def _call_openai(
             # Saved profiles advertise Chat Completions compatibility. Preserve
             # the legacy Responses path only for older explicit configurations.
             with open_chat_model(overrides) as model:
-                return {"output_text": message_text(model.invoke([HumanMessage(content=prompt)]))}
+                return {"output_text": message_text(invoke_streaming_chat(model, [HumanMessage(content=prompt)]))}
         return call_responses(prompt, overrides)
     except ModelCallError as exc:
         raise AIAssistantError(str(exc)) from exc
@@ -547,7 +547,7 @@ def test_openai_connectivity(overrides: Dict[str, Any] | None = None) -> Dict[st
         # Test the same Chat Completions adapter used by conversation messages,
         # including the official MiniMax compatibility adapter, without tools.
         with open_chat_model(overrides) as model:
-            text = message_text(model.invoke([HumanMessage(content=probe_prompt)]))
+            text = message_text(invoke_streaming_chat(model, [HumanMessage(content=probe_prompt)]))
     except ModelCallError as exc:
         raise AIAssistantError(str(exc)) from exc
     return {

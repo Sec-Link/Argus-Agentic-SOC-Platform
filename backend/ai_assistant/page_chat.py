@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from accounts.services import is_user_readonly
 
-from ai_assistant.model_client import chat_config, message_text, normalize_base_url, open_chat_model
+from ai_assistant.model_client import chat_config, invoke_streaming_chat, message_text, normalize_base_url, open_chat_model
 from ai_assistant.usage_recording import model_usage_context
 
 
@@ -160,7 +160,7 @@ def page_chat(request):
     overrides["_usage_context"] = model_usage_context(request.user, source="page_chat", overrides=overrides, agent_name="assistant")
     try:
         with open_chat_model(overrides=overrides) as model:
-            response = message_text(model.invoke(messages)).strip()
+            response = message_text(invoke_streaming_chat(model, messages)).strip()
         if not response:
             raise ValueError("Empty model response")
     except Exception:
