@@ -59,7 +59,7 @@ The platform consolidates core SOC objects into one product with open-source sol
 ## 2. Core Capabilities
 
 ### Security Operations
-- Unified alert ingestion and paginated lists
+- Unified alert ingestion and aggregation
 - Ticket lifecycle and activity history
 - Dashboard-based operational views
 <img width="1898" height="906" alt="Tickets" src="https://github.com/user-attachments/assets/459b590c-48b4-4217-b6f7-bbe865677378" />
@@ -178,13 +178,34 @@ https://github.com/Sec-Link/Argus-Agentic-SOC-Platform/blob/main/docs/api-overvi
 
 ## 8. Deployment
 
-Deployments register automatically from Prefect events. Select the execution deployment on each workflow; existing installations must follow the [deployment binding rollout](docs/workflow-deployments.zh-CN.md) before upgrading.
-
-For local VS Code debugging with two deployment/worker groups, see the [Windows Prefect debugging guide](docs/development-windows-uv.zh-CN.md).
-
 ### Docker Compose
 - `docker-compose.dev.yml`: local development
 - `docker-compose.prod.yml`: production container setup
+
+#### Accessing Docker Hub from Mainland China
+
+For users in mainland China, if Docker Hub is slow or unreachable, specify an
+accessible, trusted registry or Docker Hub mirror using `IMAGE_REGISTRY`, without
+editing the Dockerfiles:
+
+```bash
+# Use Docker Hub by default.
+make build-dev
+
+# Specify a registry prefix; replace the example with an accessible registry.
+make build-dev IMAGE_REGISTRY=registry.example.com/dockerhub/library
+make build-prod IMAGE_REGISTRY=registry.example.com/dockerhub/library
+
+# Backend-only and frontend-only updates are also supported.
+make build-backend-prod IMAGE_REGISTRY=registry.example.com/dockerhub/library
+make build-frontend-prod IMAGE_REGISTRY=registry.example.com/dockerhub/library
+```
+
+- The default is `docker.io/library`. Include the actual repository namespace, without `https://` or a trailing `/`; the example address is only a placeholder.
+- The registry must provide `python:3.13-slim`, `node:24-alpine3.24`, `alpine:3.24`, and `postgres:16` under that prefix.
+- Authenticate private registries with `docker login`; do not put passwords or tokens in `IMAGE_REGISTRY`.
+- Use `export IMAGE_REGISTRY=your-registry-prefix` to keep the selection in the current shell, and `unset IMAGE_REGISTRY` to restore the default. Make does not read this variable from the project's `.env` file.
+- This variable only changes image repository paths. It does not configure Docker daemon mirrors or change pip, npm, apt, or apk package sources.
 
 ### Kubernetes
 The `k8s/` directory contains basic deployment manifests:
