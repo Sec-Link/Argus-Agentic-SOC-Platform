@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { Avatar, Button, Tag } from 'antd';
-import { MoonOutlined, SunOutlined } from '@ant-design/icons';
+import { CompassOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons';
+import { usePageGuide } from './pageGuide';
 
 export default function Header({
   username,
@@ -23,6 +24,7 @@ export default function Header({
   onClearImpersonation: () => void;
   onLogout: () => void;
 }) {
+  const startGuide = usePageGuide();
   return (
     <div
       style={{
@@ -39,6 +41,21 @@ export default function Header({
     >
       <div />
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {startGuide ? (
+          <Button
+            type="default"
+            icon={<CompassOutlined />}
+            onClick={startGuide}
+            style={{
+              background: 'var(--toggle-bg)',
+              borderColor: 'var(--toggle-border)',
+              color: 'var(--text-primary)',
+            }}
+            aria-label="Start page guide"
+          >
+            Guide
+          </Button>
+        ) : null}
         <Button
           type="default"
           icon={isDarkTheme ? <SunOutlined /> : <MoonOutlined />}

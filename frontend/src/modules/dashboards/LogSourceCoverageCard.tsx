@@ -7,6 +7,9 @@ import type { LogSourceBrief, LogSourceCoverage } from 'types';
 import LogSourceConfigDrawer from './LogSourceConfigDrawer';
 import LogSourceLegend from './LogSourceLegend';
 import ScanAge from './ScanAge';
+import ClickValue from './ClickValue';
+import MetricDetailModal, { type MetricKind } from './MetricDetailModal';
+import HelpTip from './HelpTip';
 import { STATUS_META, sourceStatus } from './logSourceStatus';
 
 const coverageColor = (percent: number) => (percent >= 60 ? '#52c41a' : percent >= 30 ? '#faad14' : '#f5222d');
@@ -22,6 +25,8 @@ type DropTarget = number | typeof POOL | null;
 const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
   const [data, setData] = useState<LogSourceCoverage | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ignoredOpen, setIgnoredOpen] = useState(false);
+  const [detailKind, setDetailKind] = useState<MetricKind | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -166,9 +171,10 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
   return (
     <Card
       className="dashboard-coverage-card"
+      data-tour="ls-card"
       title="Detection Log Source Coverage"
       extra={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div data-tour="ls-actions" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {data && <ScanAge scannedAt={data.scanned_at} ageSeconds={data.scan_age_seconds} />}
           {isStaff && (
             <>
@@ -213,48 +219,48 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
           {nothingConfigured && (
             <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="No log source categories are available" />
           )}
-          <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap', marginBottom: 16 }}>
+          <div className="cov-stats">
             <Statistic
-              title="Log source coverage"
+              title={<HelpTip id="logCoverage" label="Log source coverage" tip="Share of configured log source categories that received logs in the last scan window (receiving / configured). Only categories with at least one assigned source count." />}
               value={percent == null ? '—' : `${percent}%`}
-              valueStyle={{ color: percent == null ? undefined : coverageColor(percent), fontSize: 36, fontWeight: 700 }}
+              formatter={() => <ClickValue onClick={() => setDetailKind('categories')}>{percent == null ? '—' : `${percent}%`}</ClickValue>}
+              valueStyle={{ color: percent == null ? undefined : coverageColor(percent), fontSize: 26, fontWeight: 600 }}
             />
             <Statistic
-              title={`Receiving logs (last ${data.window_days}d)`}
+              title={<HelpTip id="receiving" label={`Receiving logs (last ${data.window_days}d)`} tip="Categories with at least one log in the window, out of all configured categories." />}
               value={`${data.active_categories} / ${data.configured_categories}`}
-              valueStyle={{ fontSize: 28 }}
+              formatter={() => <ClickValue onClick={() => setDetailKind('categories')}>{`${data.active_categories} / ${data.configured_categories}`}</ClickValue>}
+              valueStyle={{ fontSize: 26, fontWeight: 600 }}
             />
             {rules && (
               <>
                 <Statistic
-                  title="Enabled rules / total"
+                  title={<HelpTip id="enabledRules" label="Enabled rules / total" tip="Detection rules that are currently enabled, out of all rules in the library. Disabled rules do not detect anything or count toward ATT&CK coverage." />}
                   value={`${rules.enabled_rules} / ${rules.total_rules}`}
-                  suffix={rules.enabled_percent == null ? undefined : <span style={{ fontSize: 14 }}>({rules.enabled_percent}%)</span>}
-                  valueStyle={{ fontSize: 28 }}
+                  formatter={() => <ClickValue onClick={() => setDetailKind('rules_enabled')}>{`${rules.enabled_rules} / ${rules.total_rules}`}</ClickValue>}
+                  suffix={rules.enabled_percent == null ? undefined : <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.65 }}>({rules.enabled_percent}%)</span>}
+                  valueStyle={{ fontSize: 26, fontWeight: 600 }}
                 />
-                <Tooltip title="Enabled rules whose log source category is receiving data.">
-                  <Statistic
-                    title="Enabled rules with live data"
+                <Statistic
+                    title={<HelpTip id="withData" label="Rules with live data" tip="Enabled rules whose log source category is receiving data, so they can actually fire." />}
                     value={rules.enabled_with_data}
-                    valueStyle={{ fontSize: 28, color: '#52c41a' }}
+                    formatter={() => <ClickValue onClick={() => setDetailKind('rules_with_data')}>{rules.enabled_with_data}</ClickValue>}
+                    valueStyle={{ fontSize: 26, fontWeight: 600, color: '#52c41a' }}
                   />
-                </Tooltip>
-                <Tooltip title="Enabled rules whose log source category received no data in the window — they cannot fire.">
-                  <Statistic
-                    title="Enabled rules without data"
+                <Statistic
+                    title={<HelpTip id="withoutData" label="Rules without data" tip="Enabled rules whose category received no data in the window. They are blind spots until logs arrive." />}
                     value={rules.enabled_without_data}
-                    valueStyle={{ fontSize: 28, color: rules.enabled_without_data > 0 ? '#f5222d' : undefined }}
+                    formatter={() => <ClickValue onClick={() => setDetailKind('rules_without_data')}>{rules.enabled_without_data}</ClickValue>}
+                    valueStyle={{ fontSize: 26, fontWeight: 600, color: rules.enabled_without_data > 0 ? '#f5222d' : undefined }}
                   />
-                </Tooltip>
-                <Tooltip title="Enabled rules whose log source could not be determined (no index pattern or recognizable log source).">
-                  <Statistic title="Enabled rules, source unknown" value={rules.enabled_unmapped} valueStyle={{ fontSize: 28 }} />
-                </Tooltip>
+                <Statistic title={<HelpTip id="unknown" label="Rules, source unknown" tip="Enabled rules we cannot tie to a log source category (no index pattern or recognizable name). Add an index pattern to the rule to attribute it." />} value={rules.enabled_unmapped} formatter={() => <ClickValue onClick={() => setDetailKind('rules_unknown')}>{rules.enabled_unmapped}</ClickValue>} valueStyle={{ fontSize: 26, fontWeight: 600 }} />
               </>
             )}
           </div>
 
           {(data.unclassified.length > 0 || isStaff) && (
             <div
+              data-tour="ls-pool"
               {...dropProps(POOL)}
               style={{
                 border: `1px dashed ${dropTarget === POOL ? HIGHLIGHT_EDGE : 'rgba(140,140,140,0.5)'}`,
@@ -265,7 +271,10 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Typography.Text strong>Unclassified sources ({data.unclassified.length})</Typography.Text>
+                <Typography.Text strong>
+                  <HelpTip id="unclassified" label={`Unclassified sources (${data.unclassified.length})`} tip="Log sources found in Elasticsearch that no category rule matched. Drag one onto a category to assign it, or click × to ignore it (e.g. metrics or noise)." />
+                </Typography.Text>
+
                 <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
                   {isStaff ? 'Drag a source onto a category below, or click × to ignore it.' : 'Ask an administrator to classify these.'}
                 </Typography.Text>
@@ -293,7 +302,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
           {data.categories.length === 0 ? (
             <Empty description="No log source categories defined" />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+            <div data-tour="ls-cats" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
               {data.categories.map((c) => {
                 const shown = expanded[c.id] ? c.sources : c.sources.slice(0, VISIBLE_SOURCES);
                 const over = dropTarget === c.id;
@@ -361,20 +370,28 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
 
           {isStaff && data.ignored.length > 0 && (
             <div style={{ marginTop: 16 }}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Ignored ({data.ignored.length}) — click to restore:
-              </Typography.Text>
-              <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {data.ignored.map((s) => (
-                  <Tag key={s.source_key} icon={<UndoOutlined />} className="ls-chip ls-chip--silent ls-chip--ignored" style={{ cursor: 'pointer' }} onClick={() => restore(s.source_key)}>
-                    {s.source_key}
-                  </Tag>
-                ))}
-              </div>
+              <Button type="link" size="small" style={{ padding: 0, fontSize: 12 }} onClick={() => setIgnoredOpen((v) => !v)}>
+                {ignoredOpen ? 'Hide' : 'Show'} ignored sources ({data.ignored.length})
+              </Button>
+              {ignoredOpen && (
+                <>
+                  <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                    click to restore
+                  </Typography.Text>
+                  <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {data.ignored.map((s) => (
+                      <Tag key={s.source_key} icon={<UndoOutlined />} className="ls-chip ls-chip--silent ls-chip--ignored" style={{ cursor: 'pointer' }} onClick={() => restore(s.source_key)}>
+                        {s.source_key}
+                      </Tag>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </>
       )}
+      {data && <MetricDetailModal kind={detailKind} data={data} onClose={() => setDetailKind(null)} />}
       <LogSourceConfigDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} onChanged={() => load(true)} />
     </Card>
   );

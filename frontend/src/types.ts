@@ -132,6 +132,15 @@ export interface LogSourceBrief {
   total_rules: number;
 }
 
+export interface LogSourceRuleItem {
+  id: string;
+  name: string;
+  enabled: boolean;
+  state: 'with_data' | 'without_data' | 'unknown' | 'disabled';
+  categories: string[];
+  sources: string[];
+}
+
 export interface LogSourceRuleCoverage {
   total_rules: number;
   enabled_rules: number;
@@ -139,6 +148,7 @@ export interface LogSourceRuleCoverage {
   enabled_with_data: number;
   enabled_without_data: number;
   enabled_unmapped: number;
+  items?: LogSourceRuleItem[];
 }
 
 export interface LogSourceCoverage {

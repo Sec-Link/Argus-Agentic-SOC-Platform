@@ -337,6 +337,9 @@ def build_local_rule_payload(
         payload["elastic_index_patterns"] = elastic_index_patterns
     if kibana_metadata is not None:
         payload["kibana_metadata"] = kibana_metadata
+        # Published rules mirror Kibana's enabled state so dashboards and the rule list agree.
+        if isinstance(kibana_metadata, dict) and kibana_metadata.get("published") and "enabled" in kibana_metadata:
+            payload["enabled"] = bool(kibana_metadata["enabled"])
     if schedule_interval is not None:
         payload["schedule_interval"] = str(schedule_interval)
     if schedule_from is not None:
@@ -406,6 +409,7 @@ def save_local_rule(
         previous_payload = dict(rule.payload or {})
         rule.version += 1
         rule.payload = payload
+        rule.enabled = bool(payload.get("enabled", rule.enabled))
         rule.is_deleted = False
         rule.updated_by = actor
         rule.save()

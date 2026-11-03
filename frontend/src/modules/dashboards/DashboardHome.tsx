@@ -12,6 +12,8 @@ import AlertFunnelChart from './AlertFunnelChart';
 import AlertSankeyChart from './AlertSankeyChart';
 import CoverageTab from './CoverageTab';
 import CoverageOverviewSection from './CoverageOverviewSection';
+import CoverageTour from './CoverageTour';
+import { useRegisterPageGuide } from 'components/layout/pageGuide';
 import { usePanelOrder } from './usePanelOrder';
 
 type TimeRangePreset = '1h' | '24h' | '7d' | 'all' | 'custom';
@@ -55,15 +57,22 @@ const writeStoredDefaultTimeWindow = (value: TimeWindow) => {
 };
 
 const Dashboard: React.FC = () => {
-  // Tab lives in the URL (?tab=coverage) so browser Back/Forward move between tabs.
+  // Tab lives in the URL (?tab=coverage) so browser Back/Forward move between tabs. Local state makes the switch
+  // instant; the URL is the source of truth when it changes (Back/Forward, deep links).
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const activeTab: 'overview' | 'coverage' = searchParams?.get('tab') === 'coverage' ? 'coverage' : 'overview';
+  const urlTab: 'overview' | 'coverage' = searchParams?.get('tab') === 'coverage' ? 'coverage' : 'overview';
+  const [activeTab, setActiveTabState] = useState<'overview' | 'coverage'>(urlTab);
+  useEffect(() => setActiveTabState(urlTab), [urlTab]);
   const setActiveTab = (key: 'overview' | 'coverage') => {
+    setActiveTabState(key);
     const base = pathname || '/dashboard';
-    router.push(key === 'coverage' ? `${base}?tab=coverage` : base);
+    router.push(key === 'coverage' ? `${base}?tab=coverage` : base, { scroll: false });
   };
+  // Interactive guide: only starts when the user clicks the header "Guide" button.
+  const [tourOpen, setTourOpen] = useState(false);
+  useRegisterPageGuide(() => setTourOpen(true)); // shows the header "Guide" button while this page is open
   const {
     order: panelOrder,
     editing: layoutEditing,
@@ -1110,25 +1119,27 @@ const Dashboard: React.FC = () => {
 
   return (
   <div className="dashboard-home-shell">
+      <CoverageTour mode={activeTab} open={tourOpen} onClose={() => setTourOpen(false)} />
       <Tabs
         activeKey={activeTab}
         tabBarExtraContent={
-          activeTab === 'overview' ? (
-            <Space size={8} align="center">
-              {layoutEditing && !layoutIsDefault ? (
-                <Button size="small" onClick={resetLayout}>Reset layout</Button>
-              ) : null}
+          <Space size={8} align="center">
+            {activeTab === 'overview' && layoutEditing && !layoutIsDefault ? (
+              <Button size="small" onClick={resetLayout}>Reset layout</Button>
+            ) : null}
+            {activeTab === 'overview' ? (
               <Button
                 size="small"
+                data-tour="ov-layout"
                 type={layoutEditing ? 'primary' : 'default'}
                 icon={<DragOutlined />}
                 onClick={() => setLayoutEditing(!layoutEditing)}
               >
                 {layoutEditing ? 'Done' : 'Customize layout'}
               </Button>
-              {timePicker}
-            </Space>
-          ) : null
+            ) : null}
+            {activeTab === 'overview' ? timePicker : null}
+          </Space>
         }
         onChange={(key) => setActiveTab(key as 'overview' | 'coverage')}
         items={[

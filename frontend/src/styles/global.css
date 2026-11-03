@@ -2263,3 +2263,22 @@ html, body {
   outline: 2px solid var(--menu-selected-edge, #1677ff);
   background: var(--menu-selected-bg, rgba(22, 119, 255, 0.08));
 }
+
+/* Coverage KPI row: one even row on wide screens, wraps on narrow ones. */
+.cov-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between; /* items keep their natural width; spare space is spread between them */
+  gap: 16px 20px;
+  margin-bottom: 16px;
+}
+.cov-stats .ant-statistic-title {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 6px;
+  white-space: nowrap; /* titles stay one line so values line up; the grid wraps whole items instead */
+}
+.cov-stats .ant-statistic-content {
+  line-height: 1.2;
+  white-space: nowrap;
+}

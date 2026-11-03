@@ -1886,6 +1886,18 @@ export async function getPublishedDetectionRule(id: string): Promise<PublishedDe
   return r.data;
 }
 
+export interface KibanaSyncResult {
+  checked: number;
+  enabled_changed: number;
+  marked_unpublished: number;
+  unchanged: number;
+}
+
+export async function syncRulesFromKibana(): Promise<KibanaSyncResult> {
+  const r = await client.post('/detections/publish/rules/sync/');
+  return r.data;
+}
+
 export async function createPublishedDetectionRule(payload: Record<string, any>): Promise<PublishedDetectionRule> {
   const r = await client.post('/detections/publish/rules/', payload);
   return r.data;

@@ -64,6 +64,7 @@ type Props = {
   onSetDetailTab: (value: "sigma" | "esql" | "version") => void;
   onRollbackVersion: (version: number) => Promise<void>;
   onSaveTags: (tags: string[]) => Promise<void>;
+  tagsUnpublished?: boolean;
   onSaveElasticActions: () => Promise<void>;
   onSaveSchedule: () => Promise<void>;
   onSyncKibanaEnabled: (enabled: boolean) => Promise<void>;
@@ -89,7 +90,7 @@ const TACTIC_TAGS = [
   "exfiltration", "impact",
 ].map((t) => ({ value: `attack.${t}`, label: `attack.${t}` }));
 
-function TagsCard({ tags, onSave }: { tags: string[]; onSave: (tags: string[]) => Promise<void> }) {
+function TagsCard({ tags, onSave, unpublished }: { tags: string[]; onSave: (tags: string[]) => Promise<void>; unpublished?: boolean }) {
   const [draft, setDraft] = React.useState<string[]>(tags);
   const [saving, setSaving] = React.useState(false);
   const key = tags.join("\u0000");
@@ -134,6 +135,11 @@ function TagsCard({ tags, onSave }: { tags: string[]; onSave: (tags: string[]) =
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         ATT&amp;CK coverage reads attack.&lt;tactic&gt; and attack.t&lt;id&gt; tags; put a technique tag right after its tactic tag.
       </Typography.Text>
+      {unpublished && (
+        <Typography.Text type="warning" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+          Tag changes are saved locally (ATT&amp;CK coverage already uses them) but not yet published to Kibana. Click Publish to Kibana to sync.
+        </Typography.Text>
+      )}
     </Card>
   );
 }
@@ -204,7 +210,7 @@ export default function DetectionRuleDetail(props: Props) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
         <Card size="small" title="Log Source">{logSourceParts.length ? logSourceParts.join(" / ") : "unknown"}</Card>
         <Card size="small" title="Mapping Profile">{meta.profile || (compiled.profiles || [])[0] || "-"}</Card>
-        <TagsCard tags={Array.isArray(meta.tags) ? meta.tags.map((t: unknown) => String(t)) : []} onSave={props.onSaveTags} />
+        <TagsCard tags={Array.isArray(meta.tags) ? meta.tags.map((t: unknown) => String(t)) : []} onSave={props.onSaveTags} unpublished={props.tagsUnpublished} />
       </div>
 
       <Card

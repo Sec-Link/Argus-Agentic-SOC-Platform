@@ -5,6 +5,9 @@ import { fetchDashboardAttackCoverage, fetchDashboardLogSourceCoverage } from 's
 import type { AttackCoverage, LogSourceCoverage } from 'types';
 import { useRouter } from 'next/navigation';
 import ScanAge from './ScanAge';
+import ClickValue from './ClickValue';
+import MetricDetailModal, { type MetricKind } from './MetricDetailModal';
+import HelpTip from './HelpTip';
 import { detectionLinkForTactic, detectionLinkForTechnique, openDetectionsWithSearch } from './detectionLinks';
 import { coverageColor, Matrix } from './AttackCoverageCard';
 
@@ -18,6 +21,7 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const router = useRouter();
+  const [detailKind, setDetailKind] = useState<MetricKind | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -67,7 +71,7 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
         image={Empty.PRESENTED_IMAGE_SIMPLE}
         description="Coverage is not set up yet. Classify your log sources to see detection coverage here."
       >
-        <Button type="primary" icon={<SettingOutlined />} onClick={onConfigure}>
+        <Button type="primary" data-tour="ov-setup" icon={<SettingOutlined />} onClick={onConfigure}>
           Set up coverage
         </Button>
       </Empty>
@@ -78,34 +82,40 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
     body = (
       <Row gutter={[32, 16]}>
         <Col span={24}>
-          <Typography.Text strong>Log source coverage</Typography.Text>
-          <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', margin: '8px 0 12px' }}>
+          <Typography.Text strong>
+            <HelpTip id="logCoverage" label="Log source coverage" tip="Are the systems we should monitor sending logs, and do they have enabled rules?" />
+          </Typography.Text>
+          <div className="cov-stats">
             <Statistic
-              title="Coverage"
+              title={<HelpTip id="logCoverage" label="Coverage" tip="Share of configured log source categories that received logs in the last scan window." />}
               value={pct == null ? '—' : `${pct}%`}
-              valueStyle={{ color: pct == null ? undefined : coverageColor(pct), fontSize: 28, fontWeight: 700 }}
+              formatter={() => <ClickValue onClick={() => setDetailKind('categories')}>{pct == null ? '—' : `${pct}%`}</ClickValue>}
+              valueStyle={{ color: pct == null ? undefined : coverageColor(pct), fontSize: 26, fontWeight: 600 }}
             />
             <Statistic
-              title="Receiving logs"
+              title={<HelpTip id="receiving" label="Receiving logs" tip="Categories receiving logs / configured categories." />}
               value={`${logs.active_categories} / ${logs.configured_categories}`}
-              valueStyle={{ fontSize: 22 }}
+              formatter={() => <ClickValue onClick={() => setDetailKind('categories')}>{`${logs.active_categories} / ${logs.configured_categories}`}</ClickValue>}
+              valueStyle={{ fontSize: 26, fontWeight: 600 }}
             />
             {rules && (
               <Statistic
-                title="Enabled rules"
+                title={<HelpTip id="enabledRules" label="Enabled rules" tip="Enabled detection rules / all rules in the library." />}
                 value={`${rules.enabled_rules} / ${rules.total_rules}`}
-                valueStyle={{ fontSize: 22 }}
+                formatter={() => <ClickValue onClick={() => setDetailKind('rules_enabled')}>{`${rules.enabled_rules} / ${rules.total_rules}`}</ClickValue>}
+                valueStyle={{ fontSize: 26, fontWeight: 600 }}
               />
             )}
-            <div style={{ cursor: 'pointer' }} title="Open Coverage settings" onClick={onConfigure}>
+            <div>
               <Statistic
-                title="Unmonitored sources"
+                title={<HelpTip id="unmonitored" label="Unmonitored sources" tip="Log sources that are sending data but have no enabled detection rule attributed to them. Click to review in Coverage settings." />}
                 value={unmonitored}
-                valueStyle={{ fontSize: 22, color: unmonitored > 0 ? coverageColor(30) : undefined }}
+                formatter={() => <ClickValue onClick={() => setDetailKind('unmonitored')}>{unmonitored}</ClickValue>}
+                valueStyle={{ fontSize: 26, fontWeight: 600, color: unmonitored > 0 ? coverageColor(30) : undefined }}
               />
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+          <div data-tour="ov-tiles" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
             {logs.categories
               .filter((c) => c.configured)
               .map((c) => (
@@ -149,8 +159,10 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
             <ScanAge scannedAt={logs.scanned_at} ageSeconds={logs.scan_age_seconds} />
           </div>
         </Col>
-        <Col span={24}>
-          <Typography.Text strong>MITRE ATT&CK coverage heatmap</Typography.Text>
+        <Col span={24} data-tour="ov-heatmap">
+          <Typography.Text strong>
+            <HelpTip id="matrix" label="MITRE ATT&CK coverage heatmap" tip="Techniques covered by enabled rules, grouped by tactic. Click a tactic or technique to open the matching rules." />
+          </Typography.Text>
           {!attack ? (
             <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
               Unable to load ATT&CK coverage.
@@ -164,20 +176,20 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', margin: '8px 0 12px' }}>
+              <div className="cov-stats">
                 <Statistic
-                  title="Coverage"
+                  title={<HelpTip id="attackCoverage" label="Coverage" tip="Share of ATT&CK techniques covered by at least one enabled rule." />}
                   value={attack.coverage_percent == null ? '—' : `${attack.coverage_percent}%`}
                   valueStyle={{
                     color: attack.coverage_percent == null ? undefined : coverageColor(attack.coverage_percent),
-                    fontSize: 28,
-                    fontWeight: 700,
+                    fontSize: 26,
+                    fontWeight: 600,
                   }}
                 />
                 <Statistic
-                  title="Techniques covered"
+                  title={<HelpTip id="techniques" label="Techniques covered" tip="Techniques with at least one enabled rule, out of all techniques in the synced ATT&CK catalog." />}
                   value={`${attack.covered_techniques} / ${attack.total_techniques ?? '?'}`}
-                  valueStyle={{ fontSize: 22 }}
+                  valueStyle={{ fontSize: 26, fontWeight: 600 }}
                 />
               </div>
               <Matrix
@@ -195,11 +207,13 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
   return (
     <Card
       className="dashboard-coverage-card"
+      data-tour="ov-card"
       title="Detection coverage"
       extra={!loading && configured ? settingsButton : null}
       style={{ marginTop: 16 }}
     >
       {body}
+      {logs && <MetricDetailModal kind={detailKind} data={logs} onClose={() => setDetailKind(null)} />}
     </Card>
   );
 };

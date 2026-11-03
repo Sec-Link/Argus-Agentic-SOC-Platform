@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 BROAD_PATTERN_CATEGORIES = 2
 # A pattern hitting more sources than this (e.g. "logs-*") is too generic to credit any single source.
 BROAD_PATTERN_SOURCES = 8
+# Cap on rule rows returned for the drill-down view.
+RULE_ITEMS_LIMIT = 1000
 
 
 def _as_patterns(value):
@@ -83,11 +85,12 @@ def compute_rule_coverage(category_results, sources):
     per_cat = {cid: {"enabled_rules": 0, "total_rules": 0} for cid in names_by_id}
 
     rows = LocalDetectionRule.objects.filter(is_deleted=False).values(
-        "enabled", "payload__elastic_index_patterns", "payload__kibana_metadata", "payload__list_meta"
+        "rule_uuid", "name", "enabled", "payload__elastic_index_patterns", "payload__kibana_metadata", "payload__list_meta"
     )
     source_keys = [s["source_key"] for s in sources]
     per_source = {}
     total = enabled = with_data = blind = unmapped = 0
+    items = []
     for row in rows:
         total += 1
         for key in _sources_for_rule(row, source_keys):
@@ -100,15 +103,27 @@ def compute_rule_coverage(category_results, sources):
             per_cat[cid]["total_rules"] += 1
             if row["enabled"]:
                 per_cat[cid]["enabled_rules"] += 1
-        if not row["enabled"]:
-            continue
-        enabled += 1
-        if not cats:
-            unmapped += 1
-        elif any(active_by_id.get(cid) for cid in cats):
-            with_data += 1
-        else:
-            blind += 1
+        state = "disabled"
+        if row["enabled"]:
+            enabled += 1
+            if not cats:
+                unmapped += 1
+                state = "unknown"
+            elif any(active_by_id.get(cid) for cid in cats):
+                with_data += 1
+                state = "with_data"
+            else:
+                blind += 1
+                state = "without_data"
+        if len(items) < RULE_ITEMS_LIMIT:
+            items.append({
+                "id": row["rule_uuid"],
+                "name": row["name"],
+                "enabled": bool(row["enabled"]),
+                "state": state,
+                "categories": sorted(names_by_id[cid] for cid in cats if cid in names_by_id),
+                "sources": sorted(_sources_for_rule(row, source_keys)),
+            })
 
     return {
         "total_rules": total,
@@ -119,4 +134,6 @@ def compute_rule_coverage(category_results, sources):
         "enabled_unmapped": unmapped,
         "categories": per_cat,
         "sources": per_source,
+        # Drill-down list for the dashboard (capped); state: with_data | without_data | unknown | disabled.
+        "items": items,
     }

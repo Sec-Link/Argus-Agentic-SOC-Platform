@@ -608,3 +608,67 @@ def rollback_published_rule(rule: LocalDetectionRule, target_version: int, actor
             change_summary=summarize_payload_changes(previous_payload, payload),
         )
     return 200, {"rolled_back_from": target_version, **serialize_published_rule(rule)}
+
+
+def sync_rules_from_kibana(actor: str) -> tuple[int, dict]:
+    """Align each published local rule's enabled flag and Kibana metadata with what Kibana reports.
+
+    Kibana is treated as the source of truth for `enabled` (only rules enabled there actually run).
+    Rules whose Kibana counterpart no longer exists are marked as not published; they are not deleted.
+    """
+    remote_rules: list[dict] = []
+    page = 1
+    while True:
+        status_code, data = kibana_proxy(
+            "GET", "/api/detection_engine/rules/_find", params={"page": page, "per_page": 200}
+        )
+        if status_code >= 400:
+            return status_code, data if isinstance(data, dict) else {"detail": "Kibana request failed"}
+        batch = data.get("data") if isinstance(data, dict) else None
+        if not batch:
+            break
+        remote_rules.extend(r for r in batch if isinstance(r, dict))
+        if len(remote_rules) >= int(data.get("total") or 0):
+            break
+        page += 1
+
+    by_rule_id = {str(r.get("rule_id") or ""): r for r in remote_rules}
+    by_id = {str(r.get("id") or ""): r for r in remote_rules}
+    now = timezone.now().isoformat()
+    result = {"checked": 0, "enabled_changed": 0, "marked_unpublished": 0, "unchanged": 0}
+
+    for rule in LocalDetectionRule.objects.filter(is_deleted=False).iterator():
+        payload = dict(rule.payload or {})
+        meta = dict(payload.get("kibana_metadata") or {}) if isinstance(payload.get("kibana_metadata"), dict) else {}
+        remote_id = str(payload.get("kibana_rule_id") or meta.get("remote_id") or "").strip()
+        if not (meta.get("published") or remote_id):
+            continue  # never published: nothing to compare against
+        result["checked"] += 1
+        remote = by_rule_id.get(str(rule.rule_uuid)) or by_id.get(remote_id)
+        if remote is None:
+            if meta.get("published"):
+                meta.update({"published": False, "enabled": False, "updated_at": now})
+                payload["kibana_metadata"] = meta
+                rule.payload = payload
+                rule.enabled = False
+                rule.updated_by = actor
+                rule.save(update_fields=["payload", "enabled", "updated_by", "updated_at"])
+                result["marked_unpublished"] += 1
+            else:
+                result["unchanged"] += 1
+            continue
+        remote_enabled = bool(remote.get("enabled"))
+        changed = rule.enabled != remote_enabled or bool(meta.get("enabled")) != remote_enabled
+        meta.update({"published": True, "enabled": remote_enabled, "remote_id": str(remote.get("id") or remote_id), "updated_at": now})
+        payload["kibana_metadata"] = meta
+        payload["enabled"] = remote_enabled
+        payload["kibana_rule_id"] = str(remote.get("id") or remote_id)
+        if changed:
+            rule.payload = payload
+            rule.enabled = remote_enabled
+            rule.updated_by = actor
+            rule.save(update_fields=["payload", "enabled", "updated_by", "updated_at"])
+            result["enabled_changed"] += 1
+        else:
+            result["unchanged"] += 1
+    return 200, result

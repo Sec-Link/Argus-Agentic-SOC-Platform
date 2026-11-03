@@ -1,3 +1,6 @@
+import HelpTip from './HelpTip';
+import ClickValue from './ClickValue';
+import AttackTechniquesModal from './AttackTechniquesModal';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Empty, Progress, Spin, Statistic, Tooltip, Typography } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
@@ -80,6 +83,7 @@ const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
   const [data, setData] = useState<AttackCoverage | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [techniquesOpen, setTechniquesOpen] = useState(false);
   const router = useRouter();
 
   const load = useCallback(() => {
@@ -102,7 +106,7 @@ const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
       title="MITRE ATT&CK Coverage"
       extra={
         isStaff ? (
-          <Button size="small" icon={<SyncOutlined />} onClick={() => setSyncOpen(true)}>
+          <Button size="small" data-tour="at-sync" icon={<SyncOutlined />} onClick={() => setSyncOpen(true)}>
             Sync ATT&CK catalog
           </Button>
         ) : null
@@ -145,27 +149,64 @@ const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
               description="Rules need Sigma attack.* tags (for example attack.t1059.001) or a Kibana threat mapping to count toward coverage."
             />
           )}
-          <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap', marginBottom: 20 }}>
+          <div className="cov-stats">
             <Statistic
-              title="Coverage"
+              title={<HelpTip id="attackCoverage" label="Coverage" tip="Share of ATT&CK techniques covered by at least one enabled rule. Sub-techniques count toward their parent technique." />}
               value={percent == null ? '—' : `${percent}%`}
-              valueStyle={{ color: percent == null ? undefined : coverageColor(percent), fontSize: 36, fontWeight: 700 }}
+              valueStyle={{ color: percent == null ? undefined : coverageColor(percent), fontSize: 26, fontWeight: 600 }}
             />
             <Statistic
-              title="Techniques covered"
+              title={<HelpTip id="techniques" label="Techniques covered" tip="Techniques with at least one enabled rule, out of all techniques in the synced ATT&CK catalog." />}
               value={`${data.covered_techniques} / ${data.total_techniques ?? '?'}`}
-              valueStyle={{ fontSize: 28 }}
+              formatter={(v) => <ClickValue onClick={() => setTechniquesOpen(true)}>{v}</ClickValue>}
+              valueStyle={{ fontSize: 26, fontWeight: 600 }}
             />
-            <Statistic title="Enabled rules" value={data.enabled_rules} valueStyle={{ fontSize: 28 }} />
+            <Statistic title={<HelpTip id="enabledRules" label="Enabled rules" tip="Enabled detection rules considered for coverage." />} value={data.enabled_rules} valueStyle={{ fontSize: 26, fontWeight: 600 }} formatter={(v) => <ClickValue onClick={() => openDetectionsWithSearch(router.push, '')}>{v}</ClickValue>} />
           </div>
 
-          <Typography.Text strong>Coverage by tactic</Typography.Text>
-          <div style={{ margin: '8px 0 20px' }}>
+          <Typography.Text strong>
+            <HelpTip id="matrix" label="Coverage by tactic" tip="Each column is an ATT&CK tactic; each cell is a technique. Darker/greener means more enabled rules. Click a cell to open the matching rules." />
+          </Typography.Text>
+          <div data-tour="at-tactics" style={{ margin: '8px 0 20px' }}>
             {data.tactics.map((t) => {
               const total = t.total_techniques;
               const pct = total ? (t.covered_techniques / total) * 100 : t.covered_techniques > 0 ? 100 : 0;
+              const covered = t.techniques.filter((x) => x.rule_count > 0);
               return (
-                <div key={t.tactic_id} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                <Tooltip
+                  key={t.tactic_id}
+                  placement="topLeft"
+                  title={
+                    <div style={{ maxWidth: 320 }}>
+                      <div style={{ fontWeight: 600 }}>{t.name}</div>
+                      <div>
+                        {t.covered_techniques} of {total ?? '?'} techniques covered by enabled rules
+                        {total ? ` (${Math.round(pct)}%)` : ''}
+                      </div>
+                      {covered.length > 0 ? (
+                        <div style={{ marginTop: 4 }}>
+                          Covered:
+                          {covered.slice(0, 6).map((x) => (
+                            <div key={x.technique_id}>
+                              {x.technique_id} {x.name} · {x.rule_count} rule{x.rule_count === 1 ? '' : 's'}
+                            </div>
+                          ))}
+                          {covered.length > 6 && <div>+{covered.length - 6} more</div>}
+                        </div>
+                      ) : (
+                        <div style={{ marginTop: 4 }}>No enabled rule maps to this tactic yet.</div>
+                      )}
+                      <div style={{ marginTop: 4, opacity: 0.75 }}>Click to open the matching rules</div>
+                    </div>
+                  }
+                >
+                <div
+                  role="button"
+                  tabIndex={0}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, cursor: 'pointer' }}
+                  onClick={() => openDetectionsWithSearch(router.push, detectionLinkForTactic(t.slug))}
+                  onKeyDown={(e) => e.key === 'Enter' && openDetectionsWithSearch(router.push, detectionLinkForTactic(t.slug))}
+                >
                   <Typography.Text style={{ width: 170, flexShrink: 0 }}>{t.name}</Typography.Text>
                   <Progress
                     percent={pct}
@@ -178,6 +219,7 @@ const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
                     {t.covered_techniques} / {total ?? '?'}
                   </Typography.Text>
                 </div>
+                </Tooltip>
               );
             })}
           </div>
@@ -192,6 +234,7 @@ const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
           </div>
         </>
       )}
+      {data && <AttackTechniquesModal open={techniquesOpen} data={data} onClose={() => setTechniquesOpen(false)} />}
       <AttackCatalogSyncModal open={syncOpen} onClose={() => setSyncOpen(false)} onDone={load} />
     </Card>
   );
