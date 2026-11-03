@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
 import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input, Tabs } from 'antd';
@@ -54,7 +55,15 @@ const writeStoredDefaultTimeWindow = (value: TimeWindow) => {
 };
 
 const Dashboard: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'coverage'>('overview');
+  // Tab lives in the URL (?tab=coverage) so browser Back/Forward move between tabs.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const activeTab: 'overview' | 'coverage' = searchParams?.get('tab') === 'coverage' ? 'coverage' : 'overview';
+  const setActiveTab = (key: 'overview' | 'coverage') => {
+    const base = pathname || '/dashboard';
+    router.push(key === 'coverage' ? `${base}?tab=coverage` : base);
+  };
   const {
     order: panelOrder,
     editing: layoutEditing,
