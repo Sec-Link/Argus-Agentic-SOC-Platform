@@ -10,7 +10,7 @@ drf-spectacular
 drf-spectacular-sidecar
 redis
 pymysql
-requests
+requests>=2.32.4,<3
 urllib3>=2.8.0,<3
 croniter
 django-scheduled-tasks>=0.2.18

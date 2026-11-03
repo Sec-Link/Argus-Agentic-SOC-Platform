@@ -7,6 +7,7 @@ from .views import (
     integrations_preview_es_mapping,
     preview_es_index,
     test_es_connection,
+    test_splunk_connection,
 )
 
 app_name = 'integrations'
@@ -19,6 +20,7 @@ router.register(r'', IntegrationViewSet, basename='integration')
 # (which requires a trailing slash).
 urlpatterns = [
     path('test_es', test_es_connection, name='test_es'),
+    path('test_splunk', test_splunk_connection, name='test_splunk'),
     path('preview_es', preview_es_index, name='preview_es'),
     path('preview_es_mapping', integrations_preview_es_mapping, name='preview_es_mapping'),
     path('', include(router.urls)),
