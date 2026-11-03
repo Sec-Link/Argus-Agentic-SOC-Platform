@@ -5,7 +5,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("dashboards", "0007_delete_board"),
+        ("dashboards", "0005_seed_log_source_categories"),
     ]
 
     operations = [

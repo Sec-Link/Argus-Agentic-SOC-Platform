@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("dashboards", "0008_logsourcemapping"),
+        ("dashboards", "0006_logsourcemapping"),
     ]
 
     operations = [
