@@ -6,4 +6,9 @@ export {
   integrationsPreviewEsMapping,
   previewEsIntegration,
   testEsIntegration,
+  testIntegrationById,
+  testSplunkIntegration,
+  fetchSplunkIntegrationData,
+  type SplunkConnectionTestResult,
+  type SplunkFetchResult,
 } from '../../api';
