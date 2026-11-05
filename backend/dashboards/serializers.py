@@ -1,12 +1,19 @@
 from rest_framework import serializers
 
+from .icon_upload import icon_data_url
 from .models import LogSourceCategory
 
 
 class LogSourceCategorySerializer(serializers.ModelSerializer):
+    # Read-only: set through the dedicated icon endpoint, which sanitizes the upload.
+    icon = serializers.SerializerMethodField()
+
     class Meta:
         model = LogSourceCategory
-        fields = ["id", "name", "matchers", "asset_types", "host_field", "enabled", "sort_order"]
+        fields = ["id", "name", "matchers", "asset_types", "host_field", "enabled", "sort_order", "icon"]
+
+    def get_icon(self, obj):
+        return icon_data_url(obj.icon_png)
 
     def _validate_str_list(self, value, field):
         if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):

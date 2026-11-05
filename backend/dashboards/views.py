@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
@@ -33,6 +34,8 @@ from detections.sigma import ATTACK_TACTIC_MAP
 from tickets.models import EventTicket
 
 from .attack_coverage import compute_attack_coverage
+from .event_flow import build_event_flow, load_categories
+from .icon_upload import MAX_UPLOAD_BYTES, IconError, sanitize_icon
 from .log_source_coverage import compute_log_source_coverage, preview_matchers
 from .log_source_discovery import resolve_sources
 from .models import LogSourceCategory, LogSourceMapping
@@ -126,6 +129,34 @@ class DashboardViewSet(viewsets.ViewSet):
                 priority__in=["critical", "high"],
             ).count(),
         })
+
+    @action(detail=False, methods=["get"], url_path="event-flow")
+    def event_flow(self, request):
+        """Events per log source category (from the stored scan) flowing into alerts and tickets."""
+        params = request.query_params
+        created_from = self._parse_dt(params.get("created_from") or params.get("start_time"))
+        created_to = self._parse_dt(params.get("created_to") or params.get("end_time"), end_of_day=True)
+
+        alert_qs = Alert.objects.all()
+        ticket_qs = EventTicket.objects.filter(is_deleted=False)
+        if created_from:
+            alert_qs = alert_qs.filter(timestamp__gte=created_from)
+            ticket_qs = ticket_qs.filter(created_time__gte=created_from)
+        if created_to:
+            alert_qs = alert_qs.filter(timestamp__lte=created_to)
+            ticket_qs = ticket_qs.filter(created_time__lte=created_to)
+
+        open_qs = ticket_qs.exclude(status__in=["resolved", "closed"])
+        incidents = ticket_qs.filter(event_result="true_positive").count()  # confirmed true positives
+        return Response(
+            build_event_flow(
+                resolve_sources(),
+                load_categories(),
+                alerts=alert_qs.count(),
+                open_tickets=open_qs.count(),
+                incidents=incidents,
+            )
+        )
 
     @action(detail=False, methods=["get"], url_path="funnel-stats")
     def funnel_stats(self, request):
@@ -414,6 +445,28 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated()]
         return [IsAdminUser()]
+
+    @action(detail=True, methods=["post", "delete"], url_path="icon", parser_classes=[MultiPartParser])
+    def icon(self, request, pk=None):
+        """Admin only. POST a PNG/JPEG/WebP (re-encoded server side) or DELETE to fall back to the default icon."""
+        category = self.get_object()
+        if request.method == "POST":
+            # Refuse oversized bodies before the multipart parser spools them to disk.
+            try:
+                declared = int(request.META.get("CONTENT_LENGTH") or 0)
+            except ValueError:
+                declared = 0
+            if declared > 2 * MAX_UPLOAD_BYTES:
+                return Response({"detail": "Icon is too large (max 256 KB)."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        if request.method == "DELETE":
+            category.icon_png = None
+        else:
+            try:
+                category.icon_png = sanitize_icon(request.FILES.get("file"))
+            except IconError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        category.save(update_fields=["icon_png", "updated_at"])
+        return Response(LogSourceCategorySerializer(category).data)
 
     @action(detail=False, methods=["post"], url_path="preview")
     def preview(self, request):

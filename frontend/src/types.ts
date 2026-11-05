@@ -83,6 +83,7 @@ export interface LogSourceCategory {
   host_field: string;
   enabled: boolean;
   sort_order: number;
+  icon?: string | null;
 }
 
 export interface LogSourceCoverageSource {
@@ -216,6 +217,7 @@ export interface SlaTicketListItem {
   title: string;
   status: string;
   priority: string;
+  event_result?: string | null;
   labels?: SlaTicketLabel[];
   event_impact?: string | null;
   assigned_user_username?: string | null;
@@ -300,4 +302,31 @@ export interface Integration {
   description: string;
   related_alert_id?: string;
   created_at: string;
+}
+
+export interface EventFlowGroup {
+  category_id: number | null;
+  name: string;
+  icon?: string | null;
+  total_docs: number;
+  sources: Array<{
+    source_key: string;
+    docs: number;
+    last_seen?: string | null;
+    hosts?: number | null;
+    indices?: number | null;
+    origin?: 'auto' | 'manual' | null;
+  }>;
+  others: { count: number; docs: number } | null;
+}
+
+export interface EventFlow {
+  initialized: boolean;
+  window_days: number | null;
+  scanned_at: string | null;
+  total_events: number;
+  groups: EventFlowGroup[];
+  alerts: number;
+  open_tickets: number;
+  incidents: number;
 }

@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Collapse, Drawer, Form, Input, Popconfirm, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
-import { DeleteOutlined, PlusOutlined, ReloadOutlined, UndoOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Collapse, Drawer, Form, Input, Popconfirm, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload, message } from 'antd';
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, UndoOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import ScanAge from './ScanAge';
 import {
   createLogSourceCategory,
   deleteLogSourceCategory,
+  deleteLogSourceCategoryIcon,
+  uploadLogSourceCategoryIcon,
   fetchDiscoveredLogSources,
   fetchLogSourceCategories,
   fetchLogSourceCategoryOptions,
@@ -18,6 +20,67 @@ import {
 import type { DiscoveredLogSource, LogSourceCategory, LogSourceDiscovery } from 'types';
 
 type Preview = Awaited<ReturnType<typeof previewLogSourceMatchers>>;
+
+const ICON_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const ICON_MAX_BYTES = 256 * 1024;
+
+/** Custom category icon: PNG/JPEG/WebP up to 256 KB. The server re-encodes it, so this is only a first filter. */
+const CategoryIconField: React.FC<{ category: LogSourceCategory; onChanged: () => void }> = ({ category, onChanged }) => {
+  const [busy, setBusy] = useState(false);
+  const upload = async (file: File) => {
+    if (!ICON_TYPES.includes(file.type)) {
+      message.error('Use a PNG, JPEG or WebP image');
+      return false;
+    }
+    if (file.size > ICON_MAX_BYTES) {
+      message.error('Icon must be 256 KB or smaller');
+      return false;
+    }
+    setBusy(true);
+    try {
+      await uploadLogSourceCategoryIcon(category.id, file);
+      message.success('Icon updated');
+      onChanged();
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || 'Failed to upload icon');
+    } finally {
+      setBusy(false);
+    }
+    return false; // we handled the request ourselves
+  };
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteLogSourceCategoryIcon(category.id);
+      onChanged();
+    } catch {
+      message.error('Failed to reset icon');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Form.Item label="Icon" extra="PNG, JPEG or WebP, up to 256 KB. Shown in the Events flow chart; the default icon is used when none is set.">
+      <Space>
+        {category.icon ? (
+          <img src={category.icon} alt="" width={36} height={36} style={{ borderRadius: '50%', objectFit: 'cover' }} />
+        ) : (
+          <Typography.Text type="secondary">Default</Typography.Text>
+        )}
+        <Upload accept=".png,.jpg,.jpeg,.webp" showUploadList={false} beforeUpload={upload} disabled={busy}>
+          <Button size="small" icon={<UploadOutlined />} loading={busy}>
+            Upload
+          </Button>
+        </Upload>
+        {category.icon && (
+          <Button size="small" onClick={remove} disabled={busy}>
+            Use default
+          </Button>
+        )}
+      </Space>
+    </Form.Item>
+  );
+};
 
 const CategoryEditor: React.FC<{
   category: LogSourceCategory | null;
@@ -107,6 +170,13 @@ const CategoryEditor: React.FC<{
             <Switch />
           </Form.Item>
         </Space>
+        {category ? (
+          <CategoryIconField category={category} onChanged={onSaved} />
+        ) : (
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+            Save the category first, then you can upload a custom icon.
+          </Typography.Paragraph>
+        )}
         <Collapse
           ghost
           size="small"

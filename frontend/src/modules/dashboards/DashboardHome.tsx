@@ -8,7 +8,7 @@ import { fetchDashboard } from 'services/alerts';
 import type { DashboardData } from 'types';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
-import AlertFunnelChart from './AlertFunnelChart';
+import EventFlowChart from './EventFlowChart';
 import AlertSankeyChart from './AlertSankeyChart';
 import CoverageTab from './CoverageTab';
 import CoverageOverviewSection from './CoverageOverviewSection';
@@ -981,7 +981,7 @@ const Dashboard: React.FC = () => {
     funnel: (
       <Col span={24} {...pp('funnel')}>
     <div className="dashboard-section-block">
-      <AlertFunnelChart
+      <EventFlowChart
         startTime={timeParams.start_time}
         endTime={timeParams.end_time}
         allTime={timeParams.all_time}

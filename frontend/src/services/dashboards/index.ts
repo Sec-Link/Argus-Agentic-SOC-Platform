@@ -1,6 +1,7 @@
 export {
   queryPreview,
   fetchDashboardConversionStats,
+  fetchDashboardEventFlow,
   fetchDashboardSankeyStats,
   fetchDashboardAttackCoverage,
   fetchDashboardLogSourceCoverage,
@@ -10,6 +11,8 @@ export {
   createLogSourceCategory,
   updateLogSourceCategory,
   deleteLogSourceCategory,
+  uploadLogSourceCategoryIcon,
+  deleteLogSourceCategoryIcon,
   previewLogSourceMatchers,
   fetchLogSourceCategoryOptions,
   fetchDiscoveredLogSources,

@@ -13,6 +13,8 @@ class LogSourceCategory(models.Model):
     host_field = models.CharField(max_length=128, default="host.name", blank=True)
     enabled = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)
+    # Optional custom icon: always a re-encoded PNG produced by dashboards.icon_upload (never the raw upload).
+    icon_png = models.BinaryField(null=True, blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

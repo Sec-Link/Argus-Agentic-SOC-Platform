@@ -23,6 +23,11 @@ urlpatterns = [
         name='conversion-stats',
     ),
     path(
+        'event-flow/',
+        DashboardViewSet.as_view({'get': 'event_flow'}),
+        name='event-flow',
+    ),
+    path(
         'funnel-stats/',
         DashboardViewSet.as_view({'get': 'funnel_stats'}),
         name='funnel-stats',

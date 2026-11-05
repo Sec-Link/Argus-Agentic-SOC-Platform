@@ -945,6 +945,15 @@ export async function fetchDashboardConversionStats(params?: { start_time?: stri
   return r.data;
 }
 
+export async function fetchDashboardEventFlow(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+  const qp = new URLSearchParams();
+  if (params?.start_time) qp.set('created_from', params.start_time);
+  if (params?.end_time) qp.set('created_to', params.end_time);
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  const r = await client.get(`/dashboards/event-flow/${suffix}`);
+  return r.data;
+}
+
 export async function fetchDashboardSankeyStats(params?: { start_time?: string; end_time?: string }) {
   const qp = new URLSearchParams();
   if (params?.start_time) qp.set('created_from', params.start_time);
@@ -986,6 +995,18 @@ export async function createLogSourceCategory(payload: Record<string, unknown>) 
 
 export async function updateLogSourceCategory(id: number, payload: Record<string, unknown>) {
   const r = await client.patch(`/dashboards/log-source-categories/${id}/`, payload);
+  return r.data;
+}
+
+export async function uploadLogSourceCategoryIcon(id: number, file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  const r = await client.post(`/dashboards/log-source-categories/${id}/icon/`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  return r.data;
+}
+
+export async function deleteLogSourceCategoryIcon(id: number) {
+  const r = await client.delete(`/dashboards/log-source-categories/${id}/icon/`);
   return r.data;
 }
 
