@@ -26,9 +26,48 @@ def user_name_from_request(request) -> str:
     return str(getattr(user, "username", "") or getattr(user, "email", "") or getattr(user, "id", "") or "")
 
 
+def _mitre_rows_from_kibana_threat(threat) -> list[dict]:
+    """Extract (tactic, technique) rows from a Kibana rule's `threat` array."""
+    rows: list[dict] = []
+    if not isinstance(threat, list):
+        return rows
+    for entry in threat:
+        if not isinstance(entry, dict):
+            continue
+        tactic = entry.get("tactic") if isinstance(entry.get("tactic"), dict) else {}
+        tactic_id = str(tactic.get("id") or "").strip().upper()
+        if not tactic_id:
+            continue
+        for technique in entry.get("technique") or []:
+            if not isinstance(technique, dict):
+                continue
+            candidates = [technique] + [
+                sub for sub in (technique.get("subtechnique") or []) if isinstance(sub, dict)
+            ]
+            for item in candidates:
+                technique_id = str(item.get("id") or "").strip().upper()
+                if technique_id:
+                    rows.append(
+                        {
+                            "tactic_id": tactic_id,
+                            "tactic_name": str(tactic.get("name") or "").strip(),
+                            "technique_id": technique_id,
+                            "technique_name": str(item.get("name") or "").strip(),
+                        }
+                    )
+    return rows
+
+
 def sync_rule_mitre_attack_mappings(rule: LocalDetectionRule, tags: list[str] | None) -> None:
-    rows = parse_mitre_attack_tags(tags)
     payload = rule.payload if isinstance(rule.payload, dict) else {}
+    rows = parse_mitre_attack_tags(tags)
+    # Kibana-originated rules often carry ATT&CK only in `threat`, not in Sigma `attack.*` tags.
+    seen = {(row["tactic_id"], row["technique_id"]) for row in rows}
+    for row in _mitre_rows_from_kibana_threat(payload.get("threat")):
+        key = (row["tactic_id"], row["technique_id"])
+        if key not in seen:
+            seen.add(key)
+            rows.append(row)
     kibana_meta = payload.get("kibana_metadata") if isinstance(payload.get("kibana_metadata"), dict) else {}
     sigma_rule_id = str(rule.rule_uuid or "").strip()
     kibana_rule_id = str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or kibana_meta.get("remote_id") or "").strip()
@@ -50,6 +89,17 @@ def sync_rule_mitre_attack_mappings(rule: LocalDetectionRule, tags: list[str] | 
         ],
         ignore_conflicts=True,
     )
+
+def backfill_rule_mitre_mappings() -> int:
+    """Rebuild ATT&CK mapping rows for every non-deleted rule; returns the number of rules processed."""
+    count = 0
+    for rule in LocalDetectionRule.objects.filter(is_deleted=False).iterator():
+        payload = rule.payload if isinstance(rule.payload, dict) else {}
+        tags = payload.get("tags")
+        sync_rule_mitre_attack_mappings(rule, tags if isinstance(tags, list) else None)
+        count += 1
+    return count
+
 
 def append_rule_version(
     rule: LocalDetectionRule,
@@ -287,6 +337,9 @@ def build_local_rule_payload(
         payload["elastic_index_patterns"] = elastic_index_patterns
     if kibana_metadata is not None:
         payload["kibana_metadata"] = kibana_metadata
+        # Published rules mirror Kibana's enabled state so dashboards and the rule list agree.
+        if isinstance(kibana_metadata, dict) and kibana_metadata.get("published") and "enabled" in kibana_metadata:
+            payload["enabled"] = bool(kibana_metadata["enabled"])
     if schedule_interval is not None:
         payload["schedule_interval"] = str(schedule_interval)
     if schedule_from is not None:
@@ -356,6 +409,7 @@ def save_local_rule(
         previous_payload = dict(rule.payload or {})
         rule.version += 1
         rule.payload = payload
+        rule.enabled = bool(payload.get("enabled", rule.enabled))
         rule.is_deleted = False
         rule.updated_by = actor
         rule.save()

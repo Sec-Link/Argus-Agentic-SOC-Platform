@@ -2,13 +2,15 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Badge, Button, Card, Checkbox, Collapse, Input, Modal, Space, Statistic, Switch, Table, Tag, Tabs, Tooltip, Typography } from "antd";
+import { App, Badge, Button, Card, Checkbox, Collapse, Input, Modal, Select, Space, Statistic, Switch, Table, Tag, Tabs, Tooltip, Typography } from "antd";
+import { readSigmaTags, writeSigmaTags } from "./sigmaTags";
 import type { ColumnsType } from "antd/es/table";
 
 import {
   createDetectionDeployment,
   createDetectionMapping,
   createPublishedDetectionRule,
+  syncRulesFromKibana,
   deleteDetectionRule,
   deleteDetectionMappings,
   deletePublishedDetectionRule,
@@ -177,7 +179,7 @@ function GlobalRiskConfigPanel({
 }
 
 export default function Detections({ initialRuleId }: { initialRuleId?: string } = {}) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const router = useRouter();
   const DETECTION_BASE = "/settings/detection";
 
@@ -580,7 +582,8 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
       name: meta.title || selectedId,
       type: ruleType,
       rule_id: selectedId,
-      enabled: false,
+      // New rules start disabled; re-publishing keeps whatever state the Kibana rule already has.
+      enabled: kibanaMetadata.published ? Boolean(kibanaMetadata.enabled) : false,
       severity: meta.level || "low",
       risk_score: Number.isFinite(riskScore) ? Math.max(0, Math.min(100, riskScore)) : 50,
       description: meta.description || meta.title || selectedId,
@@ -677,6 +680,7 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
         elastic_index_patterns: indexPatterns,
         kibana_metadata: nextMetadata,
       });
+      setTagsUnpublishedFor((cur) => (cur === selectedId ? null : cur));
       setKibanaMetadata(nextMetadata);
 
       await recordDeployment({
@@ -691,6 +695,16 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
       await loadRules();
       await loadDetail(selectedId);
       message.success("Published to Kibana");
+      if (!nextMetadata.enabled) {
+        modal.confirm({
+          title: "Rule published but not enabled",
+          content:
+            "This rule is saved in Kibana as disabled, so it will not run or count toward detection coverage. Enable it now?",
+          okText: "Enable now",
+          cancelText: "Later",
+          onOk: () => syncKibanaEnabled(true, nextMetadata),
+        });
+      }
     } catch (e: any) {
       await recordDeployment({
         rule_id: selectedId,
@@ -795,6 +809,28 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     }
   };
 
+  // Rule whose tags were edited locally after being published; cleared once re-published (session-only).
+  const [tagsUnpublishedFor, setTagsUnpublishedFor] = useState<string | null>(null);
+
+  const saveRuleTags = async (tags: string[]) => {
+    if (!selectedId || !detail) return;
+    try {
+      await saveDetectionRule(selectedId, writeSigmaTags(detail.yaml || "", tags), {
+        ...scheduleConfigurationPayload(),
+        ...esqlConfigurationPayload(),
+        elastic_actions: dedupeElasticActions(parseElasticActions(elasticActionsText)),
+        elastic_index_patterns: parseIndexPatterns(elasticIndexPatternsText),
+        kibana_metadata: kibanaMetadata,
+      });
+      await loadDetail(selectedId);
+      await loadRules();
+      if (kibanaMetadata.published) setTagsUnpublishedFor(selectedId);
+      message.success("Tags saved; publish to sync them to Kibana");
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || "Failed to save tags");
+    }
+  };
+
   const saveSchedule = async () => {
     if (!selectedId || !detail) return;
     try {
@@ -861,9 +897,27 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
     }
   };
 
-  const syncKibanaEnabled = async (enabled: boolean) => {
+  const [syncingKibana, setSyncingKibana] = useState(false);
+  const handleSyncFromKibana = async () => {
+    setSyncingKibana(true);
+    try {
+      const r = await syncRulesFromKibana();
+      await loadRules();
+      if (selectedId) await loadDetail(selectedId);
+      message.success(
+        `Synced with Kibana: ${r.enabled_changed} state change(s), ${r.marked_unpublished} no longer in Kibana, ${r.unchanged} unchanged`,
+      );
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || "Failed to sync with Kibana");
+    } finally {
+      setSyncingKibana(false);
+    }
+  };
+
+  const syncKibanaEnabled = async (enabled: boolean, metaOverride?: KibanaMetadata) => {
     if (!selectedId || !detail) return;
-    const remoteId = String(kibanaMetadata.remote_id || "").trim();
+    const km = metaOverride ?? kibanaMetadata; // callers right after publish pass fresh metadata (state may be stale)
+    const remoteId = String(km.remote_id || "").trim();
     if (!remoteId) {
       message.error("The Kibana rule has not been published yet");
       return;
@@ -873,12 +927,12 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
       const { id: _id, rule_id: _ruleId, kibana_rule_id: _kibanaRuleId, ...fullForUpdate } = full || {};
       const updated = await patchPublishedDetectionRule(selectedId, { ...fullForUpdate, enabled });
       const nextMetadata: KibanaMetadata = {
-        ...kibanaMetadata,
+        ...km,
         published: true,
         remote_id: String(updated?.kibana_rule_id || remoteId),
-        rule_id: String(kibanaMetadata.rule_id || selectedId),
+        rule_id: String(km.rule_id || selectedId),
         enabled: Boolean(updated?.enabled),
-        name: String(updated?.name || kibanaMetadata.name || detail.meta?.title || selectedId),
+        name: String(updated?.name || km.name || detail.meta?.title || selectedId),
         updated_at: new Date().toISOString(),
       };
       await saveDetectionRule(selectedId, detail.yaml || "", {
@@ -1177,6 +1231,8 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
                 }}
                 onSetRiskEnabled={setRiskEnabled}
                 onSaveRiskConfig={() => saveRiskConfig(selectedId)}
+                onSaveTags={saveRuleTags}
+                tagsUnpublished={tagsUnpublishedFor === selectedId}
                 onSaveElasticActions={saveElasticActions}
                 onSaveSchedule={saveSchedule}
                 onSaveEsql={saveEsql}
@@ -1224,6 +1280,8 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
                 onSelectRule={(id) => router.push(`${DETECTION_BASE}/rules/${encodeURIComponent(String(id))}`)}
                 onUploadFiles={handleUploadFiles}
                 onExportRules={handleExportRules}
+                onSyncKibana={handleSyncFromKibana}
+                syncingKibana={syncingKibana}
                 onCreateRule={() => {
                   setEditorId("");
                   setEditorYaml("");
@@ -1402,6 +1460,20 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
       <Modal title={editorId ? `Edit Rule ${editorId}` : "New Rule"} open={editorOpen} onCancel={() => setEditorOpen(false)} onOk={saveRule} width={980}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Input placeholder="Rule ID" value={editorId} onChange={(e) => setEditorId(e.target.value)} />
+          <div>
+            <Select
+              mode="tags"
+              style={{ width: "100%" }}
+              tokenSeparators={[",", " "]}
+              open={false}
+              value={readSigmaTags(editorYaml)}
+              onChange={(next: string[]) => setEditorYaml(writeSigmaTags(editorYaml, next))}
+              placeholder="Tags — type and press Enter, e.g. attack.execution, attack.t1059.001"
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Tags edit the YAML `tags:` list below. MITRE ATT&CK coverage reads `attack.&lt;tactic&gt;` and `attack.t&lt;technique&gt;` tags (e.g. attack.t1059.001).
+            </Typography.Text>
+          </div>
           <Input.TextArea rows={18} value={editorYaml} onChange={(e) => setEditorYaml(e.target.value)} placeholder="Paste Sigma YAML" />
         </Space>
       </Modal>

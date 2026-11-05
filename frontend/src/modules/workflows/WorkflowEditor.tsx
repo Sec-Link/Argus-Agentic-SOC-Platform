@@ -35,6 +35,7 @@ import {
   Workflow,
   WorkflowStep,
   ActionInfo,
+  WorkflowWritePayload,
 } from 'services/workflows';
 import { listInterfaceEndpoints } from 'services/interfaces';
 import type { InterfaceEndpoint } from 'services/interfaces';
