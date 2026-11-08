@@ -75,6 +75,8 @@ const HOST_PATTERN = /^(localhost|(([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+)|(\d{1,3}(\.\
 const Integrations: React.FC = () => {
   const [items, setItems] = useState<any[]>([]);
   const [splunkOpen, setSplunkOpen] = useState(false);
+  const [publisherOpen, setPublisherOpen] = useState(false);
+  const [publisherId, setPublisherId] = useState('');
   const [isReadonly, setIsReadonly] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [connectorKind, setConnectorKind] = useState<ConnectorKind>('elasticsearch');
@@ -400,9 +402,11 @@ const Integrations: React.FC = () => {
   };
 
   const splunkItem = items.find((item: any) => item?.type === 'splunk_search');
+  const publisherItems = items.filter((item: any) => item?.type === 'splunk_rule_publisher');
+  const publisherItem = publisherId === 'new' ? undefined : publisherItems.find((item: any) => item.id === publisherId) || publisherItems[0];
 
   type IntegrationCardConfig = {
-    key: 'elastic' | 'kibana' | 'splunk';
+    key: 'elastic' | 'kibana' | 'splunk' | 'splunk-publisher';
     title: string;
     subtitle: string;
     description: string;
@@ -445,6 +449,16 @@ const Integrations: React.FC = () => {
       isInstalled: Boolean(splunkItem?.id),
       onConfigure: () => setSplunkOpen(true),
       onUninstall: splunkItem?.id ? () => handleDelete(splunkItem) : undefined,
+    },
+    {
+      key: 'splunk-publisher',
+      title: 'Splunk Rule Publisher',
+      subtitle: 'Splunk Enterprise',
+      description: 'Detection rule publishing',
+      logo: '/splunk-logo.svg',
+      isInstalled: Boolean(publisherItem?.id),
+      onConfigure: () => { setPublisherId(publisherItems[0]?.id || 'new'); setPublisherOpen(true); },
+      onUninstall: publisherItem?.id ? () => handleDelete(publisherItem) : undefined,
     },
   ];
 
@@ -598,6 +612,8 @@ const Integrations: React.FC = () => {
       </Card>
 
       <SplunkIntegrations open={splunkOpen} item={splunkItem} isReadonly={isReadonly} onClose={() => setSplunkOpen(false)} onChanged={fetchList} />
+      <SplunkIntegrations publisher open={publisherOpen} item={publisherItem} publisherItems={publisherItems}
+        onSelectPublisher={setPublisherId} isReadonly={isReadonly} onClose={() => setPublisherOpen(false)} onChanged={fetchList} />
 
       <Modal
         title={

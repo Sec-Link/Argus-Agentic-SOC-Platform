@@ -15,7 +15,7 @@ class Integration(models.Model):
     Fields:
     - id: UUID primary key
     - name: human-readable integration name
-    - type: elasticsearch, kibana, or splunk_search
+    - type: elasticsearch, kibana, splunk_search, or splunk_rule_publisher
     - config: connection settings and metadata
     - created_at / updated_at: managed timestamps
     """

@@ -144,3 +144,30 @@ class LocalDetectionDeployment(models.Model):
             models.Index(fields=["rule", "-created_at"]),
             models.Index(fields=["target", "status"]),
         ]
+
+
+class SplunkRulePublication(models.Model):
+    """Target-specific state; never shares the Elastic rule's enabled flag."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    rule = models.ForeignKey(LocalDetectionRule, on_delete=models.PROTECT, related_name='splunk_publications')
+    integration = models.ForeignKey('integrations.Integration', on_delete=models.PROTECT, related_name='detection_publications')
+    config = models.JSONField(default=dict)
+    remote_name = models.CharField(max_length=100)
+    published_version = models.IntegerField(null=True, blank=True)
+    published_source_hash = models.CharField(max_length=64, blank=True, default='')
+    published_config = models.JSONField(default=dict)
+    published_query = models.TextField(blank=True, default='')
+    published_parameters = models.JSONField(default=dict)
+    pending_payload = models.JSONField(default=dict)
+    enabled = models.BooleanField(default=False)
+    status = models.CharField(max_length=32, default='draft')
+    message = models.CharField(max_length=255, blank=True, default='')
+    operation_id = models.UUIDField(null=True, blank=True)
+    busy_until = models.DateTimeField(null=True, blank=True)
+    updated_by = models.CharField(max_length=150, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'detection_splunk_publication'
+        constraints = [models.UniqueConstraint(fields=['rule', 'integration'], name='unique_splunk_rule_target')]

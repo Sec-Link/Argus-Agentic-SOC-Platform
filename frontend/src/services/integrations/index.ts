@@ -8,6 +8,7 @@ export {
   testEsIntegration,
   testIntegrationById,
   testSplunkIntegration,
+  testSplunkPublisherIntegration,
   fetchSplunkIntegrationData,
   type SplunkConnectionTestResult,
   type SplunkFetchResult,
