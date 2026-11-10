@@ -20,6 +20,7 @@ from .ticket_investigation_views import (
     investigation_run_control,
     investigation_session_detail,
     investigation_sessions,
+    investigation_worker_feedback,
     investigation_worker_create,
 )
 from .mcp_protocol_views import mcp_rpc, mcp_tools_manifest
@@ -70,6 +71,7 @@ urlpatterns = [
     re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/?$', investigation_session_detail, name='ticket_investigation_detail'),
     re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/workers/?$', investigation_worker_create, name='ticket_investigation_worker'),
     re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/runs/(?P<run_id>[0-9a-fA-F-]{36})/control/?$', investigation_run_control, name='ticket_investigation_run_control'),
+    re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/runs/(?P<run_id>[0-9a-fA-F-]{36})/feedback/?$', investigation_worker_feedback, name='ticket_investigation_worker_feedback'),
     re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/runs/(?P<run_id>[0-9a-fA-F-]{36})/side-questions/?$', investigation_side_questions, name='ticket_investigation_side_questions'),
     re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/runs/(?P<run_id>[0-9a-fA-F-]{36})/side-questions/(?P<message_id>[0-9a-fA-F-]{36})/cancel/?$', investigation_side_question_cancel, name='ticket_investigation_side_question_cancel'),
     re_path(r'^tickets/(?P<ticket_number>[^/]+)/investigations/(?P<session_id>[0-9a-fA-F-]{36})/message/?$', investigation_message, name='ticket_investigation_message'),

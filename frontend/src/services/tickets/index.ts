@@ -23,6 +23,7 @@ export {
   fetchTicketInvestigation,
   createTicketInvestigationWorker,
   controlTicketInvestigationRun,
+  sendTicketInvestigationWorkerFeedback,
   sendTicketInvestigationMessage,
   type TicketInvestigationSession,
   type TicketInvestigationRun,

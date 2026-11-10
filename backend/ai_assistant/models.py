@@ -251,7 +251,8 @@ class TicketInvestigationRun(models.Model):
     """One Main Agent, Planner, Worker, or Side Question lane in a session."""
 
     ROLE_CHOICES = [
-        ("main", "Main Agent"), ("planner", "Planner"), ("worker", "Worker"), ("side_question", "Side Question"),
+        ("main", "Main Agent"), ("planner", "Planner"), ("worker", "Worker"), ("reviewer", "Investigation Reviewer"),
+        ("reporter", "Reporter"), ("explainer", "Finding Explainer"), ("side_question", "Side Question"),
     ]
     STATUS_CHOICES = [
         ("open", "Open"), ("running", "Running"), ("paused", "Paused"), ("completed", "Completed"),
@@ -293,6 +294,67 @@ class TicketInvestigationMessage(models.Model):
         db_table = "ai_ticket_investigation_messages"
         ordering = ["created_at", "id"]
         indexes = [models.Index(fields=["run", "created_at"], name="ai_ticket_inv_msg_idx")]
+
+
+class TicketInvestigationGoal(models.Model):
+    """A user-approved investigation goal with its visible acceptance boundary."""
+
+    STATUS_CHOICES = [("open", "Open"), ("met", "Met"), ("blocked", "Blocked")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(TicketInvestigationSession, on_delete=models.CASCADE, related_name="goals")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    title = models.CharField(max_length=500)
+    acceptance_criteria = models.TextField(max_length=4000, blank=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="open")
+    evidence_summary = models.TextField(max_length=4000, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_goals"
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["session", "status", "created_at"], name="ai_ticket_inv_goal_idx")]
+
+
+class TicketInvestigationRuntimeEvent(models.Model):
+    """Append-only role, scheduler, and tool lifecycle record for a session."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(TicketInvestigationSession, on_delete=models.CASCADE, related_name="runtime_events")
+    run = models.ForeignKey(TicketInvestigationRun, on_delete=models.SET_NULL, null=True, blank=True, related_name="runtime_events")
+    message = models.ForeignKey(TicketInvestigationMessage, on_delete=models.SET_NULL, null=True, blank=True, related_name="runtime_events")
+    event_type = models.CharField(max_length=64)
+    title = models.CharField(max_length=240)
+    content = models.TextField(blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_runtime_events"
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["session", "created_at"], name="ai_ticket_inv_event_idx")]
+
+
+class TicketInvestigationToolReceipt(models.Model):
+    """Durable, session-scoped projection of an existing authorized tool call."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(TicketInvestigationSession, on_delete=models.CASCADE, related_name="tool_receipts")
+    run = models.ForeignKey(TicketInvestigationRun, on_delete=models.CASCADE, related_name="tool_receipts")
+    message = models.ForeignKey(TicketInvestigationMessage, on_delete=models.SET_NULL, null=True, blank=True, related_name="tool_receipts")
+    call_id = models.CharField(max_length=160, blank=True)
+    execution_id = models.CharField(max_length=160, blank=True)
+    tool_name = models.CharField(max_length=240)
+    status = models.CharField(max_length=24)
+    arguments = models.JSONField(default=dict, blank=True)
+    result_preview = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ai_ticket_investigation_tool_receipts"
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["session", "run", "created_at"], name="ai_ticket_inv_receipt_idx")]
 
 
 class TicketInvestigationSideConversation(models.Model):

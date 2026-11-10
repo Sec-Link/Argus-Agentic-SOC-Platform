@@ -801,7 +801,7 @@ export type TicketInvestigationMessage = {
 export type TicketInvestigationRun = {
   id: string;
   parent_id: string | null;
-  role: 'main' | 'planner' | 'worker' | 'side_question';
+  role: 'main' | 'planner' | 'worker' | 'reviewer' | 'reporter' | 'explainer' | 'side_question';
   title: string;
   objective: string;
   status: 'open' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
@@ -819,6 +819,9 @@ export type TicketInvestigationSession = {
   created_at: string;
   updated_at: string;
   runs?: TicketInvestigationRun[];
+  goals?: Array<{ id: string; title: string; acceptance_criteria: string; status: 'open' | 'met' | 'blocked'; evidence_summary: string; created_at: string; updated_at: string }>;
+  runtime_events?: Array<{ id: string; run_id: string | null; message_id: string | null; event_type: string; title: string; content: string; payload: Record<string, unknown>; created_at: string }>;
+  tool_receipts?: Array<{ id: string; run_id: string; message_id: string | null; call_id: string; execution_id: string; tool_name: string; status: string; arguments: Record<string, unknown>; result_preview: string; created_at: string }>;
 };
 
 export type TicketInvestigationSideMessage = {
@@ -858,6 +861,10 @@ export async function createTicketInvestigationWorker(ticketNumber: string, sess
 
 export async function controlTicketInvestigationRun(ticketNumber: string, sessionId: string, runId: string, action: 'pause' | 'resume' | 'cancel'): Promise<TicketInvestigationSession> {
   return (await client.post(`${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/control/`, { action })).data;
+}
+
+export async function sendTicketInvestigationWorkerFeedback(ticketNumber: string, sessionId: string, runId: string, message: string): Promise<TicketInvestigationSession> {
+  return (await client.post(`${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/feedback/`, { message })).data;
 }
 
 export async function sendTicketInvestigationMessage(ticketNumber: string, sessionId: string, payload: { run_id: string; message: string; model_profile_id?: string }): Promise<TicketInvestigationSession> {
