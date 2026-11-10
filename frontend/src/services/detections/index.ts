@@ -29,4 +29,10 @@ export {
   rollbackPublishedRuleVersion,
   previewPublishedDetectionRule,
   listPublishedConnectors,
+  type SplunkRuleConfig,
+  type SplunkRulePublication,
+  listSplunkRulePublications,
+  saveSplunkRulePublication,
+  runSplunkRulePublication,
+  deleteSplunkRulePublication,
 } from '../../api';

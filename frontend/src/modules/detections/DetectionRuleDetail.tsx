@@ -1,5 +1,6 @@
 import React from "react";
-import { Button, Card, Checkbox, Input, Popconfirm, Select, Space, Tag, Tooltip, Typography } from "antd";
+import { Button, Card, Checkbox, Input, Popconfirm, Segmented, Select, Space, Tag, Tooltip, Typography } from "antd";
+import SplunkRulePanel from './SplunkRulePanel';
 
 import type { DetectionRuleDetail } from "services/detections";
 import {
@@ -82,6 +83,7 @@ type Props = {
   onSetEsqlText: (value: string) => void;
   onSetScheduleInterval: (value: string) => void;
   onSetScheduleFrom: (value: string) => void;
+  onSplunkChanged?: () => Promise<void>;
 };
 
 const TACTIC_TAGS = [
@@ -145,6 +147,7 @@ function TagsCard({ tags, onSave, unpublished }: { tags: string[]; onSave: (tags
 }
 
 export default function DetectionRuleDetail(props: Props) {
+  const [target, setTarget] = React.useState('elastic');
   const meta = props.detail.meta || {};
   const compiled = props.detail.compiled || {};
   const logSourceParts = [meta.product, meta.service, meta.category].filter((value) => String(value || "").trim());
@@ -190,16 +193,20 @@ export default function DetectionRuleDetail(props: Props) {
 
   return (
     <Card>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
         <Button onClick={props.onBack}>Back to List</Button>
-        <Space>
+        <Space wrap>
+          <Segmented value={target} onChange={value => setTarget(String(value))}
+            options={[{ value: 'elastic', label: 'Elastic' }, { value: 'splunk', label: 'Splunk' }]} />
           <Button onClick={props.onEdit}>Edit</Button>
-          <Button loading={props.rulePreviewLoading} onClick={props.onPreview}>Preview in Kibana</Button>
-          <Button type="primary" onClick={props.onPublish}>Publish to Kibana</Button>
+          {target === 'elastic' && <>
+            <Button loading={props.rulePreviewLoading} onClick={props.onPreview}>Preview in Kibana</Button>
+            <Button type="primary" onClick={props.onPublish}>Publish to Kibana</Button>
+          </>}
         </Space>
       </div>
 
-      <Typography.Title level={2} style={{ marginTop: 0 }}>{meta.title || props.detail.id}</Typography.Title>
+      <Typography.Title level={2} style={{ marginTop: 0, overflowWrap: 'anywhere' }}>{meta.title || props.detail.id}</Typography.Title>
       <Space style={{ marginBottom: 10 }}>
         <Tag color="red">{meta.level || "medium"}</Tag>
         <Tag color="orange">{meta.status || "draft"}</Tag>
@@ -207,12 +214,13 @@ export default function DetectionRuleDetail(props: Props) {
       </Space>
       <Typography.Paragraph type="secondary">{meta.description || "No description"}</Typography.Paragraph>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 10, marginBottom: 16, overflowWrap: 'anywhere' }}>
         <Card size="small" title="Log Source">{logSourceParts.length ? logSourceParts.join(" / ") : "unknown"}</Card>
         <Card size="small" title="Mapping Profile">{meta.profile || (compiled.profiles || [])[0] || "-"}</Card>
         <TagsCard tags={Array.isArray(meta.tags) ? meta.tags.map((t: unknown) => String(t)) : []} onSave={props.onSaveTags} unpublished={props.tagsUnpublished} />
       </div>
 
+      {target === 'splunk' ? <SplunkRulePanel key={props.detail.id} rule={props.detail} versions={props.versions} onChanged={props.onSplunkChanged} /> : <>
       <Card
         size="small"
         title="Kibana Detection Rule"
@@ -582,6 +590,7 @@ export default function DetectionRuleDetail(props: Props) {
           {tabText}
         </pre>
       ) : null}
+      </>}
     </Card>
   );
 }

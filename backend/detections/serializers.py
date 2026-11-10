@@ -21,7 +21,10 @@ class DetectionRuleSaveSerializer(serializers.Serializer):
 
 
 class DetectionRuleCompileSerializer(serializers.Serializer):
-    yaml = serializers.CharField(required=True, allow_blank=False)
+    yaml = serializers.CharField(required=True, allow_blank=False, max_length=262144)
+    target = serializers.ChoiceField(choices=['elastic', 'splunk'], default='elastic')
+    splunk_index = serializers.RegexField(r'^[A-Za-z0-9_.-]{1,64}$', required=False)
+    splunk_sourcetype = serializers.RegexField(r'^[A-Za-z0-9_:.-]{1,100}$', required=False, allow_blank=True)
 
 
 class DetectionMappingSerializer(serializers.ModelSerializer):
@@ -98,6 +101,11 @@ class DetectionDeploymentCreateSerializer(serializers.Serializer):
     remote_rule_id = serializers.CharField(required=False, allow_blank=True)
     message = serializers.CharField(required=False, allow_blank=True)
     payload = serializers.JSONField(required=False)
+
+    def validate_target(self, value):
+        if value.startswith('splunk:'):
+            raise serializers.ValidationError('Splunk deployment records are created by the publisher service.')
+        return value
 
 
 class KibanaPublishedRuleListQuerySerializer(serializers.Serializer):

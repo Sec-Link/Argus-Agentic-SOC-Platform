@@ -3,15 +3,25 @@ services:
   backend-app-init:
     build:
       context: backend
+      args:
+        IMAGE_REGISTRY: ${IMAGE_REGISTRY:-docker.io/library}
     user: root
     entrypoint: []
-    command: ["sh", "-c", "mkdir -p /shared/app && if [ ! -f /shared/app/manage.py ]; then cp -a /app/. /shared/app/; fi && mkdir -p /shared/app/workflows/flows/generated && chown -R app:app /shared/app"]
+    command:
+      - sh
+      - -ec
+      - |
+        test -f /app/manage.py
+        mkdir -p /shared/app
+        find /shared/app -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+        cp -a /app/. /shared/app/
+        chown -R app:app /shared/app
     volumes:
       - backend_app:/shared/app
     restart: "no"
 
   db:
-    image: postgres:16
+    image: ${IMAGE_REGISTRY:-docker.io/library}/postgres:16
     container_name: postgres
     env_file:
       - .env
@@ -24,6 +34,8 @@ services:
   backend:
     build:
       context: backend
+      args:
+        IMAGE_REGISTRY: ${IMAGE_REGISTRY:-docker.io/library}
     container_name: backend
     env_file:
       - .env
@@ -46,6 +58,8 @@ services:
   frontend:
     build:
       context: frontend
+      args:
+        IMAGE_REGISTRY: ${IMAGE_REGISTRY:-docker.io/library}
     container_name: frontend
     depends_on:
       - backend

@@ -1,4 +1,5 @@
-FROM python:3.13-slim
+ARG IMAGE_REGISTRY=docker.io/library
+FROM ${IMAGE_REGISTRY}/python:3.13-slim
 
 LABEL maintainer="seclink-team"
 

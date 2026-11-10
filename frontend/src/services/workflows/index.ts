@@ -37,7 +37,6 @@ export {
   deactivateWorkflow,
   setWorkflowScheduleActive,
   listWorkflowExecutions,
-  subscribeWorkflowProgress,
   getWorkflowExecution,
   cancelWorkflowExecution,
   refreshPrefectExecutionStatus,

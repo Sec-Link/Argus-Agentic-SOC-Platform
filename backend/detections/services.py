@@ -265,6 +265,11 @@ def serialize_legacy_rule(rule: LocalDetectionRule) -> dict:
         "version": rule.version,
         "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
         "publish_status": "published" if kibana_meta.get("published") else "unpublished",
+        "splunk_publications": [
+            {'integration_name': row.integration.name, 'status': row.status, 'enabled': row.enabled,
+             'published_version': row.published_version}
+            for row in rule.splunk_publications.all()
+        ],
         "kibana_enabled": bool(kibana_meta.get("enabled", False)),
         "kibana_rule_id": str(payload.get("kibana_rule_id") or payload.get("kibana_remote_id") or kibana_meta.get("remote_id") or ""),
     }

@@ -63,6 +63,7 @@ type RuleRow = {
   tags?: string[];
   publish_status?: string;
   kibana_enabled?: boolean;
+  splunk_publications?: Array<{ integration_name: string; enabled: boolean; status: string; published_version: number | null }>;
 };
 
 type Option = { value: string; label: string };
@@ -219,7 +220,7 @@ export default function DetectionRuleList(props: Props) {
         ),
     },
     {
-      title: "Published",
+      title: "Elastic",
       key: "publish",
       width: 140,
       align: "right",
@@ -233,6 +234,16 @@ export default function DetectionRuleList(props: Props) {
         ) : (
           <Tag style={{ marginInlineEnd: 0 }}>Not Published</Tag>
         ),
+    },
+    {
+      title: 'Splunk', key: 'splunk', width: 200,
+      render: (_, row) => <Space direction="vertical" size={4}>
+        {(row.splunk_publications || []).length ? (row.splunk_publications || []).map((publication, index) =>
+          <Tag key={index} color={publication.status === 'synced' ? publication.enabled ? 'green' : 'gold' : 'default'}
+            style={{ marginInlineEnd: 0, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+            {publication.integration_name}: {publication.status === 'synced' ? publication.enabled ? 'Enabled' : 'Disabled' : publication.status}
+          </Tag>) : <Tag>Not Published</Tag>}
+      </Space>,
     },
   ];
 
