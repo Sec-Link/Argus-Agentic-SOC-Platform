@@ -35,7 +35,7 @@ class DetectionRulesView(APIView):
     required_permissions = {"GET": "integrations.view_integration"}
 
     def get(self, request):
-        rules = LocalDetectionRule.objects.filter(is_deleted=False, payload__has_key="yaml").order_by("name", "id")
+        rules = LocalDetectionRule.objects.filter(is_deleted=False, payload__has_key="yaml").prefetch_related('splunk_publications__integration').order_by("name", "id")
         return Response([serialize_legacy_rule(rule) for rule in rules])
 
 
@@ -96,6 +96,9 @@ class DetectionRuleDetailView(APIView):
         rule = LocalDetectionRule.objects.filter(rule_uuid=rule_id, is_deleted=False).first()
         if not rule:
             return Response({"detail": "Rule not found"}, status=404)
+
+        if rule.splunk_publications.exists():
+            return Response({'detail': 'Remove Splunk rule bindings before deleting the shared Sigma rule.'}, status=409)
 
         soft_delete_local_rule(rule=rule, actor=user_name_from_request(request))
         return Response({"deleted": True})
@@ -209,6 +212,11 @@ class DetectionRuleCompileView(APIView):
     def post(self, request):
         serializer = DetectionRuleCompileSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if serializer.validated_data['target'] == 'splunk':
+            from .splunk_compiler import compile_splunk
+            return Response(compile_splunk(serializer.validated_data['yaml'],
+                                          index=serializer.validated_data.get('splunk_index'),
+                                          sourcetype=serializer.validated_data.get('splunk_sourcetype', '')))
         return Response(compile_queries_from_yaml(serializer.validated_data["yaml"]))
 
 

@@ -1,6 +1,7 @@
 ﻿from django.urls import path
 
 from .kibana_views import KibanaConnectorsView, KibanaDetectionRuleDetailView, KibanaDetectionRulePreviewView, KibanaDetectionRuleVersionsView, KibanaDetectionRulesView
+from .splunk_views import SplunkPublicationDetailView, SplunkPublicationsView
 from .views import (
     DetectionDeploymentListCreateView,
     DetectionMappingExportView,
@@ -32,6 +33,8 @@ urlpatterns = [
     path("mappings/upload/", DetectionMappingUploadView.as_view(), name="detection-mappings-upload"),
     path("mappings/export/", DetectionMappingExportView.as_view(), name="detection-mappings-export"),
     path("deployments/", DetectionDeploymentListCreateView.as_view(), name="detection-deployments"),
+    path("rules/<path:rule_id>/splunk/", SplunkPublicationsView.as_view(), name="splunk-rule-publications"),
+    path("rules/<path:rule_id>/splunk/<uuid:publication_id>/", SplunkPublicationDetailView.as_view(), name="splunk-rule-publication"),
     path("rules/<path:rule_id>/", DetectionRuleDetailView.as_view(), name="detection-rule-detail"),
     path("rules/<path:rule_id>", DetectionRuleDetailView.as_view()),
 ]

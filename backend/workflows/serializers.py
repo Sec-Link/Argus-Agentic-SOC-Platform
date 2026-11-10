@@ -340,13 +340,20 @@ class WorkflowListSerializer(WorkflowPublishedStateMixin, serializers.ModelSeria
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_step_count(self, obj):
+        if hasattr(obj, '_step_count'):
+            return obj._step_count
         return obj.steps.count()
 
     def get_execution_count(self, obj):
+        if hasattr(obj, '_execution_count'):
+            return obj._execution_count
         return obj.executions.count()
 
     def get_last_execution(self, obj):
-        last = obj.executions.first()
+        if hasattr(obj, '_latest_executions'):
+            last = obj._latest_executions[0] if obj._latest_executions else None
+        else:
+            last = obj.executions.first()
         if last:
             return {
                 'id': str(last.id),

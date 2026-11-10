@@ -1128,6 +1128,7 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
             children: selectedId && detail ? (
               <DetectionRuleDetailView
                 detail={detail}
+                onSplunkChanged={async () => { await loadDeployments(); await loadRules(); }}
                 detailTab={detailTab}
                 versions={versions}
                 connectors={connectors}

@@ -32,7 +32,6 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   listWorkflowExecutions,
-  subscribeWorkflowProgress,
   getWorkflowExecution,
   cancelWorkflowExecution,
   listWorkflows,
@@ -40,6 +39,7 @@ import {
   StepExecution,
   Workflow,
 } from 'services/workflows';
+import { startWorkflowPolling } from 'services/workflows/polling';
 import { ExecutionLogViewer } from './components';
 
 const { Text, Paragraph } = Typography;
@@ -74,8 +74,10 @@ const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onB
   const executionRequestInFlight = useRef<Promise<WorkflowExecution[]> | null>(null);
   const detailRequestId = useRef(0);
   const detailExecutionId = useRef<string | null>(null);
+  const detailRequestInFlight = useRef<Promise<WorkflowExecution> | null>(null);
 
   const fetchExecutions = useCallback(async (silent = false) => {
+    if (silent && executionRequestInFlight.current) return;
     const requestId = ++executionRequestId.current;
     if (!silent) setLoading(true);
     const previousRequest = executionRequestInFlight.current;
@@ -135,31 +137,36 @@ const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onB
   }, [fetchWorkflows]);
 
   const loadExecutionDetail = useCallback(async (id: string, silent = false) => {
-    if (silent && detailExecutionId.current !== id) return;
+    if (silent && (detailExecutionId.current !== id || detailRequestInFlight.current)) return;
     detailExecutionId.current = id;
     const requestId = ++detailRequestId.current;
     if (!silent) setDetailLoading(true);
+    const previousRequest = detailRequestInFlight.current;
+    if (previousRequest) await previousRequest.catch(() => {});
+    if (requestId !== detailRequestId.current) return;
+    const request = getWorkflowExecution(id);
+    detailRequestInFlight.current = request;
     try {
-      const data = await getWorkflowExecution(id);
+      const data = await request;
       if (requestId === detailRequestId.current) setSelectedExecution(data);
     } catch (err) {
       if (!silent && requestId === detailRequestId.current) message.error('Failed to load execution details');
     } finally {
+      if (detailRequestInFlight.current === request) detailRequestInFlight.current = null;
       if (requestId === detailRequestId.current) setDetailLoading(false);
     }
   }, []);
 
   const selectedExecutionId = selectedExecution?.id;
-  useEffect(() => subscribeWorkflowProgress(progress => {
-    if (!progress || !filterWorkflow || progress.workflow_id === filterWorkflow) {
-      void fetchExecutions(true);
-    }
-    if (selectedExecutionId && (!progress || progress.execution_id === selectedExecutionId)) {
-      void loadExecutionDetail(selectedExecutionId, true);
-    }
-  }), [fetchExecutions, filterWorkflow, selectedExecutionId, loadExecutionDetail]);
+  useEffect(() => startWorkflowPolling(() => Promise.all([
+    fetchExecutions(true),
+    selectedExecutionId ? loadExecutionDetail(selectedExecutionId, true) : undefined,
+  ])), [fetchExecutions, selectedExecutionId, loadExecutionDetail]);
 
-  useEffect(() => () => { detailRequestId.current += 1; }, []);
+  useEffect(() => () => {
+    detailRequestId.current += 1;
+    detailExecutionId.current = null;
+  }, []);
 
   const handleCancel = async (id: string) => {
     try {

@@ -19,6 +19,7 @@ export {
   type WorkflowStats,
   type SavedWorkflowNode,
   type TicketWorkflowBinding,
+  type WorkflowWritePayload,
 
   listWorkflows,
   getWorkflow,
@@ -37,7 +38,6 @@ export {
   deactivateWorkflow,
   setWorkflowScheduleActive,
   listWorkflowExecutions,
-  subscribeWorkflowProgress,
   getWorkflowExecution,
   cancelWorkflowExecution,
   refreshPrefectExecutionStatus,
