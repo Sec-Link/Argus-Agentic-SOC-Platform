@@ -103,12 +103,18 @@ class IntegrationViewSet(viewsets.ModelViewSet):
         integration = serializer.save()
         self._activate_alerts_es_config(integration)
 
+    def perform_destroy(self, instance):
+        if instance.type == 'splunk_rule_publisher' and instance.detection_publications.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError('Remove Splunk rule bindings before deleting this publisher.')
+        instance.delete()
+
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):
         it = self.get_object()
-        if it.type == 'splunk_search':
+        if it.type in {'splunk_search', 'splunk_rule_publisher'}:
             payload = request.data.get('config', {}) if isinstance(request.data, dict) else request.data
-            cfg = validate_splunk_config(payload, it.config)
+            cfg = validate_splunk_config(payload, it.config, publisher=it.type == 'splunk_rule_publisher')
             try:
                 return Response(test_splunk(cfg))
             except SplunkError as exc:
@@ -163,6 +169,19 @@ def test_splunk_connection(request):
 
 
 test_splunk_connection.cls.required_permissions = {'POST': 'integrations.change_integration'}
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, DenyReadonlyUser, HasDjangoPermissions])
+def test_splunk_publisher_connection(request):
+    cfg = validate_splunk_config(request.data, publisher=True)
+    try:
+        return Response(test_splunk(cfg))
+    except SplunkError as exc:
+        return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+test_splunk_publisher_connection.cls.required_permissions = {'POST': 'integrations.change_integration'}
 
 
 # Helper: sync documents from ES index to a destination DB using integration configs

@@ -541,6 +541,8 @@ def update_published_rule(rule: LocalDetectionRule, payload: dict, actor: str, p
 
 
 def delete_published_rule(rule: LocalDetectionRule, actor: str) -> tuple[int, dict]:
+    if rule.splunk_publications.exists():
+        return 409, {'detail': 'Remove Splunk rule bindings before deleting the shared rule.'}
     payload = dict(rule.payload or {})
     if is_kibana_rule_payload(payload):
         params = rule_lookup_params(payload)

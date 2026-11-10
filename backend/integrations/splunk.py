@@ -1,4 +1,4 @@
-"""Read-only Splunk management API access for alert ingestion."""
+"""Splunk connection options and bounded read access for alert ingestion."""
 
 import json
 import re
@@ -17,7 +17,8 @@ def request_options(config):
     headers = {'Accept': 'application/json'}
     auth = None
     if config['auth_type'] == 'token':
-        headers['Authorization'] = f"Splunk {config['token']}"
+        scheme = 'Bearer' if config.get('token_type') == 'bearer' else 'Splunk'
+        headers['Authorization'] = f"{scheme} {config['token']}"
     else:
         auth = requests.auth.HTTPBasicAuth(config['username'], config['password'])
     return {'auth': auth, 'headers': headers, 'verify': config['verify_certs'], 'timeout': (5, 20)}
