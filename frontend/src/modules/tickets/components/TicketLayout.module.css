@@ -106,6 +106,10 @@
 .ticketSessionGrow { flex: 1; min-width: 0; }
 .ticketSessionEmpty { padding: 6px 8px; color: var(--access-secondary-text); font-size: 12px; }
 .ticketSessionReadonly { padding: 7px 8px; color: var(--access-secondary-text); font-size: 12px; }
+.ticketRuntimeGoal { display: grid; width: 100%; gap: 4px; margin: 2px 0; padding: 8px; border: 0; border-left: 3px solid #16a085; border-radius: 6px; background: var(--workflow-muted-card-bg); color: var(--text-primary); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.ticketRuntimeGoal:hover { background: var(--menu-selected-bg); }
+.ticketRuntimeGoal strong { overflow: hidden; color: #168c96; text-overflow: ellipsis; white-space: nowrap; }
+.ticketRuntimeGoal small { display: -webkit-box; overflow: hidden; color: var(--access-secondary-text); -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.45; }
 
 .ticketSessionItem {
   display: flex;
@@ -244,6 +248,12 @@
 .ticketChatTrace { margin-top: 10px; color: var(--access-secondary-text); font-size: 12px; }
 .ticketChatTrace > summary { cursor: pointer; }
 .ticketChatTrace pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ticketRuntimeReceipt { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--workflow-border); border-radius: 6px; color: #168c96; font-size: 12px; }
+.ticketRuntimeReceipt summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.ticketRuntimeReceipt summary small { margin-left: 6px; color: var(--access-secondary-text); font-weight: 400; }
+.ticketRuntimeReceipt pre { max-height: 240px; margin: 8px 0 0; overflow: auto; padding: 8px; border-radius: 4px; background: var(--workflow-muted-card-bg); color: var(--text-primary); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ticketRuntimeBoard { display: grid; gap: 14px; }
+.ticketRuntimePanePre { max-height: 360px; margin: 10px 0 0; overflow: auto; padding: 10px; border-radius: 6px; background: var(--workflow-muted-card-bg); color: var(--text-primary); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .ticketSessionComposer {
   flex: 0 0 auto;
@@ -327,6 +337,71 @@
 .ticketSideQuestionComposer :global(.ant-input) { resize: none; background: var(--workflow-muted-card-bg); }
 .ticketSideQuestionFoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; }
 
+/* ai_forensic Exploration Graph: compact cards, dependency edges, canvas controls, and detail sheet. */
+.ticketGraphPanel { position: relative; overflow: hidden; border: 1px solid var(--workflow-border); border-radius: 12px; background: var(--workflow-palette-item-bg); }
+.ticketGraphFilterbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--workflow-border); color: var(--access-secondary-text); font-size: 12px; }
+.ticketGraphFilterbar > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticketGraphFilterbar button,
+.ticketGraphLegend button,
+.ticketGraphControls button,
+.ticketGraphSheet button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.ticketGraphFilterbar button { padding: 5px 9px; border: 1px solid var(--workflow-border); border-radius: 6px; background: var(--workflow-palette-item-bg); color: var(--text-primary); }
+.ticketGraphCanvas { position: relative; height: clamp(430px, 72vh, 760px); overflow: clip; isolation: isolate; touch-action: none; cursor: grab; background-color: var(--workflow-muted-card-bg); background-image: radial-gradient(#94a3b84d 1px, transparent 1px); background-size: 16px 16px; }
+.ticketGraphCanvas:active { cursor: grabbing; }
+.ticketGraphBoard { position: absolute; top: 0; left: 0; width: 0; height: 0; transform-origin: 0 0; will-change: transform; }
+.ticketGraphLinks { position: absolute; inset: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.ticketGraphLinks path { fill: none; stroke-width: 2; stroke-opacity: .55; }
+.ticketGraphLinks text { font: 600 10px Inter, ui-sans-serif, system-ui, sans-serif; paint-order: stroke; stroke: var(--workflow-muted-card-bg); stroke-width: 3px; stroke-linejoin: round; }
+.ticketGraphEdgeMuted { opacity: .1; }
+.ticketGraphLegend { position: absolute; z-index: 2; top: 16px; left: 16px; display: grid; max-width: calc(100% - 32px); gap: 8px; padding: 12px 14px; border: 1px solid var(--workflow-border); border-radius: 10px; background: color-mix(in srgb, var(--workflow-palette-item-bg) 94%, transparent); box-shadow: 0 1px 3px #0002; backdrop-filter: blur(5px); color: var(--text-primary); font-size: 12px; cursor: default; }
+.ticketGraphLegendKinds { display: flex; flex-wrap: wrap; gap: 3px 5px; }
+.ticketGraphRelations { display: flex; flex-wrap: wrap; gap: 8px 12px; border-top: 1px solid var(--workflow-border); padding-top: 8px; color: var(--access-secondary-text); font-size: 11px; }
+.ticketGraphRelations span { display: inline-flex; align-items: center; gap: 5px; }
+.ticketGraphRelations i { display: inline-block; width: 16px; height: 2px; border-radius: 1px; }
+.ticketGraphLegend button { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 6px; border: 1px solid transparent; border-radius: 6px; color: var(--text-primary); white-space: nowrap; }
+.ticketGraphLegend button:hover,
+.ticketGraphLegend button[aria-pressed="true"] { border-color: var(--menu-selected-edge); background: var(--workflow-muted-card-bg); }
+.ticketGraphLegend i,
+.ticketGraphNodeHead i { display: inline-flex; width: 16px; height: 16px; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 4px; color: white; font-size: 11px; font-style: normal; }
+.ticketGraphLegend small { color: var(--access-secondary-text); font-size: 10px; }
+.ticketGraphControls { position: absolute; z-index: 2; bottom: 16px; left: 16px; display: grid; overflow: hidden; border: 1px solid var(--workflow-border); border-radius: 7px; background: var(--workflow-palette-item-bg); box-shadow: 0 1px 3px #0001; }
+.ticketGraphControls button { display: grid; width: 32px; height: 32px; place-items: center; border-bottom: 1px solid var(--workflow-border); color: var(--text-primary); font-size: 22px; line-height: 1; }
+.ticketGraphControls button:last-child { border-bottom: 0; }
+.ticketGraphControls button:hover { background: var(--workflow-muted-card-bg); }
+.ticketGraphMinimap { position: absolute; z-index: 2; right: 16px; bottom: 16px; width: 200px; height: 128px; border: 1px solid var(--workflow-border); border-radius: 9px; background: var(--workflow-palette-item-bg); box-shadow: 0 1px 3px #0001; cursor: crosshair; }
+.ticketGraphNode { position: absolute; display: flex; width: 240px; height: 124px; min-height: 124px; flex-direction: column; gap: 0; overflow: hidden; padding: 10px 12px 9px; border: 1px solid var(--workflow-border); border-left: 4px solid; border-radius: 14px; background: var(--workflow-palette-item-bg); color: var(--text-primary); box-shadow: 0 1px 3px #00000012; cursor: pointer; font: 13px Inter, ui-sans-serif, system-ui, sans-serif; text-align: left; transition: box-shadow .15s, opacity .15s; }
+.ticketGraphNode:hover { box-shadow: 0 4px 12px #00000018; }
+.ticketGraphNodeSelected { outline: 2px solid #3b82f6; outline-offset: 1px; }
+.ticketGraphNodeMuted { opacity: .18; }
+.ticketGraphNodeLive { outline: 2px solid #60a5faaa; }
+.ticketGraphNodeHead { display: flex; width: 100%; min-height: 24px; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ticketGraphNodeHead i { width: 24px; height: 24px; border-radius: 8px; font-size: 14px; box-shadow: 0 1px 2px #0001; }
+.ticketGraphNodeHead strong { flex: 1; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.ticketGraphNodeSummary { display: -webkit-box; overflow: hidden; max-height: 51px; color: var(--access-secondary-text); -webkit-box-orient: vertical; -webkit-line-clamp: 3; font-size: 12px; line-height: 17px; overflow-wrap: anywhere; }
+.ticketGraphNodeFoot { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 5px; color: var(--access-secondary-text); font-size: 10px; line-height: 14px; }
+.ticketGraphNodeFoot code { overflow: hidden; font: 10px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.ticketGraphNodeFoot em { padding: 0 5px; border: 1px solid var(--workflow-border); border-radius: 10px; background: var(--workflow-muted-card-bg); color: var(--access-secondary-text); font-style: normal; white-space: nowrap; }
+.ticketGraphNodeFoot em[data-status="running"] { border-color: #bfdbfe; background: #eff6ff; color: #2563eb; }
+.ticketGraphNodeFoot em[data-status="completed"] { border-color: #a7f3d0; background: #d1fae5; color: #047857; }
+.ticketGraphNodeFoot em[data-status="failed"] { border-color: #fecdd3; background: #fff1f2; color: #e11d48; }
+.ticketGraphSheetOverlay { position: fixed; z-index: 1000; inset: 0; color: var(--text-primary); }
+.ticketGraphBackdrop { position: absolute; inset: 0; width: 100%; height: 100%; background: #0006 !important; }
+.ticketGraphSheet { position: absolute; top: 0; right: 0; bottom: 0; display: flex; width: min(450px, 100%); flex-direction: column; border-left: 1px solid var(--workflow-border); background: var(--workflow-palette-item-bg); box-shadow: -8px 0 30px #0001; }
+.ticketGraphSheet > header { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 18px 16px; border-bottom: 1px solid var(--workflow-border); }
+.ticketGraphSheet > header > div { min-width: 0; flex: 1; }
+.ticketGraphSheet h2 { margin: 7px 0 5px; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.ticketGraphSheet header code { color: var(--access-secondary-text); font-size: 11px; overflow-wrap: anywhere; }
+.ticketGraphSheet header > button { width: 28px; height: 28px; color: var(--access-secondary-text); font-size: 24px; }
+.ticketGraphTypeTag { display: inline-block; padding: 3px 7px; border-radius: 12px; color: #fff; font-size: 11px; font-weight: 600; }
+.ticketGraphSheetBody { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 10px; overflow: auto; padding: 16px; }
+.ticketGraphSheetBody h3 { margin: 10px 0 0; border-top: 1px solid var(--workflow-border); padding-top: 14px; color: var(--access-secondary-text); font-size: 12px; font-weight: 500; }
+.ticketGraphSheetBody h3:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+.ticketGraphSheetBody p { margin: 0; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ticketGraphSheetBody dl { display: grid; grid-template-columns: 75px minmax(0, 1fr); gap: 10px; margin: 0; font-size: 12px; line-height: 1.5; }
+.ticketGraphSheetBody dt { color: var(--access-secondary-text); }
+.ticketGraphSheetBody dd { margin: 0; overflow-wrap: anywhere; }
+.ticketGraphSheetBody pre { margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--workflow-border); border-radius: 6px; background: var(--workflow-muted-card-bg); color: var(--text-primary); font: 11px/1.6 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 @media (max-width: 900px) {
   .ticketSessions { grid-template-columns: 210px minmax(0, 1fr); }
   .ticketSessionsWithSide { grid-template-columns: 210px minmax(0, 1fr); }
@@ -344,6 +419,10 @@
   .ticketSessionMainHead { flex-wrap: wrap; padding: 10px 12px; }
   .ticketSessionTranscript { padding: 14px 10px; }
   .ticketSessionHeaderActions { font-size: 11px; }
+  .ticketGraphCanvas { height: 520px; }
+  .ticketGraphLegend { top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 9px; font-size: 10px; }
+  .ticketGraphControls { bottom: 10px; left: 10px; }
+  .ticketGraphMinimap { right: 10px; bottom: 10px; width: 128px; height: 82px; }
 }
 
 .list {
