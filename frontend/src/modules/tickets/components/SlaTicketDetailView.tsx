@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
-import { Alert, Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Descriptions, Divider, Empty, Form, Input, List, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
 import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';

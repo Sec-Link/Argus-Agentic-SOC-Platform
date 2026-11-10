@@ -19,7 +19,6 @@ export {
   type WorkflowStats,
   type SavedWorkflowNode,
   type TicketWorkflowBinding,
-  type WorkflowWritePayload,
 
   listWorkflows,
   getWorkflow,
