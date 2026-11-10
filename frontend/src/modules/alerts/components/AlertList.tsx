@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Button, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { SearchOutlined, FilterOutlined, ReloadOutlined, CopyOutlined } from '@ant-design/icons';
 import { Resizable } from 'react-resizable';
@@ -108,8 +109,10 @@ const AlertList: React.FC = () => {
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(20);
   const [total, setTotal] = useState<number>(0);
-  const [searchText, setSearchText] = useState<string>('');
-  const [severityFilter, setSeverityFilter] = useState<string | undefined>(undefined);
+  // Deep links (e.g. from the dashboard flow diagram) seed the filters: /alerts?q=<text>&severity=<level>
+  const urlParams = useSearchParams();
+  const [searchText, setSearchText] = useState<string>(urlParams?.get('q') || '');
+  const [severityFilter, setSeverityFilter] = useState<string | undefined>(urlParams?.get('severity') || undefined);
   const [ordering, setOrdering] = useState<string>('-timestamp');
   const [widths, setWidths] = useState<Record<string, number>>(DEFAULT_WIDTHS);
   const [detailOpen, setDetailOpen] = useState<boolean>(false);

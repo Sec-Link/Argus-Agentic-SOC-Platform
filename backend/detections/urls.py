@@ -1,6 +1,6 @@
 ﻿from django.urls import path
 
-from .kibana_views import KibanaConnectorsView, KibanaDetectionRuleDetailView, KibanaDetectionRulePreviewView, KibanaDetectionRuleVersionsView, KibanaDetectionRulesView
+from .kibana_views import KibanaConnectorsView, KibanaDetectionRuleDetailView, KibanaDetectionRulePreviewView, KibanaDetectionRuleVersionsView, KibanaDetectionRulesView, KibanaRulesSyncView
 from .splunk_views import SplunkPublicationDetailView, SplunkPublicationsView
 from .views import (
     DetectionDeploymentListCreateView,
@@ -17,6 +17,7 @@ from .views import (
 urlpatterns = [
     # Publish/remote rule APIs (legacy `kibana/*` paths kept for compatibility)
     path("publish/rules/", KibanaDetectionRulesView.as_view(), name="publish-detection-rules"),
+    path("publish/rules/sync/", KibanaRulesSyncView.as_view(), name="publish-detection-rules-sync"),
     path("publish/rules/preview/", KibanaDetectionRulePreviewView.as_view(), name="publish-detection-rule-preview"),
     path("publish/rules/<str:rule_id>/", KibanaDetectionRuleDetailView.as_view(), name="publish-detection-rule-detail"),
     path("publish/rules/<str:rule_id>", KibanaDetectionRuleDetailView.as_view()),

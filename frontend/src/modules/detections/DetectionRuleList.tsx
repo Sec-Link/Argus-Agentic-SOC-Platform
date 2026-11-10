@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Card, Dropdown, Input, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
+import { Button, Card, Dropdown, Input, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { SorterResult } from "antd/es/table/interface";
 import {
@@ -8,6 +8,7 @@ import {
   GithubOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SyncOutlined,
   SearchOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
@@ -92,6 +93,8 @@ type Props = {
   onSelectRule: (id: string) => void;
   onUploadFiles: (files: File[]) => Promise<void>;
   onExportRules: () => void;
+  onSyncKibana: () => void;
+  syncingKibana: boolean;
   onCreateRule: () => void;
   onImportGithub: () => void;
 };
@@ -326,6 +329,9 @@ export default function DetectionRuleList(props: Props) {
               Delete{props.selectedRuleIds.length ? ` (${props.selectedRuleIds.length})` : ""}
             </Button>
           </Popconfirm>
+          <Tooltip title="Pull enabled state of published rules from Kibana so the library, rule list and dashboard agree">
+            <Button icon={<SyncOutlined />} loading={props.syncingKibana} onClick={props.onSyncKibana}>Sync with Kibana</Button>
+          </Tooltip>
           <Button icon={<DownloadOutlined />} onClick={props.onExportRules}>Export</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={props.onCreateRule}>New Rule</Button>
         </Space>

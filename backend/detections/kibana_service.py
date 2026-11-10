@@ -13,7 +13,12 @@ from integrations.models import Integration
 
 from .models import LocalDetectionRule
 from .sigma import build_kibana_threat_from_tags
-from .services import append_rule_version, summarize_payload_changes, user_name_from_request
+from .services import (
+    append_rule_version,
+    summarize_payload_changes,
+    sync_rule_mitre_attack_mappings,
+    user_name_from_request,
+)
 
 
 def kibana_integration() -> Integration | None:
@@ -494,6 +499,7 @@ def create_published_rule(payload: dict, actor: str) -> tuple[int, dict]:
             version = 1
             change_type = "create"
             payload_for_version = normalized
+        sync_rule_mitre_attack_mappings(rule, payload_for_version.get("tags"))
         append_rule_version(
             rule,
             version=version,
@@ -594,6 +600,7 @@ def rollback_published_rule(rule: LocalDetectionRule, target_version: int, actor
         rule.risk_score = int(payload.get("risk_score") or 50)
         rule.updated_by = actor
         rule.save()
+        sync_rule_mitre_attack_mappings(rule, payload.get("tags"))
         append_rule_version(
             rule,
             version=rule.version,
@@ -603,3 +610,96 @@ def rollback_published_rule(rule: LocalDetectionRule, target_version: int, actor
             change_summary=summarize_payload_changes(previous_payload, payload),
         )
     return 200, {"rolled_back_from": target_version, **serialize_published_rule(rule)}
+
+
+def _is_published_locally(rule: LocalDetectionRule) -> bool:
+    payload = rule.payload if isinstance(rule.payload, dict) else {}
+    meta = payload.get("kibana_metadata") if isinstance(payload.get("kibana_metadata"), dict) else {}
+    return bool(meta.get("published"))
+
+
+def _save_synced_rule(rule: LocalDetectionRule, payload: dict, enabled: bool, actor: str, message: str) -> None:
+    """Persist a sync change and leave a version row so it shows up in the rule history."""
+    with transaction.atomic():
+        rule.payload = payload
+        rule.enabled = enabled
+        rule.updated_by = actor
+        rule.save(update_fields=["payload", "enabled", "updated_by", "updated_at"])
+        append_rule_version(
+            rule,
+            version=rule.version,
+            payload=payload,
+            changed_by=actor,
+            change_type="kibana_sync",
+            change_summary=[{"field": "enabled", "label": "Enabled", "type": "modified", "message": message}],
+        )
+
+
+def sync_rules_from_kibana(actor: str) -> tuple[int, dict]:
+    """Align each published local rule's enabled flag and Kibana metadata with what Kibana reports.
+
+    Kibana is treated as the source of truth for `enabled` (only rules enabled there actually run).
+    Rules whose Kibana counterpart no longer exists are marked as not published; they are not deleted.
+    """
+    remote_rules: list[dict] = []
+    page = 1
+    while True:
+        status_code, data = kibana_proxy(
+            "GET", "/api/detection_engine/rules/_find", params={"page": page, "per_page": 200}
+        )
+        if status_code >= 400:
+            return status_code, data if isinstance(data, dict) else {"detail": "Kibana request failed"}
+        batch = data.get("data") if isinstance(data, dict) else None
+        if not batch:
+            break
+        remote_rules.extend(r for r in batch if isinstance(r, dict))
+        if len(remote_rules) >= int(data.get("total") or 0):
+            break
+        page += 1
+
+    # An empty answer (wrong space, missing permissions) must not unpublish everything.
+    if not remote_rules:
+        published = sum(1 for r in LocalDetectionRule.objects.filter(is_deleted=False).iterator() if _is_published_locally(r))
+        if published:
+            return 409, {
+                "detail": (
+                    f"Kibana returned no rules; refusing to unpublish {published} published rule(s). "
+                    "Check the Kibana space and API key permissions."
+                )
+            }
+
+    by_rule_id = {str(r.get("rule_id") or ""): r for r in remote_rules}
+    by_id = {str(r.get("id") or ""): r for r in remote_rules}
+    now = timezone.now().isoformat()
+    result = {"checked": 0, "enabled_changed": 0, "marked_unpublished": 0, "unchanged": 0}
+
+    for rule in LocalDetectionRule.objects.filter(is_deleted=False).iterator():
+        payload = dict(rule.payload or {})
+        meta = dict(payload.get("kibana_metadata") or {}) if isinstance(payload.get("kibana_metadata"), dict) else {}
+        remote_id = str(payload.get("kibana_rule_id") or meta.get("remote_id") or "").strip()
+        if not (meta.get("published") or remote_id):
+            continue  # never published: nothing to compare against
+        result["checked"] += 1
+        remote = by_rule_id.get(str(rule.rule_uuid)) or by_id.get(remote_id)
+        if remote is None:
+            if meta.get("published"):
+                meta.update({"published": False, "enabled": False, "updated_at": now})
+                payload["kibana_metadata"] = meta
+                _save_synced_rule(rule, payload, False, actor, "No longer in Kibana: marked unpublished and disabled")
+                result["marked_unpublished"] += 1
+            else:
+                result["unchanged"] += 1
+            continue
+        remote_enabled = bool(remote.get("enabled"))
+        changed = rule.enabled != remote_enabled or bool(meta.get("enabled")) != remote_enabled
+        meta.update({"published": True, "enabled": remote_enabled, "remote_id": str(remote.get("id") or remote_id), "updated_at": now})
+        payload["kibana_metadata"] = meta
+        payload["enabled"] = remote_enabled
+        payload["kibana_rule_id"] = str(remote.get("id") or remote_id)
+        if changed:
+            state = "enabled" if remote_enabled else "disabled"
+            _save_synced_rule(rule, payload, remote_enabled, actor, f"Synced from Kibana: rule is {state} there")
+            result["enabled_changed"] += 1
+        else:
+            result["unchanged"] += 1
+    return 200, result

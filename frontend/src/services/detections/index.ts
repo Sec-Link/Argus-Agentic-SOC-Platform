@@ -21,6 +21,7 @@ export {
   listPublishedDetectionRules,
   getPublishedDetectionRule,
   createPublishedDetectionRule,
+  syncRulesFromKibana,
   updatePublishedDetectionRule,
   patchPublishedDetectionRule,
   deletePublishedDetectionRule,

@@ -120,10 +120,8 @@
 .argus-workspace .dashboard-time-popover-header { color: var(--text-muted); }
 .argus-workspace .siem-page-transition { animation: workspaceFadeIn 160ms ease-out; }
 @keyframes workspaceFadeIn { from { opacity: .5; } to { opacity: 1; } }
-.argus-workspace .dashboard-toolbar-shell { align-items: center; margin-bottom: 28px; }
-.argus-workspace .dashboard-toolbar-title-shell { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.argus-workspace .dashboard-toolbar-shell { align-items: center; margin-bottom: 12px; }
 .workspace-eyebrow { font-size: 10px; letter-spacing: .16em; font-weight: 600; color: var(--text-muted); }
-.argus-workspace .dashboard-toolbar-title { margin: 0; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(26px, 3vw, 36px); font-weight: 400; letter-spacing: -.035em; line-height: 1.2; color: var(--text-primary); }
 .workspace-page-description { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
 
 /* The sign-in experience shares the warm palette without changing authentication. */

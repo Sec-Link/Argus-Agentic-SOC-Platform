@@ -13,6 +13,7 @@ from .kibana_service import (
     serialize_published_rule,
     update_published_rule,
     rollback_published_rule,
+    sync_rules_from_kibana,
 )
 from .models import LocalDetectionRule
 from .serializers import KibanaPublishedRuleListQuerySerializer, KibanaRollbackSerializer
@@ -172,3 +173,14 @@ class KibanaConnectorsView(APIView):
     def get(self, request):
         status_code, body = kibana_proxy("GET", "/api/actions/connectors")
         return Response(body, status=status_code)
+
+
+class KibanaRulesSyncView(APIView):
+    """POST: pull enabled state of published rules from Kibana into the local rule library."""
+
+    permission_classes = [IsAuthenticated, HasDjangoPermissions]
+    required_permissions = {"POST": "integrations.change_integration"}
+
+    def post(self, request):
+        status_code, result = sync_rules_from_kibana(user_name_from_request(request))
+        return Response(result, status=status_code)

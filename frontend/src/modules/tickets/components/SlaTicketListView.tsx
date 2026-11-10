@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
+import { useSearchParams } from 'next/navigation';
 import { App, Button, Card, Col, DatePicker, Form, Grid, Input, Modal, Row, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType, TableProps } from 'antd/es/table';
 import { Pie } from '@ant-design/plots';
@@ -161,11 +162,18 @@ export default function SlaTicketListView(props: Props) {
   const [editUserId, setEditUserId] = useState<number | null>(null);
   const [editPriority, setEditPriority] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<string | null>(null);
-  const [filters, setFilters] = useState<IncidentFilters>({
-    severity: [],
-    status: [],
-    owner: [],
-    sla: [],
+  // Deep links (e.g. from the dashboard flow diagram): ?status=open | ?priority=critical,high | ?result=true_positive
+  const urlParams = useSearchParams();
+  const [resultFilter] = useState<string | null>(urlParams?.get('result') || null);
+  const [filters, setFilters] = useState<IncidentFilters>(() => {
+    const status = urlParams?.get('status');
+    const priority = urlParams?.get('priority');
+    return {
+      severity: priority ? priority.split(',').filter(Boolean) : [],
+      status: status === 'open' ? ['new', 'acknowledged', 'triaged', 'contained'] : status ? status.split(',').filter(Boolean) : [],
+      owner: [],
+      sla: [],
+    };
   });
   const [pageSize, setPageSize] = useState<number>(20);
   const [quickRange, setQuickRange] = useState<TimeRangeKey | null>(null);
@@ -180,6 +188,7 @@ export default function SlaTicketListView(props: Props) {
       if (parsedQuery.status && t.status !== parsedQuery.status) return false;
       if (parsedQuery.priority && t.priority !== parsedQuery.priority) return false;
       if (parsedQuery.owner && owner !== parsedQuery.owner) return false;
+      if (resultFilter && t.event_result !== resultFilter) return false;
 
       if (!text) return true;
       const hay = `${t.ticket_number} ${t.title} ${t.status} ${t.priority} ${owner}`.toLowerCase();
