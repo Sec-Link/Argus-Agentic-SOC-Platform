@@ -190,11 +190,16 @@ def run_scan(days=DEFAULT_WINDOW_DAYS, actor=""):
     return snap, None
 
 
-def ensure_snapshot():
-    """Return (snapshot, error). Scans automatically only when none exists yet (first initialization)."""
+def ensure_snapshot(allow_scan=True):
+    """Return (snapshot, error). Scans automatically only when none exists yet (first initialization).
+
+    `allow_scan=False` never touches ES: with no stored scan it returns (None, reason).
+    """
     snap = load_snapshot()
     if snap is not None:
         return snap, None
+    if not allow_scan:
+        return None, "No log source scan has been run yet."
     es, _cfg = _es_client()
     if not es:
         return None, "Elasticsearch integration is not enabled."
@@ -207,18 +212,18 @@ def ensure_snapshot():
         cache.delete(INIT_LOCK_KEY)
 
 
-def resolve_sources(rescan_actor=None):
+def resolve_sources(rescan_actor=None, allow_scan=True):
     """Snapshot + auto classification + manual mappings, with the effective category per source.
 
     Reads the stored scan; a scan only runs when `rescan_actor` is given (explicit re-scan) or when
-    no snapshot exists yet (first initialization).
+    no snapshot exists yet (first initialization). `allow_scan=False` disables both.
     """
-    if rescan_actor is not None:
+    if rescan_actor is not None and allow_scan:
         snap, error = run_scan(actor=rescan_actor)
         if snap is None:
             snap = load_snapshot()  # keep showing the previous good scan
     else:
-        snap, error = ensure_snapshot()
+        snap, error = ensure_snapshot(allow_scan=allow_scan)
     discovered = {
         "sources": snap.payload if snap else [],
         "truncated": snap.truncated if snap else False,

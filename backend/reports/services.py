@@ -873,7 +873,8 @@ def _coverage_report_data() -> dict[str, Any]:
     try:
         from dashboards.log_source_coverage import compute_log_source_coverage
 
-        logs = compute_log_source_coverage()
+        # The report endpoint is anonymous: read the stored scan only, never trigger ES work.
+        logs = compute_log_source_coverage(passive=True)
         if logs.get("initialized") and any(c["source_count"] > 0 for c in logs["categories"]):
             data["log_sources"] = logs
     except Exception:

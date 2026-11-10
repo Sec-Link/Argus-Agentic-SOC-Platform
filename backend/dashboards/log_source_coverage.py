@@ -79,12 +79,13 @@ def _alert_category_stats(patterns, since):
     return {"events": len(matched), "last_seen": last.isoformat() if last else None, "hosts": set()}
 
 
-def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS):
-    es, _cfg = _es_client()
+def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
+    """`passive=True` reads only stored data (no scan, no ES queries); used by the anonymous report."""
+    es, _cfg = (None, None) if passive else _es_client()
     categories = list(LogSourceCategory.objects.filter(enabled=True))
 
     # Stored scan (plus manual overrides). Visiting the page never re-scans ES.
-    resolved = resolve_sources()
+    resolved = resolve_sources(allow_scan=not passive)
     initialized = resolved["initialized"]
     days = resolved["window_days"]
     since = timezone.now() - timedelta(days=days)

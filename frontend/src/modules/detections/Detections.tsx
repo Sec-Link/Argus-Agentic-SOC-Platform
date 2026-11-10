@@ -898,7 +898,18 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
   };
 
   const [syncingKibana, setSyncingKibana] = useState(false);
-  const handleSyncFromKibana = async () => {
+  const handleSyncFromKibana = () => {
+    modal.confirm({
+      title: "Sync with Kibana?",
+      content:
+        "Kibana is treated as the source of truth. Enabled state of published rules is overwritten, and rules no longer found in Kibana are marked unpublished and disabled (not deleted). Each change is recorded in the rule's version history.",
+      okText: "Sync",
+      cancelText: "Cancel",
+      onOk: runSyncFromKibana,
+    });
+  };
+
+  const runSyncFromKibana = async () => {
     setSyncingKibana(true);
     try {
       const r = await syncRulesFromKibana();
