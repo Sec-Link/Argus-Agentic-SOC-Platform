@@ -161,6 +161,15 @@ class _ResponsesUsageStream:
 class _MiniMaxChatOpenAI(_UsageChatOpenAI):
     """Keep MiniMax's required reasoning replay in private model history."""
 
+    def _create_chat_result(self, response, generation_info=None):
+        result = super()._create_chat_result(response, generation_info)
+        payload = response if isinstance(response, dict) else response.model_dump()
+        for generation, choice in zip(result.generations, payload.get("choices") or []):
+            reasoning = (choice.get("message") or {}).get("reasoning_content")
+            if isinstance(reasoning, str):
+                generation.message.additional_kwargs["reasoning_content"] = reasoning
+        return result
+
     def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
         generation = super()._convert_chunk_to_generation_chunk(
             chunk, default_chunk_class, base_generation_info,
@@ -261,6 +270,12 @@ class _ModelHTTPClient(DefaultHttpxClient):
         if recorder is not None and request.url.path.endswith(("/chat/completions", "/responses")):
             recorder.record_request(json.loads(request.content))
         response = super().send(request, **kwargs)
+        if (recorder is not None and not response.is_error
+                and request.url.path.endswith(("/chat/completions", "/responses"))
+                and not json.loads(request.content).get("stream")):
+            payload = response.json()
+            if isinstance(payload, dict):
+                recorder.record_response_usage(payload.get("usage"), responses_api=request.url.path.endswith("/responses"))
         if (
             response.is_error
             or "text/event-stream" in response.headers.get("content-type", "")
@@ -391,6 +406,9 @@ def _model_http_client():
 @contextmanager
 def open_chat_model(overrides=None, *, use_responses_api=False):
     config = chat_config(overrides, use_responses_api=use_responses_api)
+    streaming = (overrides or {}).get("streaming_enabled", True)
+    send_temperature = (overrides or {}).get("send_temperature", True)
+    temperature = (overrides or {}).get("temperature", 0.2)
     if not config["api_key"]:
         raise ModelCallError("OPENAI_API_KEY is not configured", code="model_key_missing")
     usage_context = dict((overrides or {}).get("_usage_context") or {})
@@ -410,19 +428,20 @@ def open_chat_model(overrides=None, *, use_responses_api=False):
             **config,
             use_responses_api=use_responses_api,
             max_retries=0,
-            streaming=True,
+            streaming=streaming,
+            disable_streaming=not streaming,
             # Unknown gateways can reject stream_options. Preserve compatibility
             # there and still capture any usage they report in their responses.
-            stream_usage=urlsplit(config["base_url"]).hostname in {"api.openai.com", *_MINIMAX_HOSTS},
+            stream_usage=streaming and urlsplit(config["base_url"]).hostname in {"api.openai.com", *_MINIMAX_HOSTS},
             callbacks=callbacks,
             max_tokens=1200 if use_responses_api else None,
-            temperature=0.2,
+            temperature=temperature if send_temperature else None,
             # Keep the existing wire parameter even for gateway model aliases
             # for which the integration otherwise strips temperature by name.
-            extra_body={"temperature": 0.2},
+            extra_body={"temperature": temperature} if send_temperature else None,
             http_client=client,
         )
-        if use_responses_api and callbacks:
+        if use_responses_api and callbacks and streaming:
             create_response = model.root_client.responses.create
             model.root_client.responses.create = lambda **kwargs: _ResponsesUsageStream(create_response(**kwargs))
         yield model

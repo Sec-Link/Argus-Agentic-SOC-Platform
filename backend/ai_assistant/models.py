@@ -320,6 +320,9 @@ class ModelProfile(models.Model):
     name = models.CharField(max_length=120, unique=True)
     model = models.CharField(max_length=200)
     base_url = models.CharField(max_length=2000)
+    send_temperature = models.BooleanField(default=True)
+    temperature = models.FloatField(default=0.2, validators=[MinValueValidator(0), MaxValueValidator(2)])
+    streaming_enabled = models.BooleanField(default=True)
     timeout_seconds = models.PositiveSmallIntegerField(
         default=45, validators=[MinValueValidator(1), MaxValueValidator(120)],
     )
@@ -341,6 +344,10 @@ class ModelProfile(models.Model):
             models.CheckConstraint(
                 condition=models.Q(timeout_seconds__gte=1, timeout_seconds__lte=120),
                 name="ai_model_profile_timeout_bounds",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(temperature__gte=0, temperature__lte=2),
+                name="ai_model_profile_temperature_bounds",
             ),
             models.CheckConstraint(
                 condition=models.Q(enabled=False) | ~models.Q(encrypted_api_key=""),

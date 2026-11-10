@@ -58,7 +58,7 @@ class ModelProfileSerializer(serializers.ModelSerializer):
         model = ModelProfile
         fields = (
             "id", "name", "model", "base_url", "timeout_seconds", "enabled", "api_key", "clear_api_key",
-            "has_api_key", "created_at", "updated_at",
+            "has_api_key", "created_at", "updated_at", "send_temperature", "temperature", "streaming_enabled",
             "input_price_per_million", "output_price_per_million", "cached_input_price_per_million", "currency",
         )
         read_only_fields = ("id", "created_at", "updated_at")
@@ -72,6 +72,12 @@ class ModelProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"detail": "Only writable model configuration fields are accepted."})
         if "timeout_seconds" in data and type(data["timeout_seconds"]) is not int:
             raise serializers.ValidationError({"timeout_seconds": "Enter a whole number from 1 to 120."})
+        for field in ("send_temperature", "streaming_enabled"):
+            if field in data and type(data[field]) is not bool:
+                raise serializers.ValidationError({field: "Use true or false."})
+        if "temperature" in data and (type(data["temperature"]) not in (int, float)
+                                      or not 0 <= data["temperature"] <= 2):
+            raise serializers.ValidationError({"temperature": "Enter a number from 0 to 2."})
         return super().to_internal_value(data)
 
     def validate_base_url(self, value):
@@ -238,6 +244,8 @@ def resolve_model_profile(user, profile_id, *, allow_disabled=False):
 
     return (
         {"api_key": api_key, "model": profile.model, "base_url": profile.base_url, "timeout_seconds": profile.timeout_seconds,
+         "send_temperature": profile.send_temperature, "temperature": profile.temperature,
+         "streaming_enabled": profile.streaming_enabled,
          "_usage_context": profile_usage_context(profile)},
         {"id": str(profile.pk), "name": profile.name, "model": profile.model},
         guard,

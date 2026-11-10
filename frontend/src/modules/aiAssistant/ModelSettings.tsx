@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, App, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Space, Switch, Table, Tag } from 'antd';
 import { createModelProfile, deleteModelProfile, listModelProfiles, testModelProfile, updateModelProfile, type ModelProfile } from 'services/aiAssistant';
 import { parseModelCurrency, parseModelPrice } from './modelPricing';
 
 type ModelForm = {
+  send_temperature: boolean; temperature: number | null; streaming_enabled: boolean;
   name: string; model: string; base_url: string; timeout_seconds: string; enabled: boolean; api_key?: string; clear_api_key?: boolean;
   input_price_per_million: string; output_price_per_million: string; cached_input_price_per_million: string; currency: string;
 };
@@ -25,6 +26,7 @@ function errorMessage(error: any): string {
 export default function ModelSettings({ readonly = false }: { readonly?: boolean }) {
   const { message } = App.useApp();
   const [form] = Form.useForm<ModelForm>();
+  const sendTemperature = Form.useWatch('send_temperature', form);
   const [rows, setRows] = useState<ModelProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -50,10 +52,13 @@ export default function ModelSettings({ readonly = false }: { readonly?: boolean
   const edit = (row?: ModelProfile) => {
     form.resetFields(); setEditing(row || null); setSaveError('');
     form.setFieldsValue(row ? { name: row.name, model: row.model, base_url: row.base_url,
+      send_temperature: row.send_temperature ?? true, temperature: row.temperature ?? 0.2,
+      streaming_enabled: row.streaming_enabled ?? true,
       timeout_seconds: String(row.timeout_seconds), enabled: row.enabled, api_key: '', clear_api_key: false,
       input_price_per_million: row.input_price_per_million ?? '', output_price_per_million: row.output_price_per_million ?? '',
       cached_input_price_per_million: row.cached_input_price_per_million ?? '', currency: row.currency || 'USD' }
       : { name: '', model: '', base_url: '', timeout_seconds: '45', enabled: false, api_key: '', clear_api_key: false,
+        send_temperature: true, temperature: 0.2, streaming_enabled: true,
         input_price_per_million: '', output_price_per_million: '', cached_input_price_per_million: '', currency: 'USD' });
     setOpen(true);
   };
@@ -64,6 +69,8 @@ export default function ModelSettings({ readonly = false }: { readonly?: boolean
       const payload = {
         name: values.name, model: values.model, base_url: values.base_url, enabled: values.enabled,
         timeout_seconds: Number(values.timeout_seconds), api_key: values.api_key || undefined,
+        send_temperature: values.send_temperature, streaming_enabled: values.streaming_enabled,
+        temperature: values.temperature ?? 0.2,
         clear_api_key: values.clear_api_key || false,
         input_price_per_million: parseModelPrice(values.input_price_per_million),
         output_price_per_million: parseModelPrice(values.output_price_per_million),
@@ -137,6 +144,19 @@ export default function ModelSettings({ readonly = false }: { readonly?: boolean
           rules={[{ validator: async (_, value) => { if (typeof value !== 'string' || !/^[0-9]+$/.test(value) || Number(value) < 1 || Number(value) > 120) throw new Error('Enter a whole number from 1 to 120.'); } }]}>
           <Input inputMode="numeric" />
         </Form.Item>
+        <Form.Item label="Send temperature" name="send_temperature" valuePropName="checked"
+          extra="Turn off if the model rejects this parameter; the provider will use its default."><Switch /></Form.Item>
+        <Form.Item label="Temperature" name="temperature" dependencies={['send_temperature']}
+          extra="0–2, default 0.2. Use a value supported by your model. Ignored when Send temperature is off."
+          rules={[({ getFieldValue }) => ({ validator: async (_, value) => {
+            if (getFieldValue('send_temperature') && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 2)) {
+              throw new Error('Enter a number from 0 to 2.');
+            }
+          } })]}>
+          <InputNumber min={0} max={2} controls={false} disabled={readonly || saving || !sendTemperature} style={{ width: '100%' }} />
+        </Form.Item>
+        <Form.Item label="Stream model responses" name="streaming_enabled" valuePropName="checked"
+          extra="Turn off if the model does not support streaming. Tool steps still appear; each model answer appears once the request finishes."><Switch /></Form.Item>
         <Form.Item label="Enabled" name="enabled" valuePropName="checked"><Switch /></Form.Item>
         <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Estimated usage costs"
           description="Enter your provider's prices per million tokens. Prices are saved with each new model call, so later changes do not alter past estimates. Blank prices mean cost is unavailable; zero means free. Estimates are not provider invoices." />

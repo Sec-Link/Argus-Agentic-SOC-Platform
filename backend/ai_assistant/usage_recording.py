@@ -203,6 +203,7 @@ class ModelUsageRecorder(BaseCallbackHandler):
     def __init__(self, context, *, require_reported=False, secrets=()):
         self.context = {key: value for key, value in context.items() if key in CONTEXT_FIELDS}
         self.started = {}
+        self.response_usage = {}
         self.permissions = {}
         self.require_reported = require_reported
         self.secrets = tuple(secret for secret in secrets if isinstance(secret, str) and secret)
@@ -243,6 +244,13 @@ class ModelUsageRecorder(BaseCallbackHandler):
         )
         self.permissions[run_id] = permissions
 
+    def record_response_usage(self, usage, *, responses_api=False):
+        run_id = getattr(self.active, "run_id", None)
+        if run_id in self.started:
+            self.response_usage[run_id] = provider_token_counts(
+                usage if isinstance(usage, dict) else {}, responses_api=responses_api,
+            )
+
     def _finish(self, run_id, *, response=None, error=None):
         from .call_details import snapshot, unavailable
         from .model_client import chat_response, model_timeout_details
@@ -251,7 +259,7 @@ class ModelUsageRecorder(BaseCallbackHandler):
         if started is None:
             return
         permissions = self.permissions.pop(run_id, set()) | self._conversation_permissions()
-        counts = token_counts(response, require_reported=self.require_reported)
+        counts = self.response_usage.pop(run_id, None) or token_counts(response, require_reported=self.require_reported)
         generations = getattr(response, "generations", None) or []
         message = getattr(generations[0][0], "message", None) if generations and generations[0] else None
         public_payload = None
