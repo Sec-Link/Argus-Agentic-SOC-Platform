@@ -64,6 +64,8 @@ type Props = {
   onPublish: () => Promise<void>;
   onSetDetailTab: (value: "sigma" | "esql" | "version") => void;
   onRollbackVersion: (version: number) => Promise<void>;
+  onSaveTags: (tags: string[]) => Promise<void>;
+  tagsUnpublished?: boolean;
   onSaveElasticActions: () => Promise<void>;
   onSaveSchedule: () => Promise<void>;
   onSyncKibanaEnabled: (enabled: boolean) => Promise<void>;
@@ -83,6 +85,66 @@ type Props = {
   onSetScheduleFrom: (value: string) => void;
   onSplunkChanged?: () => Promise<void>;
 };
+
+const TACTIC_TAGS = [
+  "reconnaissance", "resource_development", "initial_access", "execution", "persistence", "privilege_escalation",
+  "defense_evasion", "credential_access", "discovery", "lateral_movement", "collection", "command_and_control",
+  "exfiltration", "impact",
+].map((t) => ({ value: `attack.${t}`, label: `attack.${t}` }));
+
+function TagsCard({ tags, onSave, unpublished }: { tags: string[]; onSave: (tags: string[]) => Promise<void>; unpublished?: boolean }) {
+  const [draft, setDraft] = React.useState<string[]>(tags);
+  const [saving, setSaving] = React.useState(false);
+  const key = tags.join("\u0000");
+  React.useEffect(() => setDraft(tags), [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = draft.join("\u0000") !== key;
+  return (
+    <Card
+      size="small"
+      title="Tags"
+      extra={
+        dirty ? (
+          <Space size={4}>
+            <Button size="small" onClick={() => setDraft(tags)} disabled={saving}>Reset</Button>
+            <Button
+              size="small"
+              type="primary"
+              loading={saving}
+              onClick={async () => {
+                setSaving(true);
+                try {
+                  await onSave(draft);
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              Save
+            </Button>
+          </Space>
+        ) : null
+      }
+    >
+      <Select
+        mode="tags"
+        style={{ width: "100%" }}
+        value={draft}
+        onChange={setDraft}
+        options={TACTIC_TAGS}
+        tokenSeparators={[",", " "]}
+        placeholder="Add tags, e.g. attack.execution, attack.t1059.001"
+      />
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        ATT&amp;CK coverage reads attack.&lt;tactic&gt; and attack.t&lt;id&gt; tags; put a technique tag right after its tactic tag.
+      </Typography.Text>
+      {unpublished && (
+        <Typography.Text type="warning" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+          Tag changes are saved locally (ATT&amp;CK coverage already uses them) but not yet published to Kibana. Click Publish to Kibana to sync.
+        </Typography.Text>
+      )}
+    </Card>
+  );
+}
 
 export default function DetectionRuleDetail(props: Props) {
   const [target, setTarget] = React.useState('elastic');
@@ -155,7 +217,7 @@ export default function DetectionRuleDetail(props: Props) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 10, marginBottom: 16, overflowWrap: 'anywhere' }}>
         <Card size="small" title="Log Source">{logSourceParts.length ? logSourceParts.join(" / ") : "unknown"}</Card>
         <Card size="small" title="Mapping Profile">{meta.profile || (compiled.profiles || [])[0] || "-"}</Card>
-        <Card size="small" title="Tags">{Array.isArray(meta.tags) && meta.tags.length ? meta.tags.join(", ") : "-"}</Card>
+        <TagsCard tags={Array.isArray(meta.tags) ? meta.tags.map((t: unknown) => String(t)) : []} onSave={props.onSaveTags} unpublished={props.tagsUnpublished} />
       </div>
 
       {target === 'splunk' ? <SplunkRulePanel key={props.detail.id} rule={props.detail} versions={props.versions} onChanged={props.onSplunkChanged} /> : <>

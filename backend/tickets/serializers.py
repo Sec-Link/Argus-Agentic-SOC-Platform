@@ -264,6 +264,7 @@ class EventTicketListSerializer(serializers.ModelSerializer):
             'title',
             'status',
             'priority',
+            'event_result',
             'labels',
             'event_impact',
             'assigned_user_username',

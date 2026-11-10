@@ -31,3 +31,4 @@ pySigma-backend-elasticsearch>=2.0.3,<3.0.0
 pySigma-backend-splunk>=2.1,<3
 cryptography>=44.0.0
 prefect==3.8.1
+Pillow>=10.3,<13

@@ -15,8 +15,8 @@ class ReportGenerateView(APIView):
     def post(self, request):
         payload = request.data if isinstance(request.data, dict) else {}
         time_range = str(payload.get("time_range", "7d")).lower()
-        if time_range not in {"24h", "7d", "30d", "custom"}:
-            return Response({"detail": "time_range must be one of: 24h, 7d, 30d, custom."}, status=status.HTTP_400_BAD_REQUEST)
+        if time_range not in {"24h", "7d", "30d", "all", "custom"}:
+            return Response({"detail": "time_range must be one of: 24h, 7d, 30d, all, custom."}, status=status.HTTP_400_BAD_REQUEST)
         start_time = parse_datetime(str(payload.get("start_time"))) if payload.get("start_time") else None
         end_time = parse_datetime(str(payload.get("end_time"))) if payload.get("end_time") else None
         if time_range == "custom" and (start_time is None or end_time is None):
