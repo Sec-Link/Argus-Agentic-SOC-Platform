@@ -245,7 +245,7 @@ class ModelUsageRecorder(BaseCallbackHandler):
 
     def _finish(self, run_id, *, response=None, error=None):
         from .call_details import snapshot, unavailable
-        from .model_client import chat_response
+        from .model_client import chat_response, model_timeout_details
 
         started = self.started.pop(run_id, None)
         if started is None:
@@ -268,11 +268,15 @@ class ModelUsageRecorder(BaseCallbackHandler):
         provider_error = _public_provider_error(error)
         if provider_error:
             public_payload = {**(public_payload or {}), "error": provider_error}
+        error_code = _error_code(error) if error else ""
+        timeout_details = model_timeout_details(error) if error_code == "model_timeout" else {}
+        if timeout_details:
+            public_payload = {**(public_payload or {}), "transport_error": {"code": "model_timeout", **timeout_details}}
         response_detail = snapshot(public_payload, secrets=self.secrets) if public_payload is not None else unavailable("unavailable")
         ModelUsage.objects.filter(pk=run_id, status="running").update(
             status="failed" if error else "success", end_time=timezone.now(),
             duration_ms=min(2**31 - 1, max(0, round((monotonic() - started) * 1000))),
-            error_code=_error_code(error) if error else "", **counts,
+            error_code=error_code, **counts,
             estimated_cost=estimate_cost(counts, self.context),
             response_detail=response_detail,
             detail_permissions=sorted(permissions),

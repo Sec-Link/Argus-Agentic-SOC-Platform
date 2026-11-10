@@ -3,7 +3,7 @@
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from rest_framework.exceptions import PermissionDenied as ApiPermissionDenied
 
-from .model_client import ModelCallError, model_request_summary_text
+from .model_client import ModelCallError, model_request_summary_text, model_timeout_details
 from .model_validation import validation_hint
 
 
@@ -34,6 +34,12 @@ _HTTP_CODES = {
     "model_auth_error", "model_rate_limited", "model_upstream_error",
     "model_bad_request", "model_content_rejected", "model_not_found", "model_http_error",
 }
+_TIMEOUT_MESSAGES = {
+    "connect": "Timed out while establishing a connection to the model service or proxy. Check the model endpoint, proxy and network.",
+    "read": "Timed out waiting for response data from the model service. This can happen before the first token or during streaming.",
+    "write": "Timed out sending the request to the model service. Check network and proxy connectivity.",
+    "pool": "Timed out waiting for an available HTTP connection in the backend.",
+}
 _EVENT_STAGES = {
     "model_call": "model", "answer_delta": "model", "assistant_response": "model",
     "analysis_summary": "model", "analysis_summary_delta": "model",
@@ -51,6 +57,12 @@ def safe_chat_error(exc):
     elif isinstance(exc, (PermissionError, DjangoPermissionDenied, ApiPermissionDenied)):
         code = "permission_denied"
     result = {"code": code, "message": _MESSAGES[code]}
+    if code == "model_timeout":
+        details = model_timeout_details(exc)
+        if details:
+            result["message"] = _TIMEOUT_MESSAGES[details["phase"]]
+            if "timeout_seconds" in details:
+                result["message"] += f" Configured {details['phase']} timeout: {details['timeout_seconds']:g} seconds."
     if isinstance(exc, ModelCallError) and code in _HTTP_CODES:
         if type(exc.status_code) is int and 100 <= exc.status_code <= 599:
             result["status_code"] = exc.status_code

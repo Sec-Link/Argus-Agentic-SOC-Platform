@@ -13,6 +13,11 @@ from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from openai import APIConnectionError, APIStatusError, APITimeoutError, DefaultHttpxClient, OpenAIError
 
+try:
+    import httpx2 as httpx
+except ImportError:
+    import httpx
+
 from .model_validation import extract_model_validation
 
 
@@ -218,6 +223,34 @@ def _connection_error_code(exc):
             return "model_tls_error"
         exc = exc.__cause__ or exc.__context__
     return "model_connection_error"
+
+
+def model_timeout_details(exc):
+    """Classify typed transport causes without exposing URLs or exception text."""
+    phase, timeouts, seen = "", {}, set()
+    for _ in range(12):
+        if exc is None or id(exc) in seen:
+            break
+        seen.add(id(exc))
+        if isinstance(exc, APITimeoutError):
+            timeouts = exc.request.extensions.get("timeout", {})
+        for kind, name in (
+            (httpx.ConnectTimeout, "connect"), (httpx.ReadTimeout, "read"),
+            (httpx.WriteTimeout, "write"), (httpx.PoolTimeout, "pool"),
+        ):
+            if isinstance(exc, kind):
+                phase = name
+                break
+        if phase:
+            break
+        exc = exc.__cause__ or exc.__context__
+    if not phase:
+        return {}
+    result = {"phase": phase}
+    seconds = timeouts.get(phase) if isinstance(timeouts, dict) else None
+    if type(seconds) in (int, float) and 0 < seconds <= 86400:
+        result["timeout_seconds"] = seconds
+    return result
 
 
 class _ModelHTTPClient(DefaultHttpxClient):
