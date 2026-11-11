@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Input, Modal, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
+import { Alert, Button, Card, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
 import { getIsReadonly } from '../../lib/auth';
+import { getRbacMe } from 'services/accounts';
 import HttpToolsSettings from './HttpToolsSettings';
 import AgentSettings from './AgentSettings';
 import ExecutionSettings from './ExecutionSettings';
@@ -16,15 +17,18 @@ import {
   fetchAiAssistantSkillCatalog,
   fetchAiAssistantSkillContent,
   listAiAssistantMcpServers,
+  listAiAssistantToolAccessRoles,
   listAiAssistantSkillConfigs,
   updateAiAssistantMcpServer,
   updateAiAssistantSkillConfig,
   updateAiAssistantSkillContent,
+  type ToolAccessRole,
 } from '../../api';
 
 export default function AiAssistantSettings() {
   const [message, messageContextHolder] = antdMessage.useMessage();
   const [mcpEditForm] = Form.useForm();
+  const clearingMcpToken = Form.useWatch('clear_token', mcpEditForm);
   const [skillEditForm] = Form.useForm();
   const [mcpLoading, setMcpLoading] = useState(false);
   const [mcpServers, setMcpServers] = useState<any[]>([]);
@@ -40,6 +44,12 @@ export default function AiAssistantSettings() {
   const [skillContentPreview, setSkillContentPreview] = useState('');
   const [internalMcpTools, setInternalMcpTools] = useState<any[]>([]);
   const [isReadonly, setIsReadonly] = useState(false);
+  const [toolAccessRoles, setToolAccessRoles] = useState<ToolAccessRole[]>([]);
+  const [canManageHttpAccess, setCanManageHttpAccess] = useState(false);
+  const [canManageMcpAccess, setCanManageMcpAccess] = useState(false);
+  const [canDisableApproval, setCanDisableApproval] = useState(false);
+  const [toolAccessError, setToolAccessError] = useState('');
+  const [toolAccessReady, setToolAccessReady] = useState(false);
   useEffect(() => { setIsReadonly(getIsReadonly()); }, []);
   const skillConfigMap = useMemo(() => {
     const map = new Map<string, any>();
@@ -59,6 +69,28 @@ export default function AiAssistantSettings() {
       setMcpServers([]);
     } finally {
       setMcpLoading(false);
+    }
+  };
+
+  const loadToolAccess = async () => {
+    setToolAccessReady(false);
+    setToolAccessError('');
+    setCanManageHttpAccess(false);
+    setCanManageMcpAccess(false);
+    setCanDisableApproval(false);
+    try {
+      const me = await getRbacMe();
+      const permissions: string[] = Array.isArray(me?.permissions) ? me.permissions : [];
+      const httpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_httptoolconfig');
+      const mcpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_externalmcpserver');
+      const roles = httpAccess || mcpAccess ? await listAiAssistantToolAccessRoles() : [];
+      setToolAccessRoles(roles);
+      setCanManageHttpAccess(httpAccess);
+      setCanManageMcpAccess(mcpAccess);
+      setCanDisableApproval(!!me?.is_superuser);
+      setToolAccessReady(true);
+    } catch {
+      setToolAccessError('Could not load tool access permissions. Role editing and automatic approval are unavailable.');
     }
   };
 
@@ -102,6 +134,7 @@ export default function AiAssistantSettings() {
   };
 
   useEffect(() => {
+    void loadToolAccess();
     loadMcpServers();
     loadSkills();
     loadInternalMcpTools();
@@ -109,26 +142,32 @@ export default function AiAssistantSettings() {
   }, []);
 
   const openMcpModal = (row?: any) => {
+    if (!toolAccessReady || isReadonly) return;
     setMcpEditRow(row || null);
     mcpEditForm.setFieldsValue({
       name: row?.name || '',
       title: row?.title || '',
       endpoint: row?.endpoint || '',
-      token: row?.token || '',
+      token: '',
+      clear_token: false,
       enabled: row?.enabled !== false,
+      use_group_ids: row?.use_group_ids || [],
     });
     setMcpModalOpen(true);
   };
 
   const submitMcpModal = async () => {
+    if (!toolAccessReady || isReadonly) return;
     const values = await mcpEditForm.validateFields();
     try {
       if (mcpEditRow?.name) {
         await updateAiAssistantMcpServer(mcpEditRow.name, {
           title: values.title || '',
           endpoint: values.endpoint || '',
-          token: values.token || '',
+          ...(values.token ? { token: values.token } : {}),
+          ...(values.clear_token ? { clear_token: true } : {}),
           enabled: values.enabled !== false,
+          ...(canManageMcpAccess ? { use_group_ids: values.use_group_ids || [] } : {}),
         });
         message.success('MCP updated');
       } else {
@@ -138,6 +177,7 @@ export default function AiAssistantSettings() {
           endpoint: values.endpoint,
           token: values.token || '',
           enabled: values.enabled !== false,
+          ...(canManageMcpAccess ? { use_group_ids: values.use_group_ids || [] } : {}),
         });
         message.success('MCP created');
       }
@@ -145,7 +185,8 @@ export default function AiAssistantSettings() {
       setMcpEditRow(null);
       await loadMcpServers();
     } catch (err: any) {
-      const apiError = err?.response?.data?.error || err?.response?.data?.detail;
+      const data = err?.response?.data;
+      const apiError = data?.error || data?.detail || (data && Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(' ') : String(value)}`).join(' '));
       message.error(apiError ? String(apiError) : 'Failed to save MCP');
     }
   };
@@ -425,6 +466,8 @@ export default function AiAssistantSettings() {
   return (
     <div style={{ maxWidth: 980 }}>
       {messageContextHolder}
+      {toolAccessError && <Alert type="warning" showIcon message={toolAccessError} action={<Button size="small" onClick={() => void loadToolAccess()}>Retry</Button>} style={{ marginBottom: 16 }} />}
+      {!toolAccessReady && !toolAccessError && <Typography.Paragraph type="secondary">Loading tool permissions…</Typography.Paragraph>}
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         AI Assistant Settings
       </Typography.Title>
@@ -462,7 +505,7 @@ export default function AiAssistantSettings() {
           {
             key: 'http-tools',
             label: 'Tools',
-            children: <HttpToolsSettings readonly={isReadonly} />,
+            children: <HttpToolsSettings readonly={isReadonly || !toolAccessReady} roles={toolAccessRoles} canManageAccess={canManageHttpAccess} canDisableApproval={canDisableApproval} />,
           },
           {
             key: 'tool-monitor',
@@ -484,10 +527,11 @@ export default function AiAssistantSettings() {
                   extra={(
                     <Space>
                       <Button onClick={() => loadMcpServers()} loading={mcpLoading}>Refresh</Button>
-                      {isReadonly ? null : <Button type="primary" onClick={() => openMcpModal()}>Add MCP</Button>}
+                      {isReadonly ? null : <Button type="primary" disabled={!toolAccessReady} onClick={() => openMcpModal()}>Add MCP</Button>}
                     </Space>
                   )}
                 >
+                  <Typography.Paragraph type="secondary">Only users in a server's allowed roles can provide its tools to AI and approve their own calls. No roles selected means only superusers have access. Changes by other users restore required approval for all tools on the server.</Typography.Paragraph>
                   <Table
                     size="small"
                     rowKey={(r: any) => r.name}
@@ -500,12 +544,13 @@ export default function AiAssistantSettings() {
                       { title: 'Name', dataIndex: 'name', key: 'name' },
                       { title: 'Title', dataIndex: 'title', key: 'title', render: (v: string) => v || '-' },
                       { title: 'Endpoint', dataIndex: 'endpoint', key: 'endpoint', ellipsis: true },
+                      { title: 'Allowed roles', key: 'use_group_ids', render: (_: any, row: any) => row.use_group_ids?.length ? row.use_group_ids.map((id: number) => <Tag key={id}>{toolAccessRoles.find((role) => role.id === id)?.name || `Role #${id}`}</Tag>) : 'Superusers only' },
                       {
                         title: 'Enabled',
                         key: 'enabled',
                         width: 110,
                         render: (_: any, row: any) => (
-                          <Switch disabled={isReadonly} checked={row.enabled !== false} onChange={(checked) => onToggleMcp(row, checked)} />
+                          <Switch disabled={isReadonly || !toolAccessReady} checked={row.enabled !== false} onChange={(checked) => onToggleMcp(row, checked)} />
                         ),
                       },
                       ...(isReadonly ? [] : [{
@@ -514,9 +559,9 @@ export default function AiAssistantSettings() {
                         width: 310,
                         render: (_: any, row: any) => (
                           <Space>
-                            <Button size="small" onClick={() => openMcpModal(row)}>Edit</Button>
-                            <Button size="small" onClick={() => setMcpToolsRow({ name: row.name, title: row.title })}>Configure tools</Button>
-                            <Button danger size="small" onClick={() => onDeleteMcp(row)}>Delete</Button>
+                            <Button size="small" disabled={!toolAccessReady} onClick={() => openMcpModal(row)}>Edit</Button>
+                            <Button size="small" disabled={!toolAccessReady} onClick={() => setMcpToolsRow({ name: row.name, title: row.title })}>Configure tools</Button>
+                            <Button danger size="small" disabled={!toolAccessReady} onClick={() => onDeleteMcp(row)}>Delete</Button>
                           </Space>
                         ),
                       }]),
@@ -632,12 +677,12 @@ export default function AiAssistantSettings() {
           },
         ]}
       />
-      {mcpToolsRow && <McpToolApprovals server={mcpToolsRow} readonly={isReadonly} onClose={() => setMcpToolsRow(null)}
+      {mcpToolsRow && toolAccessReady && <McpToolApprovals server={mcpToolsRow} readonly={isReadonly} canDisableApproval={canDisableApproval} onClose={() => setMcpToolsRow(null)}
         onSaved={() => { setMcpToolsRow(null); message.success('MCP tool approvals saved'); void loadMcpServers(); }} />}
 
       <Modal
         title={mcpEditRow ? 'Edit MCP Server' : 'Add MCP Server'}
-        open={mcpModalOpen && !isReadonly}
+        open={mcpModalOpen && !isReadonly && toolAccessReady}
         onCancel={() => setMcpModalOpen(false)}
         onOk={submitMcpModal}
         okText={mcpEditRow ? 'Save' : 'Create'}
@@ -653,6 +698,8 @@ export default function AiAssistantSettings() {
           <Form.Item label="Title" name="title">
             <Input placeholder="MCP Server" />
           </Form.Item>
+          {canManageMcpAccess && <Form.Item name="use_group_ids" label="Roles allowed to use this server" extra="Applies to all tools on this server. No roles selected means only superusers can use them."><Select mode="multiple" allowClear optionFilterProp="label" options={toolAccessRoles.map((role) => ({ value: role.id, label: role.name }))} placeholder="Select allowed roles" /></Form.Item>}
+          {!canManageMcpAccess && <Typography.Paragraph type="secondary">Changing allowed roles requires the MCP access management permission.</Typography.Paragraph>}
           <Form.Item
             label="Endpoint"
             name="endpoint"
@@ -660,10 +707,11 @@ export default function AiAssistantSettings() {
           >
             <Input placeholder="https://host/mcp-connect/..." />
           </Form.Item>
-          <Form.Item label="Token" name="token">
-            <Input.Password placeholder="optional token" />
+          <Form.Item label={mcpEditRow?.has_token ? 'Replace saved token (optional)' : 'Token'} name="token" extra={mcpEditRow?.has_token ? 'Leave blank to keep the saved token. Changing the endpoint requires a replacement token or clearing it.' : undefined}>
+            <Input.Password disabled={clearingMcpToken} autoComplete="new-password" placeholder={mcpEditRow?.has_token ? 'Saved token is not displayed' : 'Optional token'} />
           </Form.Item>
-          {mcpEditRow && <Typography.Paragraph type="secondary">Changing the endpoint or token resets per-tool approval choices to require approval.</Typography.Paragraph>}
+          {mcpEditRow?.has_token && <Form.Item name="clear_token" valuePropName="checked"><Checkbox onChange={(event) => { if (event.target.checked) mcpEditForm.setFieldValue('token', ''); }}>Clear saved token</Checkbox></Form.Item>}
+          {mcpEditRow && <Typography.Paragraph type="secondary">{canDisableApproval ? 'Changing the endpoint or token resets per-tool approval choices to require approval.' : 'Saving changes requires approval for every tool on this server.'}</Typography.Paragraph>}
           <Form.Item label="Enabled" name="enabled" valuePropName="checked">
             <Switch />
           </Form.Item>

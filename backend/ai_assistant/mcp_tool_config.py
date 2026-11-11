@@ -35,6 +35,7 @@ def audit_mcp_configuration(request, server, action, previous_policies=None):
         metadata={"resource": "external_mcp_server", "id": server.pk, "name": server.name,
                   "actor_id": request.user.pk, "action": action, "enabled": server.enabled,
                   "approval_exceptions": sum(value is False for value in current.values()),
+                  "use_group_ids": list(server.use_groups.values_list("id", flat=True)),
                   "approval_policy_changes": changes},
     )
 

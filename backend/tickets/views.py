@@ -31,8 +31,9 @@ from ai_assistant.assistant import AIAssistantError, generate_ai_assistant_outpu
 from ai_assistant.chat_errors import safe_chat_error
 from ai_assistant.conversation_history import current_actor, event_permissions, require_history_permissions
 from ai_assistant.model_selection import selected_model_config
+from ai_assistant.external_tool_policy import saved_mcp_config
 from ai_assistant.usage_recording import model_usage_context
-from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
+from ai_assistant.models import TicketAIChatMessage
 from ai_assistant.skill_config import get_enabled_skill_configs
 from ai_assistant.serializers import AIAssistantRequestSerializer
 
@@ -618,58 +619,13 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             if data.get("enabled") is False:
                 return Response({"error": "AI assistant is disabled"}, status=status.HTTP_400_BAD_REQUEST)
             overrides = {
-                "api_key": data.get("api_key"),
-                "model": data.get("model"),
-                "base_url": data.get("base_url"),
-                "timeout_seconds": data.get("timeout_seconds"),
-                "mcp": {
-                    "enabled": data.get("mcp_enabled"),
-                    "base_url": data.get("mcp_base_url"),
-                    "servers": data.get("mcp_servers"),
-                    "token": data.get("mcp_token"),
-                    "timeout_seconds": data.get("mcp_timeout_seconds"),
-                    "ticket_context_path": data.get("mcp_ticket_context_path"),
-                    "ticket_search_path": data.get("mcp_ticket_search_path"),
-                    "cmdb_lookup_path": data.get("mcp_cmdb_lookup_path"),
-                    "observables_extract_path": data.get("mcp_observables_extract_path"),
-                },
-                "skills": data.get("skills") or [],
+                **model_overrides,
+                "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
+                "skills": data.get("skills") or get_enabled_skill_configs(),
             }
-            overrides.update(model_overrides)
             overrides["_usage_context"] = model_usage_context(
                 request.user, source="ticket_analysis", overrides=overrides, agent_name="assistant",
             )
-            if not overrides.get("skills"):
-                overrides["skills"] = get_enabled_skill_configs()
-            mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
-            if isinstance(mcp_overrides, dict):
-                if mcp_overrides.get("enabled") is not False:
-                    mcp_overrides["enabled"] = True
-                    # Always prefer built-in MCP endpoint for ticket assistant.
-                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
-                    mcp_overrides["force_internal"] = True
-                if not mcp_overrides.get("token"):
-                    auth_header = request.META.get("HTTP_AUTHORIZATION")
-                    if isinstance(auth_header, str) and auth_header.strip():
-                        # Prefer forwarding the original Authorization header verbatim.
-                        mcp_overrides["token"] = auth_header.strip()
-                if not mcp_overrides.get("token"):
-                    auth_obj = getattr(request, "auth", None)
-                    token_key = getattr(auth_obj, "key", None) if auth_obj is not None else None
-                    if isinstance(token_key, str) and token_key:
-                        mcp_overrides["token"] = f"Token {token_key}"
-                if not mcp_overrides.get("servers"):
-                    servers = ExternalMCPServer.objects.filter(enabled=True).order_by("name")
-                    mcp_overrides["servers"] = [
-                        {
-                            "endpoint": s.endpoint,
-                            "title": s.title,
-                            "token": s.token,
-                        }
-                        for s in servers
-                    ]
-                if mcp_overrides.get("enabled") is None and mcp_overrides.get("servers"):
-                    mcp_overrides["enabled"] = True
             result = generate_ai_assistant_output(
                 ticket=ticket,
                 alert_json=data.get("alert_json"),
@@ -907,40 +863,13 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             if data.get("enabled") is False:
                 return Response({"error": "AI assistant is disabled"}, status=status.HTTP_400_BAD_REQUEST)
             overrides = {
-                "api_key": data.get("api_key"),
-                "model": data.get("model"),
-                "base_url": data.get("base_url"),
-                "timeout_seconds": data.get("timeout_seconds"),
-                "mcp": {
-                    "enabled": data.get("mcp_enabled"),
-                    "base_url": data.get("mcp_base_url"),
-                    "servers": data.get("mcp_servers"),
-                    "token": data.get("mcp_token"),
-                    "timeout_seconds": data.get("mcp_timeout_seconds"),
-                    "ticket_context_path": data.get("mcp_ticket_context_path"),
-                    "ticket_search_path": data.get("mcp_ticket_search_path"),
-                    "cmdb_lookup_path": data.get("mcp_cmdb_lookup_path"),
-                    "observables_extract_path": data.get("mcp_observables_extract_path"),
-                },
-                "skills": data.get("skills") or [],
+                **model_overrides,
+                "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
+                "skills": data.get("skills") or get_enabled_skill_configs(),
             }
-            overrides.update(model_overrides)
             overrides["_usage_context"] = model_usage_context(
                 request.user, source="ticket_mention", overrides=overrides, agent_name="assistant",
             )
-            mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
-            if isinstance(mcp_overrides, dict):
-                if mcp_overrides.get("enabled") and not mcp_overrides.get("base_url"):
-                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
-                if not mcp_overrides.get("token"):
-                    auth_header = request.META.get("HTTP_AUTHORIZATION")
-                    if isinstance(auth_header, str) and auth_header.strip():
-                        mcp_overrides["token"] = auth_header.strip()
-                if not mcp_overrides.get("token"):
-                    auth_obj = getattr(request, "auth", None)
-                    token_key = getattr(auth_obj, "key", None) if auth_obj is not None else None
-                    if isinstance(token_key, str) and token_key:
-                        mcp_overrides["token"] = f"Token {token_key}"
             result = generate_ai_assistant_output(
                 ticket=ticket,
                 alert_json=data.get("alert_json"),

@@ -2,8 +2,10 @@
 
 import re
 
+from django.contrib.auth.models import Group
 from django.db import transaction
 from rest_framework import serializers, viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 
@@ -13,6 +15,7 @@ from accounts.permissions import DenyReadonlyUser, RbacModelPermissions
 from .http_tool_crypto import encrypt_http_tool_secret
 from .http_tools import validate_tool_config
 from .models import HttpToolConfig
+from .tool_access import validate_use_groups
 
 
 class HttpToolSerializer(serializers.ModelSerializer):
@@ -20,13 +23,16 @@ class HttpToolSerializer(serializers.ModelSerializer):
     clear_auth_secret = serializers.BooleanField(write_only=True, required=False, default=False)
     has_auth_secret = serializers.SerializerMethodField()
     auth_prefix = serializers.CharField(required=False, allow_blank=True, max_length=40, trim_whitespace=False)
+    use_group_ids = serializers.PrimaryKeyRelatedField(
+        source="use_groups", queryset=Group.objects.all(), many=True, required=False,
+    )
 
     class Meta:
         model = HttpToolConfig
         fields = (
             "id", "name", "description", "enabled", "method", "url", "parameters", "query_params",
             "body_template", "auth_type", "auth_header", "auth_prefix", "auth_secret", "clear_auth_secret",
-            "has_auth_secret", "timeout_seconds", "requires_approval", "created_at", "updated_at",
+            "has_auth_secret", "timeout_seconds", "requires_approval", "use_group_ids", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
 
@@ -39,6 +45,12 @@ class HttpToolSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        user = validate_use_groups(self, attrs)
+        if not user or not user.is_superuser:
+            if attrs.get("requires_approval") is False:
+                raise PermissionDenied("Only a superuser can disable tool approval.")
+            # Configuration changes invalidate a superuser's previous approval exemption.
+            attrs["requires_approval"] = True
         current = self.instance or HttpToolConfig()
         config = {**current.as_tool_config(), **attrs}
         try:
@@ -93,7 +105,7 @@ class HttpToolPagination(PageNumberPagination):
 
 
 class HttpToolViewSet(viewsets.ModelViewSet):
-    queryset = HttpToolConfig.objects.order_by("name")
+    queryset = HttpToolConfig.objects.prefetch_related("use_groups").order_by("name")
     serializer_class = HttpToolSerializer
     permission_classes = (IsAuthenticated, DenyReadonlyUser, RbacModelPermissions)
     lookup_field = "name"
@@ -108,7 +120,8 @@ class HttpToolViewSet(viewsets.ModelViewSet):
             ip_address=request_ip(self.request), user_agent=request_user_agent(self.request),
             path=self.request.path, method=self.request.method,
             metadata={"resource": "http_tool", "id": instance.pk, "name": instance.name, "actor_id": self.request.user.pk,
-                      "action": action, "enabled": instance.enabled, "requires_approval": instance.requires_approval},
+                      "action": action, "enabled": instance.enabled, "requires_approval": instance.requires_approval,
+                      "use_group_ids": list(instance.use_groups.values_list("id", flat=True))},
         )
 
     @transaction.atomic

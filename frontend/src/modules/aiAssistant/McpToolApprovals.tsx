@@ -15,9 +15,10 @@ function errorMessage(error: any, fallback: string): string {
   return fallback;
 }
 
-export default function McpToolApprovals({ server, readonly = false, onClose, onSaved }: {
+export default function McpToolApprovals({ server, readonly = false, canDisableApproval, onClose, onSaved }: {
   server: { name: string; title?: string };
   readonly?: boolean;
+  canDisableApproval: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -43,7 +44,7 @@ export default function McpToolApprovals({ server, readonly = false, onClose, on
       const result = await fetchAiAssistantMcpTools(server.name, request.signal);
       if (request.signal.aborted) return;
       setTools(result.tools);
-      setApprovals({ ...result.tool_approvals });
+      setApprovals(canDisableApproval ? { ...result.tool_approvals } : {});
       setVersion(result.updated_at);
     } catch (error) {
       if (!request.signal.aborted) {
@@ -53,7 +54,7 @@ export default function McpToolApprovals({ server, readonly = false, onClose, on
     } finally {
       if (!request.signal.aborted) setLoading(false);
     }
-  }, [server.name, readonly]);
+  }, [server.name, readonly, canDisableApproval]);
 
   useEffect(() => {
     void loadTools();
@@ -77,7 +78,7 @@ export default function McpToolApprovals({ server, readonly = false, onClose, on
     okButtonProps={{ disabled: readonly || loading || !!loadError || !version }} cancelButtonProps={{ disabled: saving }}
     closable={!saving} maskClosable={!saving} keyboard={!saving} destroyOnClose>
     <Typography.Paragraph type="secondary">
-      Set approval for each tool on this MCP server. Turning approval off allows AI to call that tool automatically for authorized users. New tools require approval by default. Changing the server endpoint or token resets these choices.
+      {canDisableApproval ? 'Set approval for each tool on this MCP server. Turning approval off allows AI to call it automatically for authorized users. New tools require approval by default. Changing the endpoint or token resets these choices.' : 'Only superusers can turn approval off. Saving changes requires approval for every tool on this server.'}
     </Typography.Paragraph>
     <Space style={{ marginBottom: 16 }}><Button onClick={() => void loadTools()} loading={loading} disabled={readonly || saving}>Reload tools</Button></Space>
     {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 16 }} />}
@@ -87,7 +88,7 @@ export default function McpToolApprovals({ server, readonly = false, onClose, on
       columns={[
         { title: 'Tool', render: (_, tool) => <><Typography.Text strong style={{ wordBreak: 'break-word' }}>{tool.name}</Typography.Text><div><Typography.Text type="secondary">{tool.description}</Typography.Text></div></> },
         { title: 'Require approval', width: 170, render: (_, tool) => <Switch aria-label={`Require approval for ${tool.name}`} checked={approvals[tool.name] !== false}
-          disabled={readonly || loading || saving || !!loadError} onChange={(required) => { setApprovals((previous) => ({ ...previous, [tool.name]: required })); setSaveError(''); }} /> },
+          disabled={readonly || loading || saving || !!loadError || !canDisableApproval} onChange={(required) => { setApprovals((previous) => ({ ...previous, [tool.name]: required })); setSaveError(''); }} /> },
       ]}
       expandable={{ expandedRowRender: (tool) => <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 240, overflow: 'auto' }}>{JSON.stringify(tool.input_schema, null, 2)}</pre> }}
     />

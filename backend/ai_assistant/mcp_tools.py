@@ -8,6 +8,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx2
+from asgiref.sync import sync_to_async
+from django.db import connections
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from langchain.mcp import as_langchain_tool
@@ -15,6 +17,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, ToolException
 from mcp.types import Tool
 from .http_tools import _remove_secret
+from .external_tool_policy import check_saved_mcp
 
 
 class _SafeMCPDiagnostic(logging.Filter):
@@ -79,8 +82,12 @@ async def _discover(config):
 
 
 def discover_mcp_tools(config) -> list[Tool]:
+    server = check_saved_mcp(config)
     try:
-        return asyncio.run(_discover(config))
+        tools = asyncio.run(_discover(config))
+        if server and not config.get("approval_supported"):
+            tools = [tool for tool in tools if server.tool_approvals.get(tool.name) is False]
+        return tools
     except ValueError as exc:
         if str(exc).startswith("MCP tool discovery failed:"):
             raise
@@ -104,6 +111,14 @@ def _include_structured_content(content, artifact):
     return [*content, {"type": "text", "text": json.dumps(structured, ensure_ascii=False)}]
 
 
+def _check_execution_access(config, name):
+    try:
+        check_saved_mcp(config, name)
+    finally:
+        # Async native tools run this check in a worker outside Django's request cleanup.
+        connections.close_all()
+
+
 def make_mcp_tool(remote: Tool, config: dict[str, Any], *, name: str | None = None) -> BaseTool:
     """Adapt a discovered tool; each invocation owns a fresh client and loop."""
     config = dict(config)
@@ -114,6 +129,8 @@ def make_mcp_tool(remote: Tool, config: dict[str, Any], *, name: str | None = No
     native = asyncio.run(make_native())
 
     async def execute(**arguments):
+        if "actor_id" in config:
+            await sync_to_async(_check_execution_access)(config, remote.name)
         async with asyncio.timeout(_timeout(config)):
             tool = await make_native()
             token = config.get("token") or ""
@@ -140,6 +157,8 @@ def make_mcp_tool(remote: Tool, config: dict[str, Any], *, name: str | None = No
         "coroutine": execute,
         "metadata": {
             "source": "external", "endpoint": config["base_url"], "tool_name": remote.name,
+            **({"server_id": config["server_id"], "config_version": config.get("config_version")}
+               if "server_id" in config else {}),
             "title": title, "annotations": annotations,
         },
     })
@@ -168,6 +187,7 @@ def load_mcp_tools(overrides=None) -> list[BaseTool]:
 
 def call_mcp_tool(config, tool_name: str, arguments: dict) -> ToolMessage:
     """Compatibility entry point; callers must authorize the exact invocation."""
+    check_saved_mcp(config, tool_name)
     tool = make_mcp_tool(Tool(name=tool_name, inputSchema={"type": "object"}), config)
     return tool.invoke({"type": "tool_call", "id": "mcp-compatibility-call", "name": tool.name, "args": arguments})
 

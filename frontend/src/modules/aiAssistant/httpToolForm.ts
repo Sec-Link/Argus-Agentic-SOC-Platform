@@ -17,12 +17,15 @@ export function parseToolTemplate(text: string, label: string, scalarOnly = fals
   return value as Record<string, any>;
 }
 
-export function buildHttpToolPayload(values: HttpToolFormValues): HttpToolWrite {
-  const { query_json, body_json, auth_secret, clear_auth_secret, ...fields } = values;
+export function buildHttpToolPayload(values: HttpToolFormValues, {
+  canManageAccess = false, canDisableApproval = false,
+}: { canManageAccess?: boolean; canDisableApproval?: boolean } = {}): HttpToolWrite {
+  const { query_json, body_json, auth_secret, clear_auth_secret, use_group_ids, ...fields } = values;
   if (auth_secret && clear_auth_secret) throw new Error('Choose either a replacement secret or clear the stored secret.');
   return {
     ...fields,
-    requires_approval: fields.requires_approval !== false,
+    requires_approval: !canDisableApproval || fields.requires_approval !== false,
+    ...(canManageAccess ? { use_group_ids: use_group_ids || [] } : {}),
     query_params: parseToolTemplate(query_json, 'Query parameters', true),
     body_template: fields.method === 'POST' && body_json.trim() ? parseToolTemplate(body_json, 'JSON body') : null,
     ...(fields.auth_type === 'none' ? { auth_header: '', auth_prefix: '', clear_auth_secret: true } : {

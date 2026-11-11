@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from typing import Callable
 
+from django.http import JsonResponse
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.exceptions import AuthenticationFailed
+
 
 class DRFTokenAuthMiddleware:
     """
     Allow Django (session-based) views protected by @login_required to accept
     DRF TokenAuthentication headers: `Authorization: Token <key>`.
 
-    This is intentionally narrow and only applies when the request is not
-    already authenticated via session/cookies.
+    Match DRF's case-insensitive token parsing and precedence over session users,
+    so audit and readonly middleware see the principal used by the API view.
     """
 
     def __init__(self, get_response: Callable):
@@ -17,23 +21,14 @@ class DRFTokenAuthMiddleware:
 
     def __call__(self, request):
         try:
-            user = getattr(request, "user", None)
-            if user is None or not getattr(user, "is_authenticated", False):
-                auth = request.META.get("HTTP_AUTHORIZATION", "")
-                if isinstance(auth, str) and auth.startswith("Token "):
-                    key = auth.split(" ", 1)[1].strip()
-                    if key:
-                        from rest_framework.authtoken.models import Token
-
-                        token = Token.objects.select_related("user").filter(key=key).first()
-                        if token and token.user:
-                            request.user = token.user
-                            request.auth = token
-                            # Keep Django's cached user in sync if present.
-                            setattr(request, "_cached_user", token.user)
-        except Exception:
-            # Never break the request lifecycle due to auth parsing.
-            pass
+            authenticated = TokenAuthentication().authenticate(request)
+        except AuthenticationFailed as exc:
+            response = JsonResponse({"detail": str(exc.detail)}, status=401)
+            response["WWW-Authenticate"] = "Token"
+            return response
+        if authenticated is not None:
+            request.user, request.auth = authenticated
+            request._cached_user = request.user
 
         return self.get_response(request)
 

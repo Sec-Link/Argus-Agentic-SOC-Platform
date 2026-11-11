@@ -2,17 +2,20 @@
 
 import json
 import re
-from urllib.parse import urlsplit
 
 from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes, renderer_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
 from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from accounts.services import is_user_readonly
 
-from ai_assistant.model_client import chat_config, message_text, normalize_base_url, open_chat_model
+from ai_assistant.model_client import message_text, open_chat_model
+from ai_assistant.model_profiles import ModelProfileUnavailable
+from ai_assistant.model_selection import selected_model_config
+from ai_assistant.serializers import ModelSelectionSerializer
 from ai_assistant.usage_recording import model_usage_context
 
 
@@ -59,7 +62,7 @@ class ConversationContextOptionsSerializer(serializers.Serializer):
     include_content = serializers.BooleanField(default=True)
 
 
-class PageChatRequestSerializer(serializers.Serializer):
+class PageChatRequestSerializer(ModelSelectionSerializer):
     message = serializers.CharField(max_length=4000)
     stream = serializers.BooleanField(default=False)
     messages = PageChatMessageSerializer(many=True, max_length=12, required=False)
@@ -67,11 +70,6 @@ class PageChatRequestSerializer(serializers.Serializer):
     conversation_id = serializers.UUIDField(required=False)
     revision = serializers.IntegerField(min_value=0, required=False)
     context_options = ConversationContextOptionsSerializer(required=False)
-    api_key = serializers.CharField(max_length=4096, allow_blank=True, required=False)
-    model = serializers.CharField(max_length=200, allow_blank=True, required=False)
-    base_url = serializers.URLField(max_length=2000, allow_blank=True, required=False)
-    timeout_seconds = serializers.IntegerField(min_value=1, max_value=120, required=False)
-    model_profile_id = serializers.UUIDField(required=False)
     agent_names = serializers.ListField(
         child=serializers.RegexField(r"^[a-z][a-z0-9_]{0,47}$"), max_length=3, required=False,
     )
@@ -84,17 +82,8 @@ class PageChatRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError("Conversation history is too long.")
         return value
 
-    def validate_base_url(self, value):
-        if value and urlsplit(value).scheme not in {"http", "https"}:
-            raise serializers.ValidationError("Model URL must use HTTP or HTTPS.")
-        return value
-
     def validate(self, data):
-        if "model_profile_id" in data:
-            if not data["stream"]:
-                raise serializers.ValidationError({"model_profile_id": "Saved model selection requires streaming chat."})
-            if any(key in data for key in ("api_key", "model", "base_url", "timeout_seconds")):
-                raise serializers.ValidationError({"model_profile_id": "A saved model cannot be combined with model connection overrides."})
+        data = super().validate(data)
         if "conversation_id" in data:
             if not data["stream"]:
                 raise serializers.ValidationError({"conversation_id": "Saved conversations require streaming chat."})
@@ -106,9 +95,6 @@ class PageChatRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError({"conversation_id": "A conversation is required for saved context options."})
         if data.get("agent_names") and not data["stream"]:
             raise serializers.ValidationError({"agent_names": "Agent selection requires streaming chat."})
-        base_url = data.get("base_url")
-        if base_url and not data.get("api_key") and normalize_base_url(base_url) != chat_config()["base_url"]:
-            raise serializers.ValidationError({"api_key": "Provide an API key when using a custom model URL."})
         return data
 
 
@@ -132,14 +118,13 @@ SYSTEM_PROMPT = (
 @permission_classes([IsAuthenticated])
 @renderer_classes([*api_settings.DEFAULT_RENDERER_CLASSES, EventStreamRenderer])
 def page_chat(request):
+    if not request.user.is_active or is_user_readonly(request.user):
+        return Response({"error": "This account cannot use AI chat."}, status=status.HTTP_403_FORBIDDEN)
     serializer = PageChatRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     if data["stream"]:
-        if is_user_readonly(request.user):
-            return Response({"error": "Readonly accounts cannot use agent chat."}, status=status.HTTP_403_FORBIDDEN)
         from ai_assistant.page_agent import stream_page_chat
-        from ai_assistant.model_profiles import ModelProfileUnavailable
         try:
             return stream_page_chat(request.user, data)
         except ModelProfileUnavailable:
@@ -156,13 +141,17 @@ def page_chat(request):
             + json.dumps(data["page_context"], ensure_ascii=False),
         })
     messages.append({"role": "user", "content": data["message"]})
-    overrides = {key: data[key] for key in ("api_key", "model", "base_url", "timeout_seconds") if key in data}
+    overrides, model_guard = selected_model_config(request.user, data)
     overrides["_usage_context"] = model_usage_context(request.user, source="page_chat", overrides=overrides, agent_name="assistant")
     try:
+        model_guard()
         with open_chat_model(overrides=overrides) as model:
             response = message_text(model.invoke(messages)).strip()
+        model_guard()
         if not response:
             raise ValueError("Empty model response")
+    except PermissionDenied:
+        raise
     except Exception:
         return Response(
             {"error": "AI assistant is temporarily unavailable. Check the AI configuration or try again later."},

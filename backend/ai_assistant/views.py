@@ -7,15 +7,14 @@ from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from ai_assistant.assistant import AIAssistantError, test_openai_connectivity
 from ai_assistant.chat_agent import run_chat_agent
 from ai_assistant.chat_errors import safe_chat_error
 from ai_assistant.conversation_history import current_actor, require_history_permissions
 from ai_assistant.model_selection import selected_model_config
+from ai_assistant.external_tool_policy import saved_mcp_config
 from ai_assistant.usage_recording import model_usage_context
 from ai_assistant.monitoring import get_mcp_monitor, get_skill_monitor
 from ai_assistant.serializers import (
-    AIAssistantRequestSerializer,
     AIChatRequestSerializer,
     ExternalMCPServerSerializer,
     SkillConfigSerializer,
@@ -76,26 +75,8 @@ def _fix_mojibake_in_obj(value: any) -> any:
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def test_connectivity(request):
-    serializer = AIAssistantRequestSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
-    if data.get("model_profile_id"):
-        return Response({"error": "Test saved models using /models/{id}/test/."},
-                        status=status.HTTP_400_BAD_REQUEST)
-
-    overrides = {
-        "api_key": data.get("api_key"),
-        "model": data.get("model"),
-        "base_url": data.get("base_url"),
-        "timeout_seconds": data.get("timeout_seconds"),
-    }
-
-    try:
-        overrides["_usage_context"] = model_usage_context(request.user, source="connectivity_test", overrides=overrides)
-        result = test_openai_connectivity(overrides=overrides)
-        return Response(result)
-    except AIAssistantError as exc:
-        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response({"error": "Use a saved model and /models/{id}/test/ to test connectivity."},
+                    status=status.HTTP_410_GONE)
 
 
 @api_view(["GET"])
@@ -128,9 +109,10 @@ def mcp_monitor(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mcp_registry_servers(request):
+    require_mcp_permission(request, "add")
     data = request.data if isinstance(request.data, dict) else {}
     base_url = str(data.get("base_url") or getattr(settings, "MCP_GATEWAY_BASE_URL", "") or "").strip()
-    token = str(data.get("token") or getattr(settings, "MCP_GATEWAY_TOKEN", "") or "").strip()
+    token = str(data.get("token") or ("" if data.get("base_url") else getattr(settings, "MCP_GATEWAY_TOKEN", "")) or "").strip()
     query = str(data.get("query") or "").strip()
     cursor = str(data.get("cursor") or "").strip()
     try:
@@ -235,46 +217,12 @@ def ai_chat(request):
             return Response({"error": "ticket not found"}, status=status.HTTP_404_NOT_FOUND)
 
     overrides = {
-        "api_key": data.get("api_key"),
-        "model": data.get("model"),
-        "base_url": data.get("base_url"),
-        "timeout_seconds": data.get("timeout_seconds"),
-        "max_iterations": data.get("max_iterations"),
-        "mcp": {
-            "enabled": data.get("mcp_enabled"),
-            "base_url": data.get("mcp_base_url"),
-            "servers": data.get("mcp_servers"),
-            "token": data.get("mcp_token"),
-            "timeout_seconds": data.get("mcp_timeout_seconds"),
-        },
+        **model_overrides, "max_iterations": data.get("max_iterations"),
+        "mcp": saved_mcp_config(actor, enabled=data.get("mcp_enabled") is not False),
     }
-    overrides.update(model_overrides)
     overrides["_usage_context"] = model_usage_context(
-        request.user, source="ticket_chat" if ticket else "chat", overrides=overrides, agent_name="assistant",
+        actor, source="ticket_chat" if ticket else "chat", overrides=overrides, agent_name="assistant",
     )
-
-    mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
-    if isinstance(mcp_overrides, dict):
-        if mcp_overrides.get("enabled") is not False:
-            mcp_overrides["enabled"] = True
-            mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
-            mcp_overrides["force_internal"] = True
-        if not mcp_overrides.get("token"):
-            auth_header = request.META.get("HTTP_AUTHORIZATION")
-            if isinstance(auth_header, str) and auth_header.strip():
-                mcp_overrides["token"] = auth_header.strip()
-        if not mcp_overrides.get("servers"):
-            servers = ExternalMCPServer.objects.filter(enabled=True).order_by("name")
-            mcp_overrides["servers"] = [
-                {
-                    "endpoint": s.endpoint,
-                    "title": s.title,
-                    "token": s.token,
-                }
-                for s in servers
-            ]
-        if mcp_overrides.get("enabled") is None and mcp_overrides.get("servers"):
-            mcp_overrides["enabled"] = True
 
     recommended_skills = normalize_skill_names(data.get("skills"))
     if not recommended_skills:
@@ -361,7 +309,7 @@ def ai_chat(request):
 def external_mcp_servers(request):
     require_mcp_permission(request, "view" if request.method == "GET" else "add")
     if request.method == "GET":
-        rows = ExternalMCPServer.objects.all().order_by("name")
+        rows = ExternalMCPServer.objects.prefetch_related("use_groups").order_by("name")
         serializer = ExternalMCPServerSerializer(rows, many=True, context={"request": request})
         return Response(serializer.data)
 
@@ -404,9 +352,12 @@ def external_mcp_start(request, name: str):
     server = ExternalMCPServer.objects.select_for_update().filter(name=name).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
+    previous_policies = dict(server.tool_approvals)
+    if not request.user.is_superuser:
+        server.tool_approvals = {}
     server.enabled = True
-    server.save(update_fields=["enabled", "updated_at"])
-    audit_mcp_configuration(request, server, "start")
+    server.save(update_fields=["enabled", "tool_approvals", "updated_at"])
+    audit_mcp_configuration(request, server, "start", previous_policies)
     return Response({"message": "started", "name": server.name})
 
 
@@ -418,9 +369,12 @@ def external_mcp_stop(request, name: str):
     server = ExternalMCPServer.objects.select_for_update().filter(name=name).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
+    previous_policies = dict(server.tool_approvals)
+    if not request.user.is_superuser:
+        server.tool_approvals = {}
     server.enabled = False
-    server.save(update_fields=["enabled", "updated_at"])
-    audit_mcp_configuration(request, server, "stop")
+    server.save(update_fields=["enabled", "tool_approvals", "updated_at"])
+    audit_mcp_configuration(request, server, "stop", previous_policies)
     return Response({"message": "stopped", "name": server.name})
 
 

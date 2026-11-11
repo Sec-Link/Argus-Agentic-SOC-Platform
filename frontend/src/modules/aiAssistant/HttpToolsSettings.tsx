@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Switch, Table, Tag, Typography, message as antdMessage } from 'antd';
 import { createAiAssistantHttpTool, deleteAiAssistantHttpTool, listAiAssistantHttpTools, updateAiAssistantHttpTool, type HttpToolConfig } from 'services/aiAssistant';
 import { buildHttpToolPayload, parseToolTemplate, type HttpToolFormValues } from './httpToolForm';
+import type { ToolAccessRole } from '../../api';
 
 const emptyForm: HttpToolFormValues = {
   name: '', description: '', enabled: false, requires_approval: true, method: 'GET', url: '', parameters: [],
   query_json: '{}', body_json: '', auth_type: 'none', auth_header: '', auth_prefix: '',
   auth_secret: '', clear_auth_secret: false, timeout_seconds: 15,
+  use_group_ids: [],
 };
 
 function errorMessage(error: any, fallback: string): string {
@@ -24,7 +26,12 @@ function errorMessage(error: any, fallback: string): string {
   return fallback;
 }
 
-export default function HttpToolsSettings({ readonly = false }: { readonly?: boolean }) {
+export default function HttpToolsSettings({ readonly = false, roles, canManageAccess, canDisableApproval }: {
+  readonly?: boolean;
+  roles: ToolAccessRole[];
+  canManageAccess: boolean;
+  canDisableApproval: boolean;
+}) {
   const [message, contextHolder] = antdMessage.useMessage();
   const [form] = Form.useForm<HttpToolFormValues>();
   const [rows, setRows] = useState<HttpToolConfig[]>([]);
@@ -65,11 +72,13 @@ export default function HttpToolsSettings({ readonly = false }: { readonly?: boo
   }, [loadTools]);
 
   const editTool = (row?: HttpToolConfig) => {
+    if (readonly) return;
     setEditing(row || null);
     setSaveError('');
     form.resetFields();
     form.setFieldsValue(row ? {
-      name: row.name, description: row.description, enabled: row.enabled, requires_approval: row.requires_approval !== false, method: row.method, url: row.url,
+      name: row.name, description: row.description, enabled: row.enabled, requires_approval: !canDisableApproval || row.requires_approval !== false, method: row.method, url: row.url,
+      use_group_ids: row.use_group_ids,
       parameters: row.parameters, auth_type: row.auth_type, auth_header: row.auth_header, auth_prefix: row.auth_prefix,
       timeout_seconds: row.timeout_seconds, query_json: JSON.stringify(row.query_params, null, 2),
       body_json: row.body_template ? JSON.stringify(row.body_template, null, 2) : '', auth_secret: '', clear_auth_secret: false,
@@ -80,8 +89,9 @@ export default function HttpToolsSettings({ readonly = false }: { readonly?: boo
   const closeModal = () => { setOpen(false); form.resetFields(); setSaveError(''); };
 
   const saveTool = async (values: HttpToolFormValues) => {
+    if (readonly || saving) return;
     let payload;
-    try { payload = buildHttpToolPayload(values); }
+    try { payload = buildHttpToolPayload(values, { canManageAccess, canDisableApproval }); }
     catch (error) { setSaveError(error instanceof Error ? error.message : 'Check the request templates.'); return; }
     setSaving(true);
     setSaveError('');
@@ -121,7 +131,7 @@ export default function HttpToolsSettings({ readonly = false }: { readonly?: boo
         {!readonly && <Button type="primary" onClick={() => editTool()}>Add tool</Button>}
       </Space>}>
         <Typography.Paragraph type="secondary">
-          Configure external APIs the page assistant can use to investigate alerts. Enabled tools are available on your next message. Each tool requires approval unless you explicitly turn it off.
+          Configure external APIs for the page assistant. Only users in the allowed roles can provide these tools to AI and approve their own calls. Superusers can use all tools and turn approval off. Changes by other users restore required approval.
         </Typography.Paragraph>
         {loadError && <Alert type="error" showIcon message={loadError} style={{ marginBottom: 16 }} />}
         <Table<HttpToolConfig>
@@ -134,6 +144,7 @@ export default function HttpToolsSettings({ readonly = false }: { readonly?: boo
             { title: 'Request', width: 260, render: (_, row) => <><Tag>{row.method}</Tag><Typography.Text style={{ wordBreak: 'break-all' }}>{row.url}</Typography.Text></> },
             { title: 'Authentication', width: 130, render: (_, row) => row.auth_type === 'none' ? 'None' : <><div>{row.auth_type === 'bearer' ? 'Bearer' : row.auth_header}</div><Typography.Text type={row.has_auth_secret ? 'secondary' : 'warning'}>{row.has_auth_secret ? 'Secret saved' : 'No secret'}</Typography.Text></> },
             { title: 'Approval', width: 120, render: (_, row) => <Tag color={row.requires_approval === false ? 'orange' : 'blue'}>{row.requires_approval === false ? 'Automatic' : 'Required'}</Tag> },
+            { title: 'Allowed roles', width: 180, render: (_, row) => row.use_group_ids?.length ? row.use_group_ids.map((id) => <Tag key={id}>{roles.find((role) => role.id === id)?.name || `Role #${id}`}</Tag>) : 'Superusers only' },
             { title: 'Enabled', width: 80, render: (_, row) => <Switch size="small" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={readonly || !!busyName} loading={busyName === row.name} onChange={(enabled) => void toggleTool(row, enabled)} /> },
             { title: 'Actions', width: 130, render: (_, row) => <Space><Button size="small" disabled={readonly || !!busyName} onClick={() => editTool(row)}>Edit</Button><Popconfirm title={`Delete ${row.name}?`} description="The assistant will no longer be able to use this tool." onConfirm={() => deleteTool(row)} okText="Delete" okButtonProps={{ danger: true }}><Button size="small" danger disabled={readonly || !!busyName}>Delete</Button></Popconfirm></Space> },
           ]}
@@ -141,6 +152,7 @@ export default function HttpToolsSettings({ readonly = false }: { readonly?: boo
       </Card>
       <Modal title={editing ? `Edit tool: ${editing.name}` : 'Add HTTP tool'} open={open} width={800}
         onCancel={closeModal} onOk={() => form.submit()} okText="Save tool" confirmLoading={saving}
+        okButtonProps={{ disabled: readonly }}
         cancelButtonProps={{ disabled: saving }} closable={!saving} maskClosable={!saving} keyboard={!saving} destroyOnClose>
         {saveError && <Alert type="error" showIcon message={saveError} style={{ marginBottom: 16 }} />}
         <Form form={form} layout="vertical" initialValues={emptyForm} onFinish={(values) => void saveTool(values)} disabled={readonly || saving}>
@@ -149,7 +161,9 @@ export default function HttpToolsSettings({ readonly = false }: { readonly?: boo
             <Col xs={24} sm={6}><Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item></Col>
           </Row>
           <Form.Item name="description" label="When should AI use this tool?" rules={[{ required: true, whitespace: true }]}><Input.TextArea maxLength={1000} rows={2} placeholder="Describe the information returned and when to query it." /></Form.Item>
-          <Form.Item name="requires_approval" label="Require approval before each call" valuePropName="checked" extra="When off, AI can call this tool automatically for authorized users. Turn off only for tools you permit to run without confirmation."><Switch /></Form.Item>
+          {canManageAccess && <Form.Item name="use_group_ids" label="Roles allowed to use this tool" extra="No roles selected means only superusers can use this tool. Other users' AI will not receive it."><Select mode="multiple" allowClear optionFilterProp="label" options={roles.map((role) => ({ value: role.id, label: role.name }))} placeholder="Select allowed roles" /></Form.Item>}
+          {!canManageAccess && <Typography.Paragraph type="secondary">Changing allowed roles requires the tool access management permission.</Typography.Paragraph>}
+          <Form.Item name="requires_approval" label="Require approval before each call" valuePropName="checked" extra={canDisableApproval ? 'When off, AI can call this tool automatically for authorized users.' : 'Only superusers can turn approval off. Saving changes requires approval for this tool.'}><Switch disabled={readonly || saving || !canDisableApproval} /></Form.Item>
           <Row gutter={16}>
             <Col xs={24} sm={5}><Form.Item name="method" label="Method" rules={[{ required: true }]}><Select options={[{ value: 'GET' }, { value: 'POST' }]} /></Form.Item></Col>
             <Col xs={24} sm={19}><Form.Item name="url" label="API URL" rules={[{ required: true }, { pattern: /^https:\/\//, message: 'Use a public HTTPS API URL.' }]} extra="Use {parameter} in the path when needed. Keep the hostname fixed and credentials in Authentication."><Input maxLength={2000} placeholder="https://api.example.com/items/{id}" /></Form.Item></Col>

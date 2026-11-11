@@ -170,15 +170,15 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
     if enabled is None:
         enabled = bool(getattr(settings, "MCP_GATEWAY_ENABLED", False))
 
-    base_url = (mcp.get("base_url") or getattr(settings, "MCP_GATEWAY_BASE_URL", "") or "").strip()
     exact_only = bool(mcp.get("exact_only"))
+    base_url = (mcp.get("base_url") or ("" if exact_only else getattr(settings, "MCP_GATEWAY_BASE_URL", "")) or "").strip()
     token = (
         (mcp.get("token") or "")
         if exact_only
         else (mcp.get("token") or getattr(settings, "MCP_GATEWAY_TOKEN", "") or "")
     ).strip()
     raw_servers = mcp.get("servers")
-    servers: List[Dict[str, str]] = []
+    servers: List[Dict[str, Any]] = []
     if isinstance(raw_servers, list):
         for item in raw_servers:
             if not isinstance(item, dict):
@@ -191,6 +191,8 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
                     "endpoint": endpoint,
                     "title": str(item.get("title") or "").strip(),
                     "token": str(item.get("token") or "").strip(),
+                    **({"id": item["id"], "config_version": item.get("config_version")}
+                       if "id" in item else {}),
                 }
             )
     # Keep base_url as the primary (usually internal) MCP endpoint.
@@ -227,6 +229,8 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         "servers": servers,
         "force_internal": bool(mcp.get("force_internal")),
         "exact_only": exact_only,
+        **({"actor_id": mcp["actor_id"], "approval_supported": bool(mcp.get("approval_supported"))}
+           if "actor_id" in mcp else {}),
         "timeout_seconds": timeout_seconds,
         "ticket_context_path": str(ticket_context_path),
         "ticket_search_path": str(ticket_search_path),
@@ -261,8 +265,8 @@ def _full_url(path: str, config: Dict[str, Any]) -> str:
 
 
 def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> List[Dict[str, Any]]:
-    seen: set[str] = set()
-    items: List[Dict[str, str]] = []
+    seen: set[str | tuple[str, int]] = set()
+    items: List[Dict[str, Any]] = []
 
     base_url = str(config.get("base_url") or "").strip()
     if base_url:
@@ -298,6 +302,8 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
                     "endpoint": endpoint,
                     "title": str(item.get("title") or "").strip(),
                     "token": str(item.get("token") or "").strip(),
+                    **({"id": item["id"], "config_version": item.get("config_version")}
+                       if "id" in item else {}),
                 }
             )
 
@@ -305,7 +311,7 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
     hint_tokens: List[str] = []
     if tool_hint:
         hint_tokens = [t for t in re.split(r"[^a-z0-9]+", tool_hint.lower()) if len(t) >= 3]
-    weighted: List[tuple[int, int, Dict[str, str]]] = []
+    weighted: List[tuple[int, int, Dict[str, Any]]] = []
     for idx, item in enumerate(items):
         haystack = f"{item.get('title', '')} {item.get('endpoint', '')}".lower()
         score = sum(1 for t in hint_tokens if t in haystack)
@@ -315,13 +321,15 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
     candidates: List[Dict[str, Any]] = []
     for _, __, item in weighted:
         url = str(item.get("endpoint") or "").strip()
-        key = url if config.get("exact_only") else url.rstrip("/").lower()
+        key = ("server", item["id"]) if "id" in item else (url if config.get("exact_only") else url.rstrip("/").lower())
         if key in seen:
             continue
         seen.add(key)
         cfg = dict(config)
         cfg["base_url"] = url
         cfg["server_title"] = str(item.get("title") or "").strip()
+        if "id" in item:
+            cfg.update(server_id=item["id"], config_version=item.get("config_version"))
         if "token" in item:
             cfg["token"] = str(item.get("token") or "").strip()
         candidates.append(cfg)
@@ -329,6 +337,8 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
 
 
 def _is_mcp_jsonrpc_endpoint(config: Dict[str, Any]) -> bool:
+    if "server_id" in config:
+        return True
     base_url = str(config.get("base_url", "") or "").lower()
     return bool(config.get("exact_only")) or "/mcp-connect/" in base_url or base_url.endswith("/mcp") or base_url.endswith("/mcp/")
 
@@ -765,14 +775,11 @@ def invoke_mcp_tool_exact(
     config = _resolve_config(overrides)
     endpoint = str(target_mcp or "")
     cfg = None
-    # Resolve credentials from the exact server, never from a similarly named endpoint.
+    # An endpoint-only legacy call cannot disambiguate two saved server identities.
     if _enabled(config):
-        for server in config.get("servers") or []:
-            if server["endpoint"] == endpoint and not config.get("force_internal"):
-                cfg = {**config, "base_url": endpoint, "token": server["token"], "server_title": server["title"]}
-                break
-        if cfg is None and config["base_url"] == endpoint:
-            cfg = {**config, "server_title": ""}
+        candidates = [candidate for candidate in _candidate_configs(config) if candidate["base_url"] == endpoint]
+        if len(candidates) == 1:
+            cfg = candidates[0]
     payload = None
     try:
         if cfg is None:

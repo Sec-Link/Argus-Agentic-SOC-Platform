@@ -13,11 +13,13 @@ class ExternalMCPServer(models.Model):
     enabled = models.BooleanField(default=True)
     extra = models.JSONField(default=dict, blank=True)
     tool_approvals = models.JSONField(default=dict, blank=True)
+    use_groups = models.ManyToManyField("auth.Group", blank=True, related_name="usable_mcp_servers")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "ai_external_mcp_servers"
+        permissions = [("manage_access_externalmcpserver", "Can manage MCP server use roles")]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.endpoint})"
@@ -31,6 +33,7 @@ class HttpToolConfig(models.Model):
     description = models.TextField(max_length=1000)
     enabled = models.BooleanField(default=False)
     requires_approval = models.BooleanField(default=True)
+    use_groups = models.ManyToManyField("auth.Group", blank=True, related_name="usable_http_tools")
     method = models.CharField(max_length=4, choices=[("GET", "GET"), ("POST", "POST")], default="GET")
     url = models.CharField(max_length=2000)
     parameters = models.JSONField(default=list, blank=True)
@@ -50,6 +53,7 @@ class HttpToolConfig(models.Model):
 
     class Meta:
         db_table = "ai_http_tool_configs"
+        permissions = [("manage_access_httptoolconfig", "Can manage HTTP tool use roles")]
 
     def __str__(self) -> str:
         return self.name

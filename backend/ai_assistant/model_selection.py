@@ -1,7 +1,7 @@
-"""Authorize legacy AI entry points before using shared model credentials."""
+"""Authorize AI entry points before using shared model credentials."""
 
 from django.contrib.auth import get_user_model
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from accounts.services import is_user_readonly
 from .model_profiles import resolve_model_profile
@@ -9,7 +9,7 @@ from .model_profiles import resolve_model_profile
 
 def selected_model_config(user, data, *, permissions=()):
     if not data.get("model_profile_id"):
-        return {}, None
+        raise ValidationError({"model_profile_id": "Select a saved model."})
 
     actor_pk = getattr(user, "pk", None)
 

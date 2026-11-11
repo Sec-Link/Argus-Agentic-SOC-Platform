@@ -19,6 +19,7 @@ from ai_assistant.mcp_gateway import (
     fetch_ticket_context,
 )
 from ai_assistant.mcp_tools import load_mcp_tools
+from ai_assistant.monitoring import start_mcp_execution, finish_mcp_execution
 from ai_assistant.skills import apply_local_skills
 from ai_assistant.skill_config import normalize_skill_names
 from ai_assistant.skill_tools import SkillsMiddleware
@@ -557,6 +558,42 @@ def test_openai_connectivity(overrides: Dict[str, Any] | None = None) -> Dict[st
     }
 
 
+def _ticket_enrichment(name, overrides, **arguments):
+    mcp = (overrides or {}).get("mcp") or {}
+    list_result = name in {"cmdb_asset_lookup", "ticket_search_similar_cases"}
+    if "actor_id" not in mcp:
+        fetch = {
+            "ticket_context": fetch_ticket_context, "observables_extract": fetch_observables,
+            "cmdb_asset_lookup": fetch_cmdb_assets, "ticket_search_similar_cases": fetch_similar_cases,
+        }[name]
+        return fetch(overrides=overrides, **arguments)
+    if not mcp.get("allow_internal"):
+        return [] if list_result else {}
+
+    # Reuse the page assistant's resource checks without a credential-bearing loopback request.
+    from ai_assistant.page_agent import _actor, _check_internal
+    from ai_assistant.mcp_protocol_views import _call_tool
+
+    actor = _actor(mcp["actor_id"])
+    _check_internal(actor, "ticket_context", arguments)
+    execution_id = start_mcp_execution(name, arguments, source="ticket_analysis", audit_context={
+        **(overrides or {}).get("_usage_context", {}), "actor_id": actor.pk, "tool_source": "internal",
+    })
+    try:
+        _check_internal(actor, name, arguments)
+        result = _call_tool(name, arguments)
+    except PermissionError:
+        finish_mcp_execution(execution_id, False, "Resource permission denied; enrichment was not executed.")
+        if name == "cmdb_asset_lookup":
+            return []
+        raise
+    except Exception:
+        finish_mcp_execution(execution_id, False, "Local ticket enrichment failed.")
+        raise
+    finish_mcp_execution(execution_id, True, response_payload=result)
+    return result.get("items", []) if list_result else result
+
+
 def generate_ai_assistant_output(
     ticket: EventTicket,
     alert_json: Any,
@@ -578,7 +615,7 @@ def generate_ai_assistant_output(
     if user_prompt:
         mcp_context = {"dynamic_tool_call": {}, "route_decision": {}, "tool_plan": {}}
     else:
-        mcp_context = fetch_ticket_context(ticket.ticket_number, overrides=overrides)
+        mcp_context = _ticket_enrichment("ticket_context", overrides, ticket_number=ticket.ticket_number)
 
         inputs_for_iocs: List[str] = []
         if alert_json is not None:
@@ -588,12 +625,11 @@ def generate_ai_assistant_output(
         if related_logs:
             inputs_for_iocs.extend([str(v) for v in related_logs if v is not None])
         ioc_source_text = "\n".join(inputs_for_iocs)
-        observables_payload = fetch_observables(
-            ticket.ticket_number,
+        observables_payload = _ticket_enrichment(
+            "observables_extract", overrides, ticket_number=ticket.ticket_number,
             raw_message=str(ticket.alert_message or ""),
             alert_json=alert_json if isinstance(alert_json, dict) else None,
             text=ioc_source_text,
-            overrides=overrides,
         ) or {}
         observables = observables_payload.get("observables") if isinstance(observables_payload, dict) else {}
         if not isinstance(observables, dict):
@@ -610,19 +646,20 @@ def generate_ai_assistant_output(
         hostnames = _extract_hostnames(ioc_source_text)
         mcp_domains = observables.get("domain") if isinstance(observables.get("domain"), list) else []
         hostnames = sorted(set(hostnames + [str(v).strip().lower() for v in mcp_domains if str(v).strip()]))
-        cmdb_assets = fetch_cmdb_assets(
-            ticket.ticket_number,
+        cmdb_assets = _ticket_enrichment(
+            "cmdb_asset_lookup", overrides, ticket_number=ticket.ticket_number,
             indicators={
                 "ips": iocs.get("ips", []),
                 "hostnames": hostnames,
                 "asset_numbers": observables.get("asset_number") if isinstance(observables.get("asset_number"), list) else [],
             },
             limit=10,
-            overrides=overrides,
         ) or []
 
-        similar_cases = fetch_similar_cases(ticket.ticket_number, iocs=iocs, limit=5, overrides=overrides) or []
-        if not similar_cases:
+        similar_cases = _ticket_enrichment(
+            "ticket_search_similar_cases", overrides, ticket_number=ticket.ticket_number, iocs=iocs, limit=5,
+        ) or []
+        if not similar_cases and "actor_id" not in ((overrides or {}).get("mcp") or {}):
             similar_cases = _build_similar_cases(ticket, alert_json, trigger_rule, related_logs)
 
     work_logs = (

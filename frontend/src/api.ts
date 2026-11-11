@@ -538,20 +538,12 @@ export async function fetchSlaTicketHandleLogs(ticketNumber: string) {
 export async function generateSlaTicketAiAssistant(
   ticketNumber: string,
   payload: {
-    model_profile_id?: string;
+    model_profile_id: string;
     alert_json?: any;
     trigger_rule?: string;
     related_logs?: string[];
-    api_key?: string;
-    model?: string;
-    base_url?: string;
-    timeout_seconds?: number;
     enabled?: boolean;
     mcp_enabled?: boolean;
-    mcp_base_url?: string;
-    mcp_servers?: Array<{ endpoint?: string; title?: string }>;
-    mcp_token?: string;
-    mcp_timeout_seconds?: number;
     skills?: Array<{
       name?: string;
       version?: string;
@@ -570,21 +562,13 @@ export async function generateSlaTicketAiAssistant(
 export async function generateSlaTicketAiMention(
   ticketNumber: string,
   payload: {
-    model_profile_id?: string;
+    model_profile_id: string;
     prompt: string;
     alert_json?: any;
     trigger_rule?: string;
     related_logs?: string[];
-    api_key?: string;
-    model?: string;
-    base_url?: string;
-    timeout_seconds?: number;
     enabled?: boolean;
     mcp_enabled?: boolean;
-    mcp_base_url?: string;
-    mcp_servers?: Array<{ endpoint?: string; title?: string }>;
-    mcp_token?: string;
-    mcp_timeout_seconds?: number;
     skills?: Array<{
       name?: string;
       version?: string;
@@ -635,16 +619,6 @@ export async function fetchTicketPlaybookWorkplan(ticketNumber: string) {
   return res.data;
 }
 
-export async function testAiAssistantConnectivity(payload: {
-  api_key?: string;
-  model?: string;
-  base_url?: string;
-  timeout_seconds?: number;
-}) {
-  const res = await client.post('/ai-assistant/test-connectivity/', payload);
-  return res.data;
-}
-
 export async function fetchAiAssistantMcpMonitor(params?: {
   tool?: string;
   status?: 'all' | 'completed' | 'failed' | 'running';
@@ -672,14 +646,10 @@ export async function fetchAiAssistantSkillMonitor() {
 }
 
 export async function aiAssistantChat(payload: {
-  model_profile_id?: string;
+  model_profile_id: string;
   message: string;
   messages?: Array<{ role: string; content: any }>;
   ticket_number?: string;
-  api_key?: string;
-  model?: string;
-  base_url?: string;
-  timeout_seconds?: number;
   max_iterations?: number;
 }) {
   const res = await client.post('/ai-assistant/chat/', payload);
@@ -707,11 +677,7 @@ export interface PageChatRequest {
   /** Up to three enabled specialist names. Omit to let the coordinator choose. */
   agent_names?: string[];
   page_context?: PageChatContext;
-  model_profile_id?: string;
-  api_key?: string;
-  model?: string;
-  base_url?: string;
-  timeout_seconds?: number;
+  model_profile_id: string;
 }
 
 export async function aiAssistantPageChat(payload: PageChatRequest, signal?: AbortSignal): Promise<{ response: string }> {
@@ -804,6 +770,16 @@ export async function listAiAssistantMcpServers() {
   return res.data;
 }
 
+export interface ToolAccessRole {
+  id: number;
+  name: string;
+}
+
+export async function listAiAssistantToolAccessRoles(): Promise<ToolAccessRole[]> {
+  const res = await client.get('/ai-assistant/tool-access-roles/');
+  return res.data;
+}
+
 export interface HttpToolParameter {
   name: string;
   type: 'string' | 'integer' | 'number' | 'boolean';
@@ -829,12 +805,13 @@ export interface HttpToolFields {
 
 export interface HttpToolConfig extends HttpToolFields {
   id: number;
+  use_group_ids: number[];
   has_auth_secret: boolean;
   created_at: string;
   updated_at: string;
 }
 
-export type HttpToolWrite = HttpToolFields & { auth_secret?: string; clear_auth_secret?: boolean };
+export type HttpToolWrite = HttpToolFields & { use_group_ids?: number[]; auth_secret?: string; clear_auth_secret?: boolean };
 
 export async function listAiAssistantHttpTools(page = 1, pageSize = 20): Promise<{
   count: number; next: string | null; previous: string | null; results: HttpToolConfig[];
@@ -908,6 +885,7 @@ export async function createAiAssistantMcpServer(payload: {
   title?: string;
   token?: string;
   enabled?: boolean;
+  use_group_ids?: number[];
   extra?: any;
 }) {
   const res = await client.post('/ai-assistant/external-mcp/', payload);
@@ -918,7 +896,9 @@ export async function updateAiAssistantMcpServer(name: string, payload: Partial<
   endpoint: string;
   title: string;
   token: string;
+  clear_token: boolean;
   enabled: boolean;
+  use_group_ids: number[];
   extra: any;
   tool_approvals: Record<string, boolean>;
   approval_policy_version: string;

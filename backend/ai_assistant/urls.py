@@ -7,6 +7,7 @@ from django.urls import re_path
 
 from .agent_views import AgentConfigViewSet, agent_catalog
 from .http_tool_views import HttpToolViewSet
+from .tool_access import tool_access_roles
 from .conversation_views import ConversationViewSet
 from .execution_settings import ExecutionSettingsViewSet
 from .model_profiles import ModelProfileViewSet, model_catalog
@@ -52,6 +53,7 @@ urlpatterns = [
     re_path(r'^agents/catalog/?$', agent_catalog, name='agent_catalog'),
     re_path(r'^agents/(?P<name>[a-z][a-z0-9_]{0,47})/?$', AgentConfigViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='agent_detail'),
     re_path(r'^http-tools/?$', HttpToolViewSet.as_view({'get': 'list', 'post': 'create'}), name='http_tools'),
+    re_path(r'^tool-access-roles/?$', tool_access_roles, name='tool_access_roles'),
     re_path(r'^http-tools/(?P<name>[a-z][a-z0-9_]{0,47})/?$', HttpToolViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='http_tool_detail'),
     re_path(r'^test-connectivity/?$', test_connectivity, name='test_connectivity'),
     re_path(r'^chat/?$', ai_chat, name='chat'),

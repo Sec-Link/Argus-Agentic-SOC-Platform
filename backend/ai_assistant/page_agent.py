@@ -37,6 +37,8 @@ from ai_assistant.conversation_history import ConversationConflict, Conversation
 from ai_assistant.execution_settings import get_execution_limits
 from ai_assistant.model_profiles import resolve_model_profile
 from ai_assistant.usage_recording import model_usage_context
+from ai_assistant.tool_access import allowed_tools, require_tool_access
+from ai_assistant.external_tool_policy import check_saved_mcp, saved_mcp_config
 
 
 logger = logging.getLogger(__name__)
@@ -115,9 +117,9 @@ def public_event(value, _depth=0):
 
 
 def _actor(user_id):
-    user = get_user_model().objects.get(pk=user_id, is_active=True)
-    if is_user_readonly(user):
-        raise PermissionError("Readonly accounts cannot execute assistant tools.")
+    user = get_user_model().objects.filter(pk=user_id, is_active=True).first()
+    if not user or is_user_readonly(user):
+        raise PermissionError("Inactive or readonly accounts cannot execute assistant tools.")
     return user
 
 
@@ -157,7 +159,7 @@ def _http_config(meta):
     return row
 
 
-def _http_tools(cancel_event) -> list[BaseTool]:
+def _http_tools(cancel_event, user) -> list[BaseTool]:
     def create_tool(row):
         config = row.as_tool_config()
         name = "http__" + row.name
@@ -169,6 +171,7 @@ def _http_tools(cancel_event) -> list[BaseTool]:
             if cancel_event.is_set():
                 raise ChatCancelled("Chat stopped")
             current = _http_config(meta)
+            require_tool_access(_actor(user.pk), current)
             try:
                 secret = decrypt_http_tool_secret(current.encrypted_auth_secret)
             except ValueError:
@@ -191,7 +194,7 @@ def _http_tools(cancel_event) -> list[BaseTool]:
             func=call, metadata=meta, handle_tool_error=True,
         )
 
-    return [create_tool(row) for row in HttpToolConfig.objects.filter(enabled=True).order_by("name")]
+    return [create_tool(row) for row in allowed_tools(HttpToolConfig.objects.all(), user).order_by("name")]
 
 
 class PageToolPolicy:
@@ -212,15 +215,15 @@ class PageToolPolicy:
         if self.agent_context:
             check_agent(self.agent_context)
 
-    def _server_enabled(self, endpoint):
-        server = self.servers.get(endpoint)
-        # Recheck config after approval; changed credentials/endpoints require a new turn.
-        match = {"pk": server["id"], "enabled": True, "endpoint": endpoint, "token": server["token"]} if server else {}
-        if server and "updated_at" in server:
-            match["updated_at"] = server["updated_at"]
-        if not server or not ExternalMCPServer.objects.filter(**match).exists():
+    def _server_enabled(self, meta):
+        server = self.servers.get(meta.get("server_id"))
+        if (not server or server["endpoint"] != meta.get("endpoint")
+                or server["config_version"] != meta.get("config_version")):
             raise PermissionError("The MCP server configuration changed. Start a new message.")
-        return server
+        return check_saved_mcp({
+            "actor_id": self.user_id, "server_id": server["id"], "base_url": server["endpoint"],
+            "config_version": server["config_version"], "approval_supported": True,
+        })
 
     def __call__(self, *, name, arguments, meta, execution_id, call_id):
         if self.cancel_event.is_set():
@@ -244,7 +247,9 @@ class PageToolPolicy:
         request = None
         requires_approval = True
         if meta.get("source") == "http":
-            config = _http_config(meta).as_tool_config()
+            row = _http_config(meta)
+            require_tool_access(user, row)
+            config = row.as_tool_config()
             requires_approval = config.get("requires_approval") is not False
             try:
                 request = build_tool_request(config, arguments)
@@ -253,11 +258,11 @@ class PageToolPolicy:
             audit.update(http_tool_id=meta["config_id"], config_version=meta["config_version"],
                          request=public_event(request))
         else:
-            server = self._server_enabled(endpoint)
-            policies = server.get("tool_approvals") or {}
+            server = self._server_enabled(meta)
+            policies = server.tool_approvals or {}
             raw_name = meta.get("tool_name")
             requires_approval = not (isinstance(policies, dict) and policies.get(raw_name) is False)
-            audit.update(mcp_server_id=server["id"], config_version=str(server.get("updated_at", "")),
+            audit.update(mcp_server_id=server.pk, config_version=server.updated_at.isoformat(),
                          remote_tool=raw_name)
         audit["requires_approval"] = requires_approval
         MCPToolExecution.objects.filter(pk=execution_id).update(request_detail=snapshot({
@@ -304,14 +309,14 @@ class PageToolPolicy:
             if timezone.now().timestamp() >= audit["expires_at"]:
                 raise PermissionError("Tool approval expired; the tool was not executed.")
             if row.status == "approved":
-                _actor(self.user_id)
+                user = _actor(self.user_id)
                 self._check_agent()
                 if self.execution_guard:
                     self.execution_guard()
                 if meta.get("source") == "http":
-                    _http_config(meta)
+                    require_tool_access(user, _http_config(meta))
                 else:
-                    self._server_enabled(endpoint)
+                    self._server_enabled(meta)
                 claimed = MCPToolExecution.objects.filter(pk=execution_id, status="approved").update(status="running")
                 if claimed and not self.cancel_event.is_set():
                     return
@@ -344,6 +349,16 @@ def page_chat_approval(request, execution_id):
         if row.status != "awaiting_approval" or audit.get("expires_at", 0) <= timezone.now().timestamp():
             return Response({"error": "Tool approval is no longer pending."}, status=status.HTTP_409_CONFLICT)
         decision = serializer.validated_data["decision"]
+        if decision == "approve":
+            config_model = HttpToolConfig if audit.get("http_tool_id") else ExternalMCPServer
+            config_id = audit.get("http_tool_id") or audit.get("mcp_server_id")
+            config = config_model.objects.filter(pk=config_id, enabled=True).first()
+            if not config or config.updated_at.isoformat() != audit.get("config_version"):
+                return Response({"error": "Tool configuration changed. Start a new message."}, status=409)
+            try:
+                require_tool_access(_actor(request.user.pk), config)
+            except PermissionError:
+                return Response({"error": "You no longer have permission to use this tool."}, status=403)
         audit.update(decision=decision, decided_at=timezone.now().isoformat())
         row.response_payload = {"_page_chat": audit}
         row.status = "approved" if decision == "approve" else "rejected"
@@ -364,24 +379,12 @@ def stream_page_chat(user, data):
         raise serializers.ValidationError({
             "agent_names": "Allow one coordinator round per selected agent plus a final summary round in Execution limits settings.",
         })
-    servers = list(ExternalMCPServer.objects.filter(enabled=True).order_by("name").values(
-        "id", "endpoint", "title", "token", "updated_at", "tool_approvals",
-    ))
-    servers_by_endpoint = {}
-    for server in servers:
-        servers_by_endpoint.setdefault(server["endpoint"], server)
-    servers = list(servers_by_endpoint.values())
+    mcp = saved_mcp_config(user, approval_supported=True)
+    servers_by_id = {server["id"]: server for server in mcp["servers"]}
     skills = get_enabled_skill_names()
-    overrides = {key: data[key] for key in ("api_key", "model", "base_url", "timeout_seconds") if key in data}
-    model_snapshot, model_guard = {}, None
-    if data.get("model_profile_id"):
-        overrides, model_snapshot, model_guard = resolve_model_profile(user, data["model_profile_id"])
+    overrides, model_snapshot, model_guard = resolve_model_profile(user, data["model_profile_id"])
     overrides["max_iterations"] = limits.max_iterations
-    overrides["mcp"] = {
-        "enabled": bool(servers), "exact_only": True, "force_internal": False,
-        "base_url": servers[0]["endpoint"] if servers else "", "token": servers[0]["token"] if servers else "",
-        "servers": servers, "timeout_seconds": 8,
-    }
+    overrides["mcp"] = mcp
     request_id = str(uuid4())
     recorder = None
     if data.get("conversation_id"):
@@ -441,7 +444,7 @@ def stream_page_chat(user, data):
         raise ChatCancelled("Chat stopped")
 
     policy = PageToolPolicy(
-        user.pk, request_id, cancelled, servers_by_endpoint, event_callback=emit,
+        user.pk, request_id, cancelled, servers_by_id, event_callback=emit,
         approval_seconds=limits.approval_timeout_seconds, deadline=deadline,
         execution_guard=lambda: check_actor(),
     )
@@ -480,7 +483,7 @@ def stream_page_chat(user, data):
 
     def produce():
         try:
-            tools = [*_builtin_tools(), *_http_tools(cancelled)]
+            tools = [*_builtin_tools(), *_http_tools(cancelled, _actor(user.pk))]
             worker_kwargs = dict(
                 user_input=data["message"], history_messages=history, overrides=overrides,
                 recommended_skills=skills, allowed_skills=skills,
@@ -499,7 +502,7 @@ def stream_page_chat(user, data):
                     max_delegations=limits.max_delegations,
                     coordinator_max_iterations=limits.coordinator_max_iterations,
                     policy_factory=lambda context: PageToolPolicy(
-                        user.pk, policy.request_id, cancelled, servers_by_endpoint,
+                        user.pk, policy.request_id, cancelled, servers_by_id,
                         agent_context=context, external_denied=policy.external_denied,
                         event_callback=emit,
                         approval_seconds=limits.approval_timeout_seconds, deadline=deadline,
