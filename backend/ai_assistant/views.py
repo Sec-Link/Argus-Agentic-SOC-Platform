@@ -25,7 +25,10 @@ from ai_assistant.mcp_tool_config import audit_mcp_configuration, require_mcp_pe
 from tickets.models import EventTicket
 import re
 
-from ai_assistant.skill_config import get_enabled_skill_names, list_skill_catalog, normalize_skill_names
+from ai_assistant.skill_config import (
+    audit_skill_configuration, get_enabled_skill_names, list_skill_catalog,
+    normalize_skill_names, require_skill_permission,
+)
 from ai_assistant.skill_library import read_skill_content, write_skill_content
 
 _MOJIBAKE_CHARS = re.compile(r"[ÃÂâåäæçèéêëìíîïðñòóôöõøùúûüýÿ]")
@@ -389,6 +392,7 @@ def skill_catalog(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def skill_configs(request):
+    require_skill_permission(request, "view" if request.method == "GET" else "add")
     if request.method == "GET":
         rows = SkillConfig.objects.all().order_by("name")
         serializer = SkillConfigSerializer(rows, many=True)
@@ -396,13 +400,16 @@ def skill_configs(request):
 
     serializer = SkillConfigSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    with transaction.atomic():
+        row = serializer.save()
+        audit_skill_configuration(request, row.name, "create", serializer.validated_data)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
 def skill_config_detail(request, name: str):
+    require_skill_permission(request, {"GET": "view", "PUT": "change", "DELETE": "delete"}[request.method])
     row = SkillConfig.objects.filter(name=name).first()
     if not row:
         return Response({"error": "skill not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -411,12 +418,16 @@ def skill_config_detail(request, name: str):
         return Response(SkillConfigSerializer(row).data)
 
     if request.method == "DELETE":
-        row.delete()
+        with transaction.atomic():
+            row.delete()
+            audit_skill_configuration(request, name, "delete", [])
         return Response({"message": "deleted"})
 
     serializer = SkillConfigSerializer(row, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    with transaction.atomic():
+        serializer.save()
+        audit_skill_configuration(request, name, "update", serializer.validated_data)
     return Response(serializer.data)
 
 
@@ -428,6 +439,7 @@ def _sanitize_skill_name(name: str) -> str:
 @api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticated])
 def skill_content_detail(request, name: str):
+    require_skill_permission(request, "view" if request.method == "GET" else "change")
     safe_name = _sanitize_skill_name(name)
     if not safe_name:
         return Response({"error": "invalid skill name"}, status=status.HTTP_400_BAD_REQUEST)
@@ -445,5 +457,11 @@ def skill_content_detail(request, name: str):
     try:
         path = write_skill_content(safe_name, content, title=title, description=description)
     except ValueError:
+        audit_skill_configuration(request, safe_name, "write_content", [], success=False)
         return Response({"error": "invalid skill path"}, status=status.HTTP_400_BAD_REQUEST)
+    except OSError:
+        audit_skill_configuration(request, safe_name, "write_content", [], success=False)
+        return Response({"error": "Skill content could not be saved."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    # shortcut: file and audit writes are separate; use transactional storage if atomicity is required.
+    audit_skill_configuration(request, safe_name, "write_content", {"content", "title", "description"}.intersection(data))
     return Response({"name": safe_name, "path": path})

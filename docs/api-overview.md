@@ -238,6 +238,10 @@ The legacy `POST /api/v1/ai-assistant/chat/` snapshots the managed execution set
 
 MCP JSON-RPC `tools/call` checks the authenticated caller's active/non-readonly state and resource permissions before executing a tool. `ticket_context` and `ticket_search_similar_cases` require `tickets.view_eventticket`; `cmdb_asset_lookup` requires `cmdb.view_asset`. Any call with a nonempty `ticket_number` also requires `tickets.view_eventticket`, including asset lookup and observable extraction. Tool authorization failures from the RPC handler return HTTP 403 with the original JSON-RPC `id`, error code `-32003` and a fixed message. Authentication and global readonly middleware can reject a request earlier using their existing error format. Tool listing, initialization and successful results keep their existing contracts.
 
+Skill management uses the existing Django permissions: GET `/skills/config/`, `/skills/config/{name}/` and `/skills/content/{name}/` require `ai_assistant.view_skillconfig`; configuration POST requires `add_skillconfig`; configuration PUT and content PUT require `change_skillconfig`; configuration DELETE requires `delete_skillconfig`. Readonly accounts cannot write even when granted those permissions. Content PUT can create a skill file, so the UI's full creation flow requires both add and change permissions. These management grants are not required for an operator's Agent to read enabled skills under its existing allowlist.
+
+Skill configuration changes and content writes record actor, skill name, action, changed field names and outcome through the activity audit. Skill bodies, descriptions and server file paths are excluded from those audit records; guest request summaries omit Skill management bodies too. Configuration writes and their audit records share a database transaction. Content files and audit storage are not one transaction: an audit failure after a file write is an error, but the file may already have changed. The UI reports partial configuration/content saves and blocks saving after a failed content read. Previously login-only management clients now need explicit permission grants through the existing Permissions page; no grants, schema migration or dependency changes are introduced. Rolling back the application code restores the old authorization weaknesses.
+
 Chat and specialist agents receive native LangChain `BaseTool` / `StructuredTool` objects directly. Built-in queries, knowledge-base searches, configured HTTP tools and `delegate_to_agent` use the same agent tool node and audit/permission middleware. Tool failures remain error `ToolMessage` results. There is no parallel schema/handler registry or custom tool-result wrapper. HTTP tools retain their public-IP-pinned HTTPS transport and server-managed approval policy; LangChain does not replace those security checks with a general-purpose HTTP toolkit.
 
 Skills use progressive disclosure through `SkillsMiddleware`: only enabled names and short descriptions appear in the catalog, and the agent loads a document using `read_skill` when needed. Full skill content enters model history as a tool result, not as system instructions. Enabled state is rechecked when reading; names and resolved paths must stay within the skill library. An explicit empty allowlist exposes no skills. A read returns at most 12,000 characters with an explicit truncation notice. Skill selection and reading use normal model rounds; there is no extra selection request outside the agent budget. A one-round budget can request a skill but cannot subsequently synthesize a response from it. Ticket analysis uses the same skill tools and preserves `skills_used` from actual successful reads.
@@ -383,12 +387,14 @@ node --test src/modules/aiAssistant/modelPricing.test.mjs
 node --test src/modules/aiAssistant/httpToolForm.test.mjs
 node --test src/modules/aiAssistant/agentMentions.test.mjs
 node --test src/modules/aiAssistant/agentLimits.test.mjs
+node --test src/modules/aiAssistant/skillManagement.test.mjs
 node --test src/modules/tickets/aiContext.test.mjs
 node --test src/modules/tickets/ticketChatHistory.test.mjs
 node node_modules/typescript/bin/tsc --noEmit --incremental false
 
 # From backend/
 ..\.venv\Scripts\python.exe manage.py test ai_assistant.tests --settings=ai_assistant.tests.legacy_chat_settings --verbosity=1
+..\.venv\Scripts\python.exe manage.py test ai_assistant.tests.test_internal_skill_security ai_assistant.tests.test_legacy_chat_security --settings=ai_assistant.tests.legacy_chat_settings --verbosity=1
 ..\.venv\Scripts\python.exe manage.py check --settings=ai_assistant.tests.legacy_chat_settings
 ..\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run --settings=ai_assistant.tests.legacy_chat_settings
 ..\.venv\Scripts\python.exe manage.py test ai_assistant.tests.test_tool_access ai_assistant.tests.test_external_tool_security ai_assistant.tests.test_ai_request_security ai_assistant.tests.test_builtin_enrichment_security --settings=ai_assistant.tests.page_chat_settings --verbosity=1

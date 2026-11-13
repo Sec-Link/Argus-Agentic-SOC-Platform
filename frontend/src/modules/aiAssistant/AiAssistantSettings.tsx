@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
 import { getIsReadonly } from '../../lib/auth';
 import { getRbacMe } from 'services/accounts';
@@ -41,6 +41,12 @@ export default function AiAssistantSettings() {
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [skillEditRow, setSkillEditRow] = useState<any | null>(null);
   const [skillContentLoading, setSkillContentLoading] = useState(false);
+  const [skillContentReady, setSkillContentReady] = useState(false);
+  const [skillContentError, setSkillContentError] = useState('');
+  const [skillSaving, setSkillSaving] = useState(false);
+  const skillLoadSequence = useRef(0);
+  const [skillPermissions, setSkillPermissions] = useState<string[] | null>(null);
+  const [skillsError, setSkillsError] = useState('');
   const [skillContentPreview, setSkillContentPreview] = useState('');
   const [internalMcpTools, setInternalMcpTools] = useState<any[]>([]);
   const [isReadonly, setIsReadonly] = useState(false);
@@ -51,6 +57,10 @@ export default function AiAssistantSettings() {
   const [toolAccessError, setToolAccessError] = useState('');
   const [toolAccessReady, setToolAccessReady] = useState(false);
   useEffect(() => { setIsReadonly(getIsReadonly()); }, []);
+  const canViewSkills = !!skillPermissions?.includes('view');
+  const canAddSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('add');
+  const canChangeSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('change');
+  const canDeleteSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('delete');
   const skillConfigMap = useMemo(() => {
     const map = new Map<string, any>();
     for (const row of skillConfigs) {
@@ -81,6 +91,8 @@ export default function AiAssistantSettings() {
     try {
       const me = await getRbacMe();
       const permissions: string[] = Array.isArray(me?.permissions) ? me.permissions : [];
+      setSkillPermissions(['view', 'add', 'change', 'delete'].filter((action) =>
+        !!me?.is_superuser || permissions.includes(`ai_assistant.${action}_skillconfig`)));
       const httpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_httptoolconfig');
       const mcpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_externalmcpserver');
       const roles = httpAccess || mcpAccess ? await listAiAssistantToolAccessRoles() : [];
@@ -90,6 +102,7 @@ export default function AiAssistantSettings() {
       setCanDisableApproval(!!me?.is_superuser);
       setToolAccessReady(true);
     } catch {
+      setSkillPermissions((current) => current ?? []);
       setToolAccessError('Could not load tool access permissions. Role editing and automatic approval are unavailable.');
     }
   };
@@ -108,13 +121,15 @@ export default function AiAssistantSettings() {
     try {
       const res = await listAiAssistantSkillConfigs();
       setSkillConfigs(Array.isArray(res) ? res : []);
-    } catch {
-      message.error('Failed to load skill configs');
+    } catch (error: any) {
+      setSkillsError(error?.response?.status === 403 ? 'You do not have permission to view skill configurations.' : 'Failed to load skill configs. Please retry.');
       setSkillConfigs([]);
     }
   };
 
   const loadSkills = async () => {
+    if (!canViewSkills) return;
+    setSkillsError('');
     setSkillsLoading(true);
     try {
       await Promise.all([loadSkillCatalog(), loadSkillConfigs()]);
@@ -136,10 +151,14 @@ export default function AiAssistantSettings() {
   useEffect(() => {
     void loadToolAccess();
     loadMcpServers();
-    loadSkills();
     loadInternalMcpTools();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (canViewSkills) void loadSkills();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canViewSkills]);
 
   const openMcpModal = (row?: any) => {
     if (!toolAccessReady || isReadonly) return;
@@ -211,6 +230,11 @@ export default function AiAssistantSettings() {
   };
 
   const openSkillModal = (row?: any) => {
+    if (!canChangeSkills || (!row && !canAddSkills)) return;
+    const sequence = ++skillLoadSequence.current;
+    setSkillContentReady(!row?.name);
+    setSkillContentError('');
+    setSkillContentLoading(!!row?.name);
     setSkillEditRow(row || null);
     skillEditForm.setFieldsValue({
       name: row?.name || '',
@@ -223,23 +247,28 @@ export default function AiAssistantSettings() {
     setSkillContentPreview('');
     setSkillModalOpen(true);
     if (row?.name) {
-      setSkillContentLoading(true);
       fetchAiAssistantSkillContent(row.name)
         .then((res) => {
-          const content = String(res?.content || '');
+          if (sequence !== skillLoadSequence.current) return;
+          if (typeof res?.content !== 'string') throw new Error('Invalid skill content response');
+          const content = res.content;
           skillEditForm.setFieldsValue({ content });
           setSkillContentPreview(content);
+          setSkillContentReady(true);
         })
         .catch(() => {
-          skillEditForm.setFieldsValue({ content: '' });
-          setSkillContentPreview('');
+          if (sequence !== skillLoadSequence.current) return;
+          setSkillContentError('Could not load skill content. Saving is disabled; close and reopen to retry.');
         })
-        .finally(() => setSkillContentLoading(false));
+        .finally(() => { if (sequence === skillLoadSequence.current) setSkillContentLoading(false); });
     }
   };
 
   const submitSkillModal = async () => {
+    if (!canChangeSkills || (!skillEditRow && !canAddSkills) || !skillContentReady || skillContentLoading || skillSaving) return;
     const values = await skillEditForm.validateFields();
+    setSkillSaving(true);
+    let configSaved = false;
     try {
       if (skillEditRow?.name) {
         await updateAiAssistantSkillConfig(skillEditRow.name, {
@@ -248,6 +277,7 @@ export default function AiAssistantSettings() {
           enabled: values.enabled !== false,
           description: values.description || '',
         });
+        configSaved = true;
         await updateAiAssistantSkillContent(skillEditRow.name, {
           content: values.content || '',
           title: values.name || skillEditRow.name,
@@ -255,13 +285,15 @@ export default function AiAssistantSettings() {
         });
         message.success('Skill updated');
       } else {
-        await createAiAssistantSkillConfig({
+        const created = await createAiAssistantSkillConfig({
           name: values.name,
           version: values.version || 'v1',
           route: values.route || values.name,
           enabled: values.enabled !== false,
           description: values.description || '',
         });
+        configSaved = true;
+        setSkillEditRow({ ...values, ...created, name: values.name });
         await updateAiAssistantSkillContent(values.name, {
           content: values.content || '',
           title: values.name,
@@ -274,11 +306,15 @@ export default function AiAssistantSettings() {
       await loadSkillConfigs();
     } catch (err: any) {
       const apiError = err?.response?.data?.error || err?.response?.data?.detail;
-      message.error(apiError ? String(apiError) : 'Failed to save skill');
+      message.error(configSaved ? 'Skill configuration was saved, but content saving could not be confirmed. Check the content before retrying.' : apiError ? String(apiError) : 'Failed to save skill');
+      if (configSaved) await loadSkillConfigs();
+    } finally {
+      setSkillSaving(false);
     }
   };
 
   const onDeleteSkill = async (row: any) => {
+    if (!canDeleteSkills) return;
     try {
       await deleteAiAssistantSkillConfig(row.name);
       await loadSkillConfigs();
@@ -292,6 +328,7 @@ export default function AiAssistantSettings() {
     const name = String(row?.name || '').trim();
     if (!name) return;
     const existing = skillConfigMap.get(name);
+    if (existing ? !canChangeSkills : !canAddSkills) return;
     try {
       if (existing) {
         await updateAiAssistantSkillConfig(name, { enabled: true });
@@ -601,14 +638,15 @@ export default function AiAssistantSettings() {
           {
             key: 'skills',
             label: 'Skills Management',
-            children: (
+            children: !canViewSkills ? <Alert type="info" showIcon message={skillPermissions === null ? 'Loading skill permissions…' : 'You do not have permission to view skill configurations.'} /> : (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                {skillsError && <Alert type="error" showIcon message={skillsError} />}
                 <Card
                   title="Configured Skills"
                   extra={(
                     <Space>
                       <Button onClick={() => loadSkills()} loading={skillsLoading}>Refresh</Button>
-                      {isReadonly ? null : <Button type="primary" onClick={() => openSkillModal()}>Add Skill</Button>}
+                      {canAddSkills && canChangeSkills && <Button type="primary" onClick={() => openSkillModal()}>Add Skill</Button>}
                     </Space>
                   )}
                 >
@@ -628,17 +666,17 @@ export default function AiAssistantSettings() {
                         key: 'enabled',
                         width: 110,
                         render: (_: any, row: any) => (
-                          <Switch disabled={isReadonly} checked={row.enabled !== false} onChange={(checked) => updateAiAssistantSkillConfig(row.name, { enabled: checked }).then(loadSkillConfigs).catch(() => message.error('Failed to update skill'))} />
+                          <Switch disabled={!canChangeSkills} checked={row.enabled !== false} onChange={(checked) => updateAiAssistantSkillConfig(row.name, { enabled: checked }).then(loadSkillConfigs).catch(() => message.error('Failed to update skill'))} />
                         ),
                       },
-                      ...(isReadonly ? [] : [{
+                      ...(!canChangeSkills && !canDeleteSkills ? [] : [{
                         title: 'Action',
                         key: 'action',
                         width: 180,
                         render: (_: any, row: any) => (
                           <Space>
-                            <Button size="small" onClick={() => openSkillModal(row)}>Edit</Button>
-                            <Button danger size="small" onClick={() => onDeleteSkill(row)}>Delete</Button>
+                            {canChangeSkills && <Button size="small" onClick={() => openSkillModal(row)}>Edit</Button>}
+                            {canDeleteSkills && <Button danger size="small" onClick={() => onDeleteSkill(row)}>Delete</Button>}
                           </Space>
                         ),
                       }]),
@@ -720,15 +758,19 @@ export default function AiAssistantSettings() {
 
       <Modal
         title={skillEditRow ? 'Edit Skill' : 'Add Skill'}
-        open={skillModalOpen && !isReadonly}
-        onCancel={() => setSkillModalOpen(false)}
+        open={skillModalOpen && canChangeSkills}
+        onCancel={() => { if (!skillSaving) { skillLoadSequence.current++; setSkillModalOpen(false); } }}
         onOk={submitSkillModal}
         okText={skillEditRow ? 'Save' : 'Create'}
-        confirmLoading={skillContentLoading}
+        confirmLoading={skillSaving}
+        okButtonProps={{ disabled: !skillContentReady || skillContentLoading || skillSaving }}
+        cancelButtonProps={{ disabled: skillSaving }}
       >
+        {skillContentError && <Alert type="error" showIcon message={skillContentError} />}
         <Form
           form={skillEditForm}
           layout="vertical"
+          disabled={skillContentLoading || skillSaving}
           onValuesChange={(changed) => {
             if (Object.prototype.hasOwnProperty.call(changed, 'content')) {
               setSkillContentPreview(String(changed.content || ''));

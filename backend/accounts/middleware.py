@@ -39,6 +39,7 @@ def _summarize(request) -> dict:
         for prefix in (
             "/api/v1/ai-assistant/http-tools", "/api/v1/ai-assistant/agents", "/api/v1/ai-assistant/conversations",
             "/api/v1/ai-assistant/models", "/api/v1/ai-assistant/external-mcp",
+            "/api/v1/ai-assistant/skills",
         )
     ):
         return {}
