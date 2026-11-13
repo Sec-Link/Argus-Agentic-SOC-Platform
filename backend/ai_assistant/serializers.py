@@ -71,6 +71,8 @@ class AIChatRequestSerializer(ModelSelectionSerializer):
             if not isinstance(item, dict):
                 continue
             role = str(item.get("role") or "").strip()
+            if role not in {"user", "assistant"}:
+                raise serializers.ValidationError("Message role must be user or assistant.")
             content = item.get("content")
             if role and content is not None:
                 cleaned.append({"role": role, "content": content})

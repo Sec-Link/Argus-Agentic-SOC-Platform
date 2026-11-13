@@ -12,6 +12,7 @@ from ai_assistant.chat_errors import safe_chat_error
 from ai_assistant.conversation_history import current_actor, require_history_permissions
 from ai_assistant.model_selection import selected_model_config
 from ai_assistant.external_tool_policy import saved_mcp_config
+from ai_assistant.execution_settings import get_execution_limits
 from ai_assistant.usage_recording import model_usage_context
 from ai_assistant.monitoring import get_mcp_monitor, get_skill_monitor
 from ai_assistant.serializers import (
@@ -196,6 +197,7 @@ def ai_chat(request):
     serializer = AIChatRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
+    limits = get_execution_limits()
     ticket_number = str(data.get("ticket_number") or "").strip()
     actor = current_actor(request.user, write=True)
     if ticket_number:
@@ -217,7 +219,7 @@ def ai_chat(request):
             return Response({"error": "ticket not found"}, status=status.HTTP_404_NOT_FOUND)
 
     overrides = {
-        **model_overrides, "max_iterations": data.get("max_iterations"),
+        **model_overrides, "max_iterations": limits.max_iterations,
         "mcp": saved_mcp_config(actor, enabled=data.get("mcp_enabled") is not False),
     }
     overrides["_usage_context"] = model_usage_context(
