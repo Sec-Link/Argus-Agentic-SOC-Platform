@@ -59,6 +59,8 @@ This document tracks the current code structure, key APIs, database mappings, an
 | RBAC | `/api/v1/accounts/rbac/` | various | RBAC helper routes | `backend/accounts/urls.py` |
 | Permissions | `/api/v1/permissions/` | various | Permission-related routes | `backend/siem_project/urls.py` |
 
+`GET /api/v1/rbac/me/` includes the server-derived `is_readonly` flag, using the same staff/superuser exemptions as backend readonly enforcement. The frontend hides the AI Assistant settings menu and blocks direct access to `/settings/ai-assistant` for readonly accounts and ordinary users without AI configuration view permissions (`view_modelprofile`, `view_executionsettings`, `view_agentconfig`, `view_httptoolconfig`, `view_externalmcpserver`, or `view_skillconfig`) or `review_all_modelusage`. Superusers retain access; permission previews use the selected user's effective permissions. Until this response explicitly confirms `is_readonly: false`, the settings component is not mounted and the floating assistant is disabled, so their initial configuration/catalog requests do not run. Configuration API permissions remain enforced independently on the backend, and chat use does not require configuration permissions. Deploy the backend field before or with the frontend; an older backend without this field leaves AI settings and chat disabled.
+
 ### Alerts
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |

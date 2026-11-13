@@ -264,7 +264,7 @@ export default function Sidebar({
         onClick={({ key }) => {
           const nextKey = String(key) as RouteKey;
           const nextPerm = permissionByKey[nextKey];
-          if (nextPerm && !canAccess(nextPerm, nextKey)) {
+          if (!canAccess(nextPerm, nextKey)) {
             message.warning('No permission to access this feature.');
             return;
           }

@@ -180,6 +180,19 @@ export default function BasicLayout({
   }, [selectedKey]);
 
   const canAccess = (perm?: string, key?: RouteKey) => {
+    if (key === 'ai-assistant') {
+      if (rbacMe?.is_readonly !== false) return false;
+      if (!impersonation && rbacMe?.is_superuser) return true;
+      return [
+        'ai_assistant.view_modelprofile',
+        'ai_assistant.view_executionsettings',
+        'ai_assistant.view_agentconfig',
+        'ai_assistant.view_httptoolconfig',
+        'ai_assistant.view_externalmcpserver',
+        'ai_assistant.view_skillconfig',
+        'ai_assistant.review_all_modelusage',
+      ].some((permission) => effectivePermissions.includes(permission));
+    }
     if (key === 'system-settings') {
       return !impersonation && Boolean(rbacMe?.is_staff);
     }
@@ -448,7 +461,7 @@ export default function BasicLayout({
           onNavigate={(path) => router.push(path)}
         />
 
-        <AssistantWorkspace pathname={pathname} readonly={!!rbacMe?.is_readonly}>
+        <AssistantWorkspace pathname={pathname} readonly={rbacMe?.is_readonly !== false}>
         <Layout style={{ flex: 1, minWidth: 0, background: 'var(--bg-main)', transition: 'background-color 180ms ease' }}>
           <Header style={{ background: 'var(--bg-header)', padding: 0, borderBottom: 'none', color: 'var(--text-primary)' }}>
             <HeaderBar
