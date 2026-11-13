@@ -1,9 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
-import { Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Descriptions, Divider, Empty, Form, Input, List, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
 import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
+import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
+import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
+import { fetchModelCatalog, type ModelCatalogEntry } from 'services/aiAssistant/models';
+import { buildTicketDetailContext } from '../aiContext';
+import { canContinueTicketChat, type TicketChatCapabilities, type TicketChatScope } from '../ticketChatHistory';
+import layoutStyles from './TicketLayout.module.css';
 
 type Props = {
   ticket: SlaTicketDetail;
@@ -29,11 +35,15 @@ type TicketCallablePlaybook = {
 
 type TicketWorkplanItem = {
   execution_id: string;
+  workflow_id?: string;
   workflow_name: string;
   status: string;
   trigger_source: string;
   progress_percent?: number;
   created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  executed_by?: string | null;
   error_message?: string;
 };
 
@@ -364,6 +374,7 @@ function WarRoomView({
               <Table
                 rowKey="id"
                 size="small"
+                scroll={{ x: 'max-content' }}
                 pagination={false}
                 columns={[
                   { title: 'File', dataIndex: 'file_name', key: 'file_name', ellipsis: true },
@@ -408,19 +419,30 @@ export default function SlaTicketDetailView(props: Props) {
   const [isPending, setIsPending] = useState(false);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [handleLogs, setHandleLogs] = useState<SlaTicketHandleLog[]>([]);
+  const [handleLogsState, setHandleLogsState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [aiRawResponse, setAiRawResponse] = useState('');
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiModels, setAiModels] = useState<ModelCatalogEntry[]>([]);
+  const [aiModelId, setAiModelId] = useState('');
+  const [aiModelsLoading, setAiModelsLoading] = useState(true);
+  const [aiModelsError, setAiModelsError] = useState('');
+  const aiModelsRequest = useRef<AbortController | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
   const [chatWidthTouched, setChatWidthTouched] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; hidden?: boolean; trace?: any[] }>>([]);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; hidden?: boolean; trace?: any[]; owner?: string }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [chatMoreLoading, setChatMoreLoading] = useState(false);
   const [chatNextBefore, setChatNextBefore] = useState<string | null>(null);
+  const [chatScope, setChatScope] = useState<TicketChatScope>('mine');
+  const [chatCapabilities, setChatCapabilities] = useState<TicketChatCapabilities | null>(null);
+  const [chatHistoryError, setChatHistoryError] = useState('');
+  const chatHistorySequence = useRef(0);
+  const chatCanContinue = canContinueTicketChat(chatScope, chatCapabilities) && !chatHistoryLoading && !chatMoreLoading;
   const [collapsedTraces, setCollapsedTraces] = useState<Record<number, boolean>>({});
   const [expandedTaskIndex, setExpandedTaskIndex] = useState<number | null>(null);
   const [expandedNextTaskIndex, setExpandedNextTaskIndex] = useState<number | null>(null);
@@ -437,6 +459,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [playbookLoading, setPlaybookLoading] = useState(false);
   const [workplanItems, setWorkplanItems] = useState<TicketWorkplanItem[]>([]);
   const [workplanLoading, setWorkplanLoading] = useState(false);
+  const [workplanState, setWorkplanState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [editableLabels, setEditableLabels] = useState<Array<{ label_name: string; label_value: string }>>([]);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelValue, setNewLabelValue] = useState('');
@@ -444,6 +467,66 @@ export default function SlaTicketDetailView(props: Props) {
   const aiAssistantCardRef = useRef<HTMLDivElement | null>(null);
 
   const notesCount = workLogs?.length ?? 0;
+
+  const loadAiModels = useCallback(async () => {
+    aiModelsRequest.current?.abort();
+    const controller = new AbortController();
+    aiModelsRequest.current = controller;
+    setAiModelsLoading(true);
+    setAiModelsError('');
+    try {
+      const catalog = await fetchModelCatalog(controller.signal);
+      if (controller.signal.aborted) return;
+      setAiModels(catalog);
+      setAiModelId((current) => {
+        if (current) return current;
+        let preferred = null;
+        try { preferred = localStorage.getItem(MODEL_PREFERENCE_KEY); } catch { /* Use the catalog if storage is unavailable. */ }
+        return initialModelChoice(catalog, preferred);
+      });
+    } catch {
+      if (!controller.signal.aborted) setAiModelsError('Available models could not be loaded. Refresh the model list.');
+    } finally {
+      if (!controller.signal.aborted) setAiModelsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAiModels();
+    return () => aiModelsRequest.current?.abort();
+  }, [loadAiModels]);
+
+  const aiModelAvailable = aiModels.some((model) => model.id === aiModelId);
+  const aiModelReady = aiModelAvailable && !aiModelsLoading && !aiModelsError;
+  const requireAiModel = () => {
+    if (aiModelReady) return true;
+    message.warning(aiModelsError || 'Choose an enabled model in AI Assistant > Models before using AI.');
+    return false;
+  };
+  const aiModelSelector = (
+    <div style={{ display: 'grid', gap: 4 }}>
+      <Select
+        aria-label="Ticket AI model"
+        placeholder="Choose an enabled model"
+        value={aiModelId || undefined}
+        loading={aiModelsLoading}
+        onDropdownVisibleChange={(visible) => { if (visible) void loadAiModels(); }}
+        onChange={(value) => {
+          setAiModelId(value);
+          try { localStorage.setItem(MODEL_PREFERENCE_KEY, value); } catch { /* Keep the choice in this tab. */ }
+        }}
+        options={[
+          ...(aiModelId && !aiModelAvailable ? [{ value: aiModelId, label: 'Selected model unavailable', disabled: true }] : []),
+          ...aiModels.map((model) => ({ value: model.id, label: `${model.name} (${model.model})` })),
+        ]}
+        style={{ width: '100%' }}
+      />
+      {aiModelsError ? <Typography.Text type="danger">{aiModelsError} <Typography.Link onClick={() => void loadAiModels()}>Refresh</Typography.Link></Typography.Text> : null}
+      {!aiModelsLoading && !aiModelsError && !aiModelAvailable ? (
+        <Typography.Text type="warning">Choose an enabled model or configure one in <Typography.Link href="/settings/ai-assistant">AI Assistant &gt; Models</Typography.Link>.</Typography.Text>
+      ) : null}
+    </div>
+  );
 
   useEffect(() => {
     try {
@@ -456,13 +539,21 @@ export default function SlaTicketDetailView(props: Props) {
 
   useEffect(() => {
     let alive = true;
+    setHandleLogs([]);
+    setHandleLogsState('loading');
     (async () => {
       try {
         const res = await fetchSlaTicketHandleLogs(ticket.ticket_number);
         const parsed = Array.isArray(res) ? res : [];
-        if (alive) setHandleLogs(parsed);
+        if (alive) {
+          setHandleLogs(parsed);
+          setHandleLogsState('loaded');
+        }
       } catch {
-        if (alive) setHandleLogs([]);
+        if (alive) {
+          setHandleLogs([]);
+          setHandleLogsState('error');
+        }
       }
     })();
     return () => {
@@ -487,18 +578,33 @@ export default function SlaTicketDetailView(props: Props) {
     setChatInput('');
     setCollapsedTraces({});
     setChatNextBefore(null);
+    chatHistorySequence.current++;
+    setChatScope('mine');
+    setChatCapabilities(null);
+    setChatHistoryError('');
+    setChatHistoryLoading(false);
+    setChatMoreLoading(false);
+    setChatLoading(false);
   }, [ticket.ticket_number]);
 
   useEffect(() => {
     let alive = true;
+    setWorkplanItems([]);
+    setWorkplanState('loading');
     setWorkplanLoading(true);
     (async () => {
       try {
         const res = await fetchTicketPlaybookWorkplan(ticket.ticket_number);
         const rows = Array.isArray(res?.results) ? res.results : [];
-        if (alive) setWorkplanItems(rows);
+        if (alive) {
+          setWorkplanItems(rows);
+          setWorkplanState('loaded');
+        }
       } catch {
-        if (alive) setWorkplanItems([]);
+        if (alive) {
+          setWorkplanItems([]);
+          setWorkplanState('error');
+        }
       } finally {
         if (alive) setWorkplanLoading(false);
       }
@@ -508,22 +614,7 @@ export default function SlaTicketDetailView(props: Props) {
     };
   }, [ticket.ticket_number]);
 
-  const buildAiBasePayload = () => {
-    const aiEnabled = localStorage.getItem('siem_ai_enabled') !== '0';
-    const aiApiKey = localStorage.getItem('siem_ai_api_key') || '';
-    const aiModel = localStorage.getItem('siem_ai_model') || '';
-    const aiBaseUrl = localStorage.getItem('siem_ai_base_url') || '';
-    const aiTimeoutRaw = localStorage.getItem('siem_ai_timeout') || '';
-    const aiTimeout = aiTimeoutRaw && !Number.isNaN(Number(aiTimeoutRaw)) ? Number(aiTimeoutRaw) : undefined;
-
-    return {
-      enabled: aiEnabled,
-      api_key: aiApiKey || undefined,
-      model: aiModel || undefined,
-      base_url: aiBaseUrl || undefined,
-      timeout_seconds: aiTimeout,
-    };
-  };
+  const buildAiBasePayload = () => chatModelRequest(aiModelId);
 
   const buildTicketPlaybookPayload = () => ({
     ticket_number: ticket.ticket_number,
@@ -588,11 +679,20 @@ export default function SlaTicketDetailView(props: Props) {
     return `Ticket context (read-only):\n${JSON.stringify(context, null, 2)}`;
   };
 
-  const loadChatHistory = async () => {
+  const loadChatHistory = async (scope: TicketChatScope = chatScope) => {
+    const sequence = ++chatHistorySequence.current;
+    setChatScope(scope);
+    setChatCapabilities(null);
+    setChatHistoryError('');
     setChatHistoryLoading(true);
+    setChatMessages([]);
+    setChatInput('');
+    setChatNextBefore(null);
+    setCollapsedTraces({});
     const system = { role: 'system', content: buildChatContext(), hidden: true };
     try {
-      const res = await fetchSlaTicketAiChatHistory(ticket.ticket_number, { limit: 50 });
+      const res = await fetchSlaTicketAiChatHistory(ticket.ticket_number, { limit: 50, scope });
+      if (sequence !== chatHistorySequence.current) return;
       const rows = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
       const normalized = rows
         .filter((row: any) => row && row.role && row.content != null)
@@ -600,22 +700,29 @@ export default function SlaTicketDetailView(props: Props) {
           role: String(row.role),
           content: fixMojibake(String(row.content)),
           trace: Array.isArray(row.trace) ? row.trace : [],
+          owner: typeof row.created_by === 'string' ? row.created_by : 'Unknown legacy owner',
         }));
+      setChatCapabilities(res);
       setChatNextBefore(res?.next_before || null);
       setChatMessages([system, ...normalized]);
     } catch {
+      if (sequence !== chatHistorySequence.current) return;
       setChatMessages([system]);
       setChatNextBefore(null);
+      setChatHistoryError('Could not load chat history. Check your permissions and retry.');
     } finally {
-      setChatHistoryLoading(false);
+      if (sequence === chatHistorySequence.current) setChatHistoryLoading(false);
     }
   };
 
   const loadMoreChatHistory = async () => {
-    if (!chatNextBefore || chatMoreLoading) return;
+    if (!chatNextBefore || chatMoreLoading || chatHistoryLoading || chatLoading) return;
+    const sequence = chatHistorySequence.current;
     setChatMoreLoading(true);
     try {
-      const res = await fetchSlaTicketAiChatHistory(ticket.ticket_number, { limit: 50, before: chatNextBefore });
+      const res = await fetchSlaTicketAiChatHistory(ticket.ticket_number, { limit: 50, before: chatNextBefore, scope: chatScope });
+      if (sequence !== chatHistorySequence.current) return;
+      setChatCapabilities(res);
       const rows = Array.isArray(res?.messages) ? res.messages : [];
       const normalized = rows
         .filter((row: any) => row && row.role && row.content != null)
@@ -623,6 +730,7 @@ export default function SlaTicketDetailView(props: Props) {
           role: String(row.role),
           content: fixMojibake(String(row.content)),
           trace: Array.isArray(row.trace) ? row.trace : [],
+          owner: typeof row.created_by === 'string' ? row.created_by : 'Unknown legacy owner',
         }));
       setChatNextBefore(res?.next_before || null);
       setChatMessages((prev) => {
@@ -631,13 +739,17 @@ export default function SlaTicketDetailView(props: Props) {
         return [system, ...normalized, ...rest];
       });
     } catch {
+      if (sequence !== chatHistorySequence.current) return;
       setChatNextBefore(null);
+      setChatCapabilities(null);
+      setChatHistoryError('Could not load earlier messages. Reload history before continuing.');
     } finally {
-      setChatMoreLoading(false);
+      if (sequence === chatHistorySequence.current) setChatMoreLoading(false);
     }
   };
 
   const runAiAssistant = async () => {
+    if (!requireAiModel()) return;
     setAiLoading(true);
     setAiError(null);
     try {
@@ -692,7 +804,9 @@ export default function SlaTicketDetailView(props: Props) {
 
   const sendChat = async () => {
     const text = chatInput.trim();
-    if (!text || chatLoading) return;
+    if (!text || chatLoading || !chatCanContinue) return;
+    const sequence = chatHistorySequence.current;
+    if (!requireAiModel()) return;
     const historyForApi = chatMessages.map((m) => ({ role: m.role, content: m.content }));
     setChatMessages((prev) => [...prev, { role: 'user', content: text }]);
     setChatInput('');
@@ -705,6 +819,7 @@ export default function SlaTicketDetailView(props: Props) {
         ticket_number: ticket.ticket_number,
       };
       const res = await aiAssistantChat(payload);
+      if (sequence !== chatHistorySequence.current) return;
       const reply = fixMojibake(String(res?.response || ''));
       const trace = Array.isArray(res?.trace) ? res.trace : [];
       setChatMessages((prev) => {
@@ -714,6 +829,7 @@ export default function SlaTicketDetailView(props: Props) {
         return next;
       });
     } catch (err: any) {
+      if (sequence !== chatHistorySequence.current) return;
       const apiError = err?.response?.data?.error || err?.response?.data?.detail || 'Chat failed';
       setChatMessages((prev) => {
         const next = [...prev, { role: 'assistant', content: fixMojibake(String(apiError)), trace: [] }];
@@ -722,7 +838,7 @@ export default function SlaTicketDetailView(props: Props) {
         return next;
       });
     } finally {
-      setChatLoading(false);
+      if (sequence === chatHistorySequence.current) setChatLoading(false);
     }
   };
 
@@ -786,6 +902,7 @@ export default function SlaTicketDetailView(props: Props) {
   const sendComment = async () => {
     const text = (commentDraft || '').trim();
     if (!text) return;
+    if (text.toLowerCase().startsWith('@ai') && !requireAiModel()) return;
     setCommentSending(true);
     try {
       if (text.toLowerCase().startsWith('@ai')) {
@@ -1114,6 +1231,22 @@ export default function SlaTicketDetailView(props: Props) {
     return [];
   }, [aiResult, workLogs]);
 
+  const assistantContext = useMemo(() => buildTicketDetailContext({
+    ticket: { ...ticket, labels: editableLabels }, workLogs, handleLogs, attachments, workplanItems,
+    observables: observableEvidenceItems,
+    ai: {
+      summary: aiResult?.case_summary?.incident_summary || aiResult?.alert_explanation,
+      raw_response: rawSummaryText,
+      header: aiHeader,
+      completed_tasks: aiTasks,
+      next_tasks: nextTasks,
+    },
+    view: { active_tab: activeTab, incident_tab: incidentTab, pending: isPending },
+    availability: { handle_logs: handleLogsState, workplan: workplanState },
+  }), [ticket, workLogs, handleLogs, attachments, workplanItems, observableEvidenceItems,
+    aiResult, rawSummaryText, aiHeader, aiTasks, nextTasks, activeTab, incidentTab, isPending, editableLabels, handleLogsState, workplanState]);
+  useRegisterAssistantContext(assistantContext);
+
   const caseDetailsItems = useMemo(() => {
     const rows: Array<{ label: string; value: any }> = [
       { label: 'Ticket Number', value: ticket.ticket_number },
@@ -1215,7 +1348,7 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className={layoutStyles.detail} style={{ padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <Space size={12} wrap>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -1224,7 +1357,7 @@ export default function SlaTicketDetailView(props: Props) {
           {renderStatusTag(ticket.status)}
           {renderSeverityTag(ticket.priority)}
         </Space>
-        <Space>
+        <Space wrap>
           <Button onClick={togglePending} loading={pendingLoading} disabled={!canTogglePending}>
             {isPending ? 'In Progress' : 'Pending'}
           </Button>
@@ -1275,6 +1408,7 @@ export default function SlaTicketDetailView(props: Props) {
                       <Table
                         rowKey="key"
                         size="small"
+                        scroll={{ x: 'max-content' }}
                         pagination={{ pageSize: 6 }}
                         columns={observableColumns}
                         dataSource={observableEvidenceItems}
@@ -1292,6 +1426,7 @@ export default function SlaTicketDetailView(props: Props) {
                       <Table
                         rowKey="id"
                         size="small"
+                        scroll={{ x: 'max-content' }}
                         pagination={false}
                         columns={attachmentColumns}
                         dataSource={attachments}
@@ -1309,7 +1444,7 @@ export default function SlaTicketDetailView(props: Props) {
             {activeTab === 'related' && <Empty description="No related incidents yet" />}
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 320px', gap: 14 }}>
+          <div className={layoutStyles.detailGrid}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <Card size="small" title="Case Details">
                 <Descriptions size="small" column={1} bordered>
@@ -1631,7 +1766,9 @@ export default function SlaTicketDetailView(props: Props) {
                 </div>
               </div>
               <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
-                <Button type="primary" onClick={runAiAssistant} loading={aiLoading}>
+                {aiModelSelector}
+                <Typography.Text type="secondary">Used for ticket analysis, chat and @AI. Changes apply to the next request.</Typography.Text>
+                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>
                   Run AI Assistant
                 </Button>
                 <Button onClick={openChat}>
@@ -1771,24 +1908,40 @@ export default function SlaTicketDetailView(props: Props) {
         <div className="sla-ai-chat-resize-handle sla-ai-chat-resize-corner" onMouseDown={startChatResize('both')} />
         <div className="sla-ai-chat-resizable-panel">
           <div className="sla-ai-chat-history-panel">
+            <Space wrap style={{ marginBottom: 8 }}>
+              {(chatCapabilities?.can_view_all || chatScope === 'all') && <Select<TicketChatScope> aria-label="Ticket chat history scope" value={chatScope}
+                disabled={chatLoading || chatHistoryLoading || chatMoreLoading} style={{ minWidth: 175 }}
+                options={[{ value: 'mine', label: 'My chat history' }, { value: 'all', label: 'All users (read-only)' }]}
+                onChange={(scope) => void loadChatHistory(scope)} />}
+              <Button size="small" disabled={chatLoading || chatHistoryLoading || chatMoreLoading} onClick={() => void loadChatHistory()}>Reload history</Button>
+            </Space>
+            {chatScope === 'all' && <Alert type="info" showIcon message="Read-only review. Switch to My chat history to continue. Older messages without recorded ownership are labelled unknown." style={{ marginBottom: 8 }} />}
+            {chatHistoryError && <Alert type="error" showIcon message={chatHistoryError} style={{ marginBottom: 8 }} />}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <Button className="sla-chat-load-earlier-btn" size="small" onClick={loadMoreChatHistory} loading={chatMoreLoading} disabled={!chatNextBefore}>
+              <Button className="sla-chat-load-earlier-btn" size="small" onClick={loadMoreChatHistory} loading={chatMoreLoading} disabled={!chatNextBefore || chatHistoryLoading || chatLoading}>
                 Load earlier
               </Button>
               <Button
                 size="small"
                 danger
+                disabled={chatScope !== 'mine' || chatCapabilities?.can_clear !== true || chatLoading || chatHistoryLoading || chatMoreLoading}
                 onClick={async () => {
+                  if (chatScope !== 'mine' || chatCapabilities?.can_clear !== true || chatLoading || chatHistoryLoading || chatMoreLoading) return;
+                  const sequence = ++chatHistorySequence.current;
+                  setChatHistoryLoading(true);
                   try {
                     await clearSlaTicketAiChatHistory(ticket.ticket_number);
+                    if (sequence !== chatHistorySequence.current) return;
                     setChatMessages([{ role: 'system', content: buildChatContext(), hidden: true }]);
                     setChatNextBefore(null);
                   } catch {
-                    message.error('Failed to clear chat history');
+                    if (sequence === chatHistorySequence.current) message.error('Failed to clear chat history');
+                  } finally {
+                    if (sequence === chatHistorySequence.current) setChatHistoryLoading(false);
                   }
                 }}
               >
-                Clear history
+                Clear my history
               </Button>
             </div>
             {chatHistoryLoading ? (
@@ -1800,7 +1953,8 @@ export default function SlaTicketDetailView(props: Props) {
                   <List.Item>
                     <div style={{ width: '100%' }}>
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        {msg.role === 'user' ? 'You' : 'Assistant'}
+                        {msg.role === 'user' ? chatScope === 'all' ? msg.owner : 'You' : 'Assistant'}
+                        {chatScope === 'all' && msg.role !== 'user' && ` · ${msg.owner || 'Unknown legacy owner'}`}
                       </Typography.Text>
                       <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>
                         {msg.content}
@@ -1911,20 +2065,21 @@ export default function SlaTicketDetailView(props: Props) {
               <Empty description="No messages yet" />
             )}
           </div>
+          {aiModelSelector}
           <Input.TextArea
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             placeholder="Type your message..."
             autoSize={{ minRows: 2, maxRows: 5 }}
-            disabled={chatLoading}
+            disabled={chatLoading || !chatCanContinue}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Button onClick={() => setChatMessages([{ role: 'system', content: buildChatContext(), hidden: true }])}>
+            <Button disabled={chatLoading || !chatCanContinue} onClick={() => setChatMessages([{ role: 'system', content: buildChatContext(), hidden: true }])}>
               Reset Context
             </Button>
             <Space>
               <Button onClick={() => setChatOpen(false)}>Close</Button>
-              <Button type="primary" onClick={sendChat} loading={chatLoading} disabled={!chatInput.trim()}>
+              <Button type="primary" onClick={sendChat} loading={chatLoading} disabled={!chatInput.trim() || !aiModelReady || !chatCanContinue}>
                 Send
               </Button>
             </Space>

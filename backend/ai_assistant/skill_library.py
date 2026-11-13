@@ -1,6 +1,7 @@
 ﻿import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 from django.conf import settings
@@ -18,7 +19,20 @@ def _skill_dir() -> str:
     return str(getattr(settings, "AI_SKILLS_DIR", "skills"))
 
 
+def _skill_path(skill_name: str) -> Optional[str]:
+    if not isinstance(skill_name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", skill_name):
+        return None
+    if skill_name in {".", ".."}:
+        return None
+    base = Path(_skill_dir()).resolve()
+    path = (base / skill_name).resolve()
+    if path.parent != base:
+        return None
+    return str(path)
+
+
 def _find_skill_file(skill_path: str) -> Optional[str]:
+    base = Path(_skill_dir()).resolve()
     candidates = [
         os.path.join(skill_path, "SKILL.md"),
         os.path.join(skill_path, "skill.md"),
@@ -26,7 +40,7 @@ def _find_skill_file(skill_path: str) -> Optional[str]:
         os.path.join(skill_path, "readme.md"),
     ]
     for c in candidates:
-        if os.path.exists(c):
+        if os.path.isfile(c) and Path(c).resolve().is_relative_to(base):
             return c
     return None
 
@@ -55,8 +69,8 @@ def list_skills() -> List[str]:
         return []
     skills: List[str] = []
     for entry in os.listdir(base):
-        full = os.path.join(base, entry)
-        if not os.path.isdir(full):
+        full = _skill_path(entry)
+        if not full or not os.path.isdir(full):
             continue
         if _find_skill_file(full):
             skills.append(entry)
@@ -65,11 +79,8 @@ def list_skills() -> List[str]:
 
 
 def read_skill(skill_name: str) -> Optional[SkillDoc]:
-    if not skill_name:
-        return None
-    base = _skill_dir()
-    skill_path = os.path.join(base, skill_name)
-    if not os.path.isdir(skill_path):
+    skill_path = _skill_path(skill_name)
+    if not skill_path or not os.path.isdir(skill_path):
         return None
     skill_file = _find_skill_file(skill_path)
     if not skill_file:
@@ -89,12 +100,34 @@ def read_skill(skill_name: str) -> Optional[SkillDoc]:
     return SkillDoc(name=name, description=desc or "", content=body, path=skill_path)
 
 
-def read_skill_content(skill_name: str) -> Optional[str]:
-    if not skill_name:
+def read_skill_metadata(skill_name: str) -> Optional[SkillDoc]:
+    """Read only bounded front matter, without loading the skill body."""
+    skill_path = _skill_path(skill_name)
+    if not skill_path or not os.path.isdir(skill_path):
         return None
-    base = _skill_dir()
-    skill_path = os.path.join(base, skill_name)
-    if not os.path.isdir(skill_path):
+    skill_file = _find_skill_file(skill_path)
+    if not skill_file:
+        return None
+    with open(skill_file, "r", encoding="utf-8") as source:
+        first = source.readline(1024).lstrip("\ufeff")
+        if first.strip() != "---":
+            description = first.lstrip("# ").strip() if first.startswith("#") else ""
+            return SkillDoc(skill_name, description[:500], "", skill_path)
+        lines = [first]
+        for _ in range(32):
+            line = source.readline(1024)
+            if not line:
+                break
+            lines.append(line)
+            if line.strip() == "---":
+                name, description, _ = _parse_front_matter("".join(lines))
+                return SkillDoc(name or skill_name, description[:500], "", skill_path)
+    return SkillDoc(skill_name, "", "", skill_path)
+
+
+def read_skill_content(skill_name: str) -> Optional[str]:
+    skill_path = _skill_path(skill_name)
+    if not skill_path or not os.path.isdir(skill_path):
         return None
     skill_file = _find_skill_file(skill_path)
     if not skill_file:
@@ -109,11 +142,13 @@ def write_skill_content(
     title: str = "",
     description: str = "",
 ) -> str:
-    base = _skill_dir()
-    os.makedirs(base, exist_ok=True)
-    skill_path = os.path.join(base, skill_name)
+    skill_path = _skill_path(skill_name)
+    if not skill_path:
+        raise ValueError("Invalid skill name or path")
     os.makedirs(skill_path, exist_ok=True)
     target = os.path.join(skill_path, "SKILL.md")
+    if not Path(target).resolve().is_relative_to(Path(_skill_dir()).resolve()):
+        raise ValueError("Invalid skill file path")
 
     body = content or ""
     body = body.lstrip("\ufeff")

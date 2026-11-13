@@ -6,11 +6,23 @@ from urllib.parse import urlparse
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-#from cmdb.models import Asset
+from accounts.services import is_user_readonly
+from ai_assistant.internal_tool_permissions import _check_internal
+from cmdb.models import Asset
 from tickets.models import EventTicket, TicketWorkLog
+
+
+def _require_internal_tool(request, name, arguments):
+    try:
+        if not request.user.is_active or is_user_readonly(request.user):
+            raise PermissionError("Account cannot execute assistant tools.")
+        _check_internal(request.user, name, arguments)
+    except PermissionError:
+        raise PermissionDenied("You do not have permission to execute this tool.") from None
 
 
 def _json_dumps_safe(value: Any) -> str:
@@ -110,6 +122,7 @@ def _flatten_observables(obs: Dict[str, List[str]]) -> List[Dict[str, str]]:
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def mcp_ticket_context(request, ticket_number: str):
+    _require_internal_tool(request, "ticket_context", {"ticket_number": ticket_number})
     try:
         ticket = EventTicket.objects.get(ticket_number=ticket_number, is_deleted=False)
     except EventTicket.DoesNotExist:
@@ -151,6 +164,7 @@ def mcp_ticket_context(request, ticket_number: str):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mcp_ticket_search_similar_cases(request):
+    _require_internal_tool(request, "ticket_search_similar_cases", request.data)
     ticket_number = str(request.data.get("ticket_number") or "").strip()
     iocs = request.data.get("iocs") if isinstance(request.data.get("iocs"), dict) else {}
     limit_raw = request.data.get("limit", 5)
@@ -212,6 +226,7 @@ def mcp_ticket_search_similar_cases(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mcp_observables_extract(request):
+    _require_internal_tool(request, "observables_extract", request.data)
     ticket_number = str(request.data.get("ticket_number") or "").strip()
     raw_message = str(request.data.get("raw_message") or "")
     extra_text = str(request.data.get("text") or "")
@@ -264,6 +279,7 @@ def _extract_hostnames(text: str) -> List[str]:
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mcp_cmdb_asset_lookup(request):
+    _require_internal_tool(request, "cmdb_asset_lookup", request.data)
     ticket_number = str(request.data.get("ticket_number") or "").strip()
     indicators = request.data.get("indicators") if isinstance(request.data.get("indicators"), dict) else {}
     limit_raw = request.data.get("limit", 10)

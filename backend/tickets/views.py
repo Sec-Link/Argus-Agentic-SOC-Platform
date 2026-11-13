@@ -7,8 +7,9 @@ from django.db import transaction
 from django.db.models import Avg
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
-from rest_framework import status, viewsets
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -27,7 +28,12 @@ from .serializers import (
 
 
 from ai_assistant.assistant import AIAssistantError, generate_ai_assistant_output
-from ai_assistant.models import ExternalMCPServer, TicketAIChatMessage
+from ai_assistant.chat_errors import safe_chat_error
+from ai_assistant.conversation_history import current_actor, event_permissions, require_history_permissions
+from ai_assistant.model_selection import selected_model_config
+from ai_assistant.external_tool_policy import saved_mcp_config
+from ai_assistant.usage_recording import model_usage_context
+from ai_assistant.models import TicketAIChatMessage
 from ai_assistant.skill_config import get_enabled_skill_configs
 from ai_assistant.serializers import AIAssistantRequestSerializer
 
@@ -602,62 +608,24 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def ai_assistant(self, request, ticket_number=None):
-        ticket = self.get_object()
         serializer = AIAssistantRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        model_overrides, model_guard = selected_model_config(
+            request.user, data, permissions=("tickets.view_eventticket", "tickets.add_ticketworklog"),
+        )
+        ticket = self.get_object()
         try:
             if data.get("enabled") is False:
                 return Response({"error": "AI assistant is disabled"}, status=status.HTTP_400_BAD_REQUEST)
             overrides = {
-                "api_key": data.get("api_key"),
-                "model": data.get("model"),
-                "base_url": data.get("base_url"),
-                "timeout_seconds": data.get("timeout_seconds"),
-                "mcp": {
-                    "enabled": data.get("mcp_enabled"),
-                    "base_url": data.get("mcp_base_url"),
-                    "servers": data.get("mcp_servers"),
-                    "token": data.get("mcp_token"),
-                    "timeout_seconds": data.get("mcp_timeout_seconds"),
-                    "ticket_context_path": data.get("mcp_ticket_context_path"),
-                    "ticket_search_path": data.get("mcp_ticket_search_path"),
-                    "cmdb_lookup_path": data.get("mcp_cmdb_lookup_path"),
-                    "observables_extract_path": data.get("mcp_observables_extract_path"),
-                },
-                "skills": data.get("skills") or [],
+                **model_overrides,
+                "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
+                "skills": data.get("skills") or get_enabled_skill_configs(),
             }
-            if not overrides.get("skills"):
-                overrides["skills"] = get_enabled_skill_configs()
-            mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
-            if isinstance(mcp_overrides, dict):
-                if mcp_overrides.get("enabled") is not False:
-                    mcp_overrides["enabled"] = True
-                    # Always prefer built-in MCP endpoint for ticket assistant.
-                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
-                    mcp_overrides["force_internal"] = True
-                if not mcp_overrides.get("token"):
-                    auth_header = request.META.get("HTTP_AUTHORIZATION")
-                    if isinstance(auth_header, str) and auth_header.strip():
-                        # Prefer forwarding the original Authorization header verbatim.
-                        mcp_overrides["token"] = auth_header.strip()
-                if not mcp_overrides.get("token"):
-                    auth_obj = getattr(request, "auth", None)
-                    token_key = getattr(auth_obj, "key", None) if auth_obj is not None else None
-                    if isinstance(token_key, str) and token_key:
-                        mcp_overrides["token"] = f"Token {token_key}"
-                if not mcp_overrides.get("servers"):
-                    servers = ExternalMCPServer.objects.filter(enabled=True).order_by("name")
-                    mcp_overrides["servers"] = [
-                        {
-                            "endpoint": s.endpoint,
-                            "title": s.title,
-                            "token": s.token,
-                        }
-                        for s in servers
-                    ]
-                if mcp_overrides.get("enabled") is None and mcp_overrides.get("servers"):
-                    mcp_overrides["enabled"] = True
+            overrides["_usage_context"] = model_usage_context(
+                request.user, source="ticket_analysis", overrides=overrides, agent_name="assistant",
+            )
             result = generate_ai_assistant_output(
                 ticket=ticket,
                 alert_json=data.get("alert_json"),
@@ -665,7 +633,10 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
+                **({"model_call_guard": model_guard} if model_guard else {}),
             )
+            if model_guard:
+                model_guard()
             try:
                 assistant = result.get("assistant") if isinstance(result, dict) else None
                 assistant_raw = result.get("assistant_raw") if isinstance(result, dict) else None
@@ -726,7 +697,15 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 # Do not block API response on logging failure
                 pass
             return Response(result)
-        except AIAssistantError as exc:
+        except Exception as exc:
+            if model_guard:
+                if isinstance(exc, APIException):
+                    raise
+                failure = safe_chat_error(exc.__cause__ or exc)
+                return Response({"error": failure["message"], "code": failure["code"]},
+                                status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            if not isinstance(exc, AIAssistantError):
+                raise
             return Response(
                 {"error": str(exc)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -734,6 +713,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def ai_chat_history(self, request, ticket_number=None):
+        actor, owner_id, reviewing = self._ai_chat_history_scope(request)
         ticket = self.get_object()
         limit_raw = request.query_params.get("limit", 200)
         before_raw = request.query_params.get("before")
@@ -753,7 +733,22 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             if before_dt and timezone.is_naive(before_dt):
                 before_dt = timezone.make_aware(before_dt, timezone.get_current_timezone())
 
-        rows = TicketAIChatMessage.objects.filter(ticket=ticket)
+        rows = TicketAIChatMessage.objects.filter(ticket=ticket).select_related("created_by")
+        if not reviewing:
+            rows = rows.filter(created_by=actor)
+            # A later answer may repeat earlier tool output, including evidence
+            # outside this page. Check this owner's whole ticket history first.
+            if not all(actor.has_perm(permission) for permission in ("cmdb.view_asset", "ai_assistant.view_knowledgebaseitem")):
+                for trace in rows.order_by().values_list("trace", flat=True).iterator(chunk_size=200):
+                    if not isinstance(trace, list):
+                        continue
+                    required = set()
+                    for event in trace:
+                        if isinstance(event, dict) and isinstance(event.get("tool"), str):
+                            required.update(event_permissions({"tool": event["tool"]}))
+                    require_history_permissions(actor, required)
+        elif owner_id is not None:
+            rows = rows.filter(created_by_id=owner_id)
         if before_dt:
             rows = rows.filter(created_at__lt=before_dt)
         rows = rows.order_by("-created_at")
@@ -772,16 +767,47 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 "trace": self._fix_mojibake_in_obj(row.trace) if isinstance(row.trace, list) else [],
                 "created_at": row.created_at.isoformat(),
                 "created_by": getattr(row.created_by, "username", None),
+                "owner_id": row.created_by_id,
             }
             for row in rows_display
         ]
-        return Response({"messages": payload, "next_before": next_before})
+        from accounts.services import is_user_readonly
+        if reviewing:
+            from accounts.audit import AuditService, request_ip, request_user_agent
+            from accounts.models import AuditLog
+            AuditService.log_event(
+                event_type=AuditLog.EventType.ACTIVITY, status=AuditLog.Status.SUCCESS,
+                action_type=AuditLog.ActionType.FEATURE_EXEC, user_email=actor.email,
+                ip_address=request_ip(request), user_agent=request_user_agent(request),
+                path=request.path, method=request.method,
+                metadata={"resource": "ticket_ai_chat", "actor_id": actor.pk, "action": "review", "owner_id": owner_id},
+            )
+        can_write = not reviewing and not is_user_readonly(actor)
+        response = Response({"messages": payload, "next_before": next_before,
+                             "can_view_all": actor.has_perm("ai_assistant.review_all_pagechatconversation"),
+                             "readonly": not can_write, "can_continue": can_write, "can_clear": can_write})
+        response["Cache-Control"] = "private, no-store"
+        return response
 
     @action(detail=True, methods=["delete"])
     def ai_chat_clear(self, request, ticket_number=None):
+        actor, _, _ = self._ai_chat_history_scope(request, write=True)
         ticket = self.get_object()
-        TicketAIChatMessage.objects.filter(ticket=ticket).delete()
+        TicketAIChatMessage.objects.filter(ticket=ticket, created_by=actor).delete()
         return Response({"message": "cleared"})
+
+    @staticmethod
+    def _ai_chat_history_scope(request, *, write=False):
+        actor = current_actor(request.user, write=write)
+        require_history_permissions(actor, ("tickets.view_eventticket",))
+        scope = serializers.ChoiceField(choices=("mine", "all")).run_validation(request.query_params.get("scope", "mine"))
+        owner_id = None
+        if "owner_id" in request.query_params:
+            owner_id = serializers.IntegerField(min_value=1).run_validation(request.query_params["owner_id"])
+        reviewing = scope == "all" or owner_id is not None and owner_id != actor.pk
+        if reviewing and (write or not actor.has_perm("ai_assistant.review_all_pagechatconversation")):
+            raise PermissionDenied("Other users' ticket chat history is available only for authorized read-only review.")
+        return actor, owner_id, reviewing
 
     @staticmethod
     def _fix_mojibake(value: str) -> str:
@@ -826,44 +852,24 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def ai_mention(self, request, ticket_number=None):
-        ticket = self.get_object()
         serializer = AIAssistantRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        model_overrides, model_guard = selected_model_config(
+            request.user, data, permissions=("tickets.view_eventticket",),
+        )
+        ticket = self.get_object()
         try:
             if data.get("enabled") is False:
                 return Response({"error": "AI assistant is disabled"}, status=status.HTTP_400_BAD_REQUEST)
             overrides = {
-                "api_key": data.get("api_key"),
-                "model": data.get("model"),
-                "base_url": data.get("base_url"),
-                "timeout_seconds": data.get("timeout_seconds"),
-                "mcp": {
-                    "enabled": data.get("mcp_enabled"),
-                    "base_url": data.get("mcp_base_url"),
-                    "servers": data.get("mcp_servers"),
-                    "token": data.get("mcp_token"),
-                    "timeout_seconds": data.get("mcp_timeout_seconds"),
-                    "ticket_context_path": data.get("mcp_ticket_context_path"),
-                    "ticket_search_path": data.get("mcp_ticket_search_path"),
-                    "cmdb_lookup_path": data.get("mcp_cmdb_lookup_path"),
-                    "observables_extract_path": data.get("mcp_observables_extract_path"),
-                },
-                "skills": data.get("skills") or [],
+                **model_overrides,
+                "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
+                "skills": data.get("skills") or get_enabled_skill_configs(),
             }
-            mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
-            if isinstance(mcp_overrides, dict):
-                if mcp_overrides.get("enabled") and not mcp_overrides.get("base_url"):
-                    mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
-                if not mcp_overrides.get("token"):
-                    auth_header = request.META.get("HTTP_AUTHORIZATION")
-                    if isinstance(auth_header, str) and auth_header.strip():
-                        mcp_overrides["token"] = auth_header.strip()
-                if not mcp_overrides.get("token"):
-                    auth_obj = getattr(request, "auth", None)
-                    token_key = getattr(auth_obj, "key", None) if auth_obj is not None else None
-                    if isinstance(token_key, str) and token_key:
-                        mcp_overrides["token"] = f"Token {token_key}"
+            overrides["_usage_context"] = model_usage_context(
+                request.user, source="ticket_mention", overrides=overrides, agent_name="assistant",
+            )
             result = generate_ai_assistant_output(
                 ticket=ticket,
                 alert_json=data.get("alert_json"),
@@ -871,9 +877,20 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
+                **({"model_call_guard": model_guard} if model_guard else {}),
             )
+            if model_guard:
+                model_guard()
             return Response(result)
-        except AIAssistantError as exc:
+        except Exception as exc:
+            if model_guard:
+                if isinstance(exc, APIException):
+                    raise
+                failure = safe_chat_error(exc.__cause__ or exc)
+                return Response({"error": failure["message"], "code": failure["code"]},
+                                status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            if not isinstance(exc, AIAssistantError):
+                raise
             return Response(
                 {"error": str(exc)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,

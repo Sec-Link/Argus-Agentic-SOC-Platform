@@ -1,24 +1,34 @@
 import requests
 from django.conf import settings
+from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from ai_assistant.assistant import AIAssistantError, test_openai_connectivity
 from ai_assistant.chat_agent import run_chat_agent
+from ai_assistant.chat_errors import safe_chat_error
+from ai_assistant.conversation_history import current_actor, require_history_permissions
+from ai_assistant.model_selection import selected_model_config
+from ai_assistant.external_tool_policy import saved_mcp_config
+from ai_assistant.execution_settings import get_execution_limits
+from ai_assistant.usage_recording import model_usage_context
 from ai_assistant.monitoring import get_mcp_monitor, get_skill_monitor
 from ai_assistant.serializers import (
-    AIAssistantRequestSerializer,
     AIChatRequestSerializer,
     ExternalMCPServerSerializer,
     SkillConfigSerializer,
 )
 from ai_assistant.models import ExternalMCPServer, SkillConfig, TicketAIChatMessage
+from ai_assistant.mcp_tool_config import audit_mcp_configuration, require_mcp_permission
 from tickets.models import EventTicket
 import re
 
-from ai_assistant.skill_config import get_enabled_skill_names, list_skill_catalog, normalize_skill_names
+from ai_assistant.skill_config import (
+    audit_skill_configuration, get_enabled_skill_names, list_skill_catalog,
+    normalize_skill_names, require_skill_permission,
+)
 from ai_assistant.skill_library import read_skill_content, write_skill_content
 
 _MOJIBAKE_CHARS = re.compile(r"[ÃÂâåäæçèéêëìíîïðñòóôöõøùúûüýÿ]")
@@ -69,27 +79,14 @@ def _fix_mojibake_in_obj(value: any) -> any:
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def test_connectivity(request):
-    serializer = AIAssistantRequestSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
-
-    overrides = {
-        "api_key": data.get("api_key"),
-        "model": data.get("model"),
-        "base_url": data.get("base_url"),
-        "timeout_seconds": data.get("timeout_seconds"),
-    }
-
-    try:
-        result = test_openai_connectivity(overrides=overrides)
-        return Response(result)
-    except AIAssistantError as exc:
-        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response({"error": "Use a saved model and /models/{id}/test/ to test connectivity."},
+                    status=status.HTTP_410_GONE)
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def mcp_monitor(request):
+    actor = current_actor(request.user)
     tool = str(request.query_params.get("tool") or "").strip()
     status_filter = str(request.query_params.get("status") or "").strip()
     if status_filter == "all":
@@ -105,16 +102,21 @@ def mcp_monitor(request):
     except Exception:
         page_size = 20
 
-    payload = get_mcp_monitor(page=page, page_size=page_size, status=status_filter, tool_name=tool)
-    return Response(payload)
+    payload = get_mcp_monitor(
+        page=page, page_size=page_size, status=status_filter, tool_name=tool, user_id=actor.pk,
+    )
+    response = Response(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mcp_registry_servers(request):
+    require_mcp_permission(request, "add")
     data = request.data if isinstance(request.data, dict) else {}
     base_url = str(data.get("base_url") or getattr(settings, "MCP_GATEWAY_BASE_URL", "") or "").strip()
-    token = str(data.get("token") or getattr(settings, "MCP_GATEWAY_TOKEN", "") or "").strip()
+    token = str(data.get("token") or ("" if data.get("base_url") else getattr(settings, "MCP_GATEWAY_TOKEN", "")) or "").strip()
     query = str(data.get("query") or "").strip()
     cursor = str(data.get("cursor") or "").strip()
     try:
@@ -182,8 +184,14 @@ def mcp_registry_servers(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def skill_monitor(request):
+    from django.contrib.auth import get_user_model
+    actor = get_user_model().objects.filter(pk=request.user.pk, is_active=True).first()
+    if actor is None or not actor.has_perm("ai_assistant.review_all_modelusage"):
+        raise PermissionDenied("Review-all AI usage permission is required for legacy skill totals.")
     payload = get_skill_monitor()
-    return Response(payload)
+    response = Response(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @api_view(["POST"])
@@ -192,7 +200,21 @@ def ai_chat(request):
     serializer = AIChatRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
+    limits = get_execution_limits()
     ticket_number = str(data.get("ticket_number") or "").strip()
+    actor = current_actor(request.user, write=True)
+    if ticket_number:
+        require_history_permissions(actor, ("tickets.view_eventticket",))
+    model_overrides, profile_guard = selected_model_config(
+        request.user, data, permissions=("tickets.view_eventticket",) if ticket_number else (),
+    )
+
+    def model_guard():
+        live_actor = current_actor(actor, write=True)
+        if ticket_number:
+            require_history_permissions(live_actor, ("tickets.view_eventticket",))
+        if profile_guard:
+            profile_guard()
     ticket = None
     if ticket_number:
         ticket = EventTicket.objects.filter(ticket_number=ticket_number, is_deleted=False).first()
@@ -200,48 +222,27 @@ def ai_chat(request):
             return Response({"error": "ticket not found"}, status=status.HTTP_404_NOT_FOUND)
 
     overrides = {
-        "api_key": data.get("api_key"),
-        "model": data.get("model"),
-        "base_url": data.get("base_url"),
-        "timeout_seconds": data.get("timeout_seconds"),
-        "max_iterations": data.get("max_iterations"),
-        "mcp": {
-            "enabled": data.get("mcp_enabled"),
-            "base_url": data.get("mcp_base_url"),
-            "servers": data.get("mcp_servers"),
-            "token": data.get("mcp_token"),
-            "timeout_seconds": data.get("mcp_timeout_seconds"),
-        },
+        **model_overrides, "max_iterations": limits.max_iterations,
+        "mcp": saved_mcp_config(actor, enabled=data.get("mcp_enabled") is not False),
     }
-
-    mcp_overrides = overrides.get("mcp") if isinstance(overrides.get("mcp"), dict) else None
-    if isinstance(mcp_overrides, dict):
-        if mcp_overrides.get("enabled") is not False:
-            mcp_overrides["enabled"] = True
-            mcp_overrides["base_url"] = request.build_absolute_uri("/api/v1/ai-assistant/mcp").rstrip("/")
-            mcp_overrides["force_internal"] = True
-        if not mcp_overrides.get("token"):
-            auth_header = request.META.get("HTTP_AUTHORIZATION")
-            if isinstance(auth_header, str) and auth_header.strip():
-                mcp_overrides["token"] = auth_header.strip()
-        if not mcp_overrides.get("servers"):
-            servers = ExternalMCPServer.objects.filter(enabled=True).order_by("name")
-            mcp_overrides["servers"] = [
-                {
-                    "endpoint": s.endpoint,
-                    "title": s.title,
-                    "token": s.token,
-                }
-                for s in servers
-            ]
-        if mcp_overrides.get("enabled") is None and mcp_overrides.get("servers"):
-            mcp_overrides["enabled"] = True
+    overrides["_usage_context"] = model_usage_context(
+        actor, source="ticket_chat" if ticket else "chat", overrides=overrides, agent_name="assistant",
+    )
 
     recommended_skills = normalize_skill_names(data.get("skills"))
     if not recommended_skills:
         recommended_skills = get_enabled_skill_names()
 
     if ticket:
+        if model_guard:
+            try:
+                model_guard()
+            except APIException:
+                raise
+            except Exception as exc:
+                failure = safe_chat_error(exc)
+                return Response({"error": failure["message"], "code": failure["code"]},
+                                status=status.HTTP_502_BAD_GATEWAY)
         try:
             TicketAIChatMessage.objects.create(
                 ticket=ticket,
@@ -262,15 +263,20 @@ def ai_chat(request):
             history_messages=data.get("messages") or [],
             overrides=overrides,
             recommended_skills=recommended_skills,
+            **({"model_call_guard": model_guard, "tool_guard": lambda **_kwargs: model_guard()}
+               if model_guard else {}),
         )
+        if model_guard:
+            model_guard()
         if ticket:
             try:
                 trace = result.get("trace") if isinstance(result, dict) else None
                 if not isinstance(trace, list):
                     trace = []
+                # Ownership is the initiating user; role identifies the AI speaker.
                 TicketAIChatMessage.objects.create(
                     ticket=ticket,
-                    created_by=None,
+                    created_by=actor,
                     role="assistant",
                     content=_fix_mojibake(str(result.get("response") or "No response")) if isinstance(result, dict) else "No response",
                     trace=_fix_mojibake_in_obj(trace),
@@ -283,38 +289,48 @@ def ai_chat(request):
                 result["trace"] = _fix_mojibake_in_obj(result.get("trace"))
         return Response(result)
     except Exception as exc:
+        if model_guard and isinstance(exc, APIException):
+            raise
+        failure = safe_chat_error(exc) if model_guard else None
+        error_message = failure["message"] if failure else str(exc)
         if ticket:
             try:
                 TicketAIChatMessage.objects.create(
                     ticket=ticket,
-                    created_by=None,
+                    created_by=actor,
                     role="assistant",
-                    content=_fix_mojibake(str(exc)),
+                    content=_fix_mojibake(error_message),
                     trace=[],
                 )
             except Exception:
                 pass
-        return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"error": error_message, **({"code": failure["code"]} if failure else {})},
+                        status=status.HTTP_502_BAD_GATEWAY)
 
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_servers(request):
+    require_mcp_permission(request, "view" if request.method == "GET" else "add")
     if request.method == "GET":
-        rows = ExternalMCPServer.objects.all().order_by("name")
+        rows = ExternalMCPServer.objects.prefetch_related("use_groups").order_by("name")
         serializer = ExternalMCPServerSerializer(rows, many=True, context={"request": request})
         return Response(serializer.data)
 
     serializer = ExternalMCPServerSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    audit_mcp_configuration(request, serializer.save(), "create")
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_detail(request, name: str):
-    server = ExternalMCPServer.objects.filter(name=name).first()
+    require_mcp_permission(request, {"GET": "view", "PUT": "change", "DELETE": "delete"}[request.method])
+    rows = ExternalMCPServer.objects.filter(name=name)
+    server = (rows if request.method == "GET" else rows.select_for_update()).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -322,34 +338,48 @@ def external_mcp_detail(request, name: str):
         return Response(ExternalMCPServerSerializer(server, context={"request": request}).data)
 
     if request.method == "DELETE":
+        audit_mcp_configuration(request, server, "delete")
         server.delete()
         return Response({"message": "deleted"})
 
     serializer = ExternalMCPServerSerializer(server, data=request.data, partial=True, context={"request": request})
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    previous_policies = dict(server.tool_approvals)
+    audit_mcp_configuration(request, serializer.save(), "update", previous_policies)
     return Response(serializer.data)
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_start(request, name: str):
-    server = ExternalMCPServer.objects.filter(name=name).first()
+    require_mcp_permission(request, "change")
+    server = ExternalMCPServer.objects.select_for_update().filter(name=name).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
+    previous_policies = dict(server.tool_approvals)
+    if not request.user.is_superuser:
+        server.tool_approvals = {}
     server.enabled = True
-    server.save(update_fields=["enabled", "updated_at"])
+    server.save(update_fields=["enabled", "tool_approvals", "updated_at"])
+    audit_mcp_configuration(request, server, "start", previous_policies)
     return Response({"message": "started", "name": server.name})
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def external_mcp_stop(request, name: str):
-    server = ExternalMCPServer.objects.filter(name=name).first()
+    require_mcp_permission(request, "change")
+    server = ExternalMCPServer.objects.select_for_update().filter(name=name).first()
     if not server:
         return Response({"error": "server not found"}, status=status.HTTP_404_NOT_FOUND)
+    previous_policies = dict(server.tool_approvals)
+    if not request.user.is_superuser:
+        server.tool_approvals = {}
     server.enabled = False
-    server.save(update_fields=["enabled", "updated_at"])
+    server.save(update_fields=["enabled", "tool_approvals", "updated_at"])
+    audit_mcp_configuration(request, server, "stop", previous_policies)
     return Response({"message": "stopped", "name": server.name})
 
 
@@ -362,6 +392,7 @@ def skill_catalog(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def skill_configs(request):
+    require_skill_permission(request, "view" if request.method == "GET" else "add")
     if request.method == "GET":
         rows = SkillConfig.objects.all().order_by("name")
         serializer = SkillConfigSerializer(rows, many=True)
@@ -369,13 +400,16 @@ def skill_configs(request):
 
     serializer = SkillConfigSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    with transaction.atomic():
+        row = serializer.save()
+        audit_skill_configuration(request, row.name, "create", serializer.validated_data)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
 def skill_config_detail(request, name: str):
+    require_skill_permission(request, {"GET": "view", "PUT": "change", "DELETE": "delete"}[request.method])
     row = SkillConfig.objects.filter(name=name).first()
     if not row:
         return Response({"error": "skill not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -384,22 +418,28 @@ def skill_config_detail(request, name: str):
         return Response(SkillConfigSerializer(row).data)
 
     if request.method == "DELETE":
-        row.delete()
+        with transaction.atomic():
+            row.delete()
+            audit_skill_configuration(request, name, "delete", [])
         return Response({"message": "deleted"})
 
     serializer = SkillConfigSerializer(row, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    with transaction.atomic():
+        serializer.save()
+        audit_skill_configuration(request, name, "update", serializer.validated_data)
     return Response(serializer.data)
 
 
 def _sanitize_skill_name(name: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9_.-]", "", name or "").strip()
+    safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "", name or "").strip()
+    return "" if safe_name in {".", ".."} else safe_name
 
 
 @api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticated])
 def skill_content_detail(request, name: str):
+    require_skill_permission(request, "view" if request.method == "GET" else "change")
     safe_name = _sanitize_skill_name(name)
     if not safe_name:
         return Response({"error": "invalid skill name"}, status=status.HTTP_400_BAD_REQUEST)
@@ -414,5 +454,14 @@ def skill_content_detail(request, name: str):
     content = str(data.get("content") or "")
     title = str(data.get("title") or "")
     description = str(data.get("description") or "")
-    path = write_skill_content(safe_name, content, title=title, description=description)
+    try:
+        path = write_skill_content(safe_name, content, title=title, description=description)
+    except ValueError:
+        audit_skill_configuration(request, safe_name, "write_content", [], success=False)
+        return Response({"error": "invalid skill path"}, status=status.HTTP_400_BAD_REQUEST)
+    except OSError:
+        audit_skill_configuration(request, safe_name, "write_content", [], success=False)
+        return Response({"error": "Skill content could not be saved."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    # shortcut: file and audit writes are separate; use transactional storage if atomicity is required.
+    audit_skill_configuration(request, safe_name, "write_content", {"content", "title", "description"}.intersection(data))
     return Response({"name": safe_name, "path": path})

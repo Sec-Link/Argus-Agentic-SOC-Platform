@@ -1,77 +1,66 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Button, Card, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
 import { getIsReadonly } from '../../lib/auth';
+import { getRbacMe } from 'services/accounts';
+import HttpToolsSettings from './HttpToolsSettings';
+import AgentSettings from './AgentSettings';
+import ExecutionSettings from './ExecutionSettings';
+import ModelSettings from './ModelSettings';
+import AiUsageMonitor from './AiUsageMonitor';
+import McpToolApprovals from './McpToolApprovals';
 import {
   createAiAssistantMcpServer,
   createAiAssistantSkillConfig,
   deleteAiAssistantMcpServer,
   deleteAiAssistantSkillConfig,
   fetchAiAssistantInternalMcpTools,
-  fetchAiAssistantMcpMonitor,
   fetchAiAssistantSkillCatalog,
   fetchAiAssistantSkillContent,
-  fetchAiAssistantSkillMonitor,
   listAiAssistantMcpServers,
+  listAiAssistantToolAccessRoles,
   listAiAssistantSkillConfigs,
-  testAiAssistantConnectivity,
   updateAiAssistantMcpServer,
   updateAiAssistantSkillConfig,
   updateAiAssistantSkillContent,
+  type ToolAccessRole,
 } from '../../api';
 
-const STORAGE_KEYS = {
-  enabled: 'siem_ai_enabled',
-  apiKey: 'siem_ai_api_key',
-  model: 'siem_ai_model',
-  baseUrl: 'siem_ai_base_url',
-  timeout: 'siem_ai_timeout',
-};
-
 export default function AiAssistantSettings() {
-  const [generalForm] = Form.useForm();
+  const [message, messageContextHolder] = antdMessage.useMessage();
   const [mcpEditForm] = Form.useForm();
+  const clearingMcpToken = Form.useWatch('clear_token', mcpEditForm);
   const [skillEditForm] = Form.useForm();
-  const [testLoading, setTestLoading] = useState(false);
-  const [monitorLoading, setMonitorLoading] = useState(false);
-  const [monitorData, setMonitorData] = useState<any>({ executions: [], stats: {}, total: 0, page: 1, page_size: 20, total_pages: 1 });
-  const [skillMonitorLoading, setSkillMonitorLoading] = useState(false);
-  const [skillMonitorData, setSkillMonitorData] = useState<any>({ summary: {}, stats: [] });
   const [mcpLoading, setMcpLoading] = useState(false);
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [mcpEditRow, setMcpEditRow] = useState<any | null>(null);
+  const [mcpToolsRow, setMcpToolsRow] = useState<{ name: string; title?: string } | null>(null);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState<any[]>([]);
   const [skillConfigs, setSkillConfigs] = useState<any[]>([]);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [skillEditRow, setSkillEditRow] = useState<any | null>(null);
   const [skillContentLoading, setSkillContentLoading] = useState(false);
+  const [skillContentReady, setSkillContentReady] = useState(false);
+  const [skillContentError, setSkillContentError] = useState('');
+  const [skillSaving, setSkillSaving] = useState(false);
+  const skillLoadSequence = useRef(0);
+  const [skillPermissions, setSkillPermissions] = useState<string[] | null>(null);
+  const [skillsError, setSkillsError] = useState('');
   const [skillContentPreview, setSkillContentPreview] = useState('');
   const [internalMcpTools, setInternalMcpTools] = useState<any[]>([]);
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detailRow, setDetailRow] = useState<any | null>(null);
-  const [toolFilter, setToolFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'running'>('all');
   const [isReadonly, setIsReadonly] = useState(false);
+  const [toolAccessRoles, setToolAccessRoles] = useState<ToolAccessRole[]>([]);
+  const [canManageHttpAccess, setCanManageHttpAccess] = useState(false);
+  const [canManageMcpAccess, setCanManageMcpAccess] = useState(false);
+  const [canDisableApproval, setCanDisableApproval] = useState(false);
+  const [toolAccessError, setToolAccessError] = useState('');
+  const [toolAccessReady, setToolAccessReady] = useState(false);
   useEffect(() => { setIsReadonly(getIsReadonly()); }, []);
-  const toolStats = useMemo(() => {
-    const byTool = monitorData?.stats || {};
-    return Object.entries(byTool)
-      .map(([tool, stat]: any) => ({ tool, ...(stat || {}) }))
-      .sort((a: any, b: any) => Number(b.total_calls || 0) - Number(a.total_calls || 0))
-      .slice(0, 3);
-  }, [monitorData]);
-
-  const monitorSummary = useMemo(() => {
-    const stats = Object.values(monitorData?.stats || {}) as any[];
-    const total = stats.reduce((acc, s) => acc + Number(s?.total_calls || 0), 0);
-    const success = stats.reduce((acc, s) => acc + Number(s?.success_calls || 0), 0);
-    const failed = stats.reduce((acc, s) => acc + Number(s?.failed_calls || 0), 0);
-    const successRate = total ? Math.round((success / total) * 1000) / 10 : 0;
-    const lastInvocation = (monitorData?.executions || [])[0]?.start_time || '-';
-    return { total, success, failed, successRate, lastInvocation };
-  }, [monitorData]);
-
+  const canViewSkills = !!skillPermissions?.includes('view');
+  const canAddSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('add');
+  const canChangeSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('change');
+  const canDeleteSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('delete');
   const skillConfigMap = useMemo(() => {
     const map = new Map<string, any>();
     for (const row of skillConfigs) {
@@ -79,82 +68,6 @@ export default function AiAssistantSettings() {
     }
     return map;
   }, [skillConfigs]);
-
-  const filteredRows = useMemo(() => {
-    const rows = Array.isArray(monitorData?.executions) ? monitorData.executions : [];
-    const endpointMap = new Map<string, string>();
-    for (const item of mcpServers) {
-      const endpoint = String(item?.endpoint || '').trim();
-      const title = String(item?.title || '').trim();
-      if (endpoint) endpointMap.set(endpoint, title || endpoint);
-    }
-    const resolveAddedMcp = (requestUrl: string) => {
-      const u = String(requestUrl || '');
-      for (const [endpoint, title] of endpointMap.entries()) {
-        if (u.startsWith(endpoint)) return { title, endpoint };
-      }
-      return { title: '-', endpoint: '-' };
-    };
-    const mapped = rows.map((r: any, idx: number) => ({
-      ...resolveAddedMcp(r.endpoint || ''),
-        key: `${idx}_${r.start_time || ''}_${r.tool_name || ''}`,
-        tool: r.tool_name || '-',
-        status: r.status || '-',
-        startAt: r.start_time || '-',
-        duration: typeof r.duration_ms === 'number' ? `${Math.max(0, Math.round(r.duration_ms / 1000))}s` : '-',
-        requestUrl: r.endpoint || '',
-        requestPayload: r.arguments || {},
-        responsePayload: r.response_payload || {},
-        error: r.error || '',
-        httpStatus: '',
-        source: r.source || '',
-        executionId: r.id || '',
-      }));
-    return mapped;
-  }, [monitorData, mcpServers]);
-
-  useEffect(() => {
-    try {
-      generalForm.setFieldsValue({
-        enabled: localStorage.getItem(STORAGE_KEYS.enabled) !== '0',
-        apiKey: isReadonly ? '' : (localStorage.getItem(STORAGE_KEYS.apiKey) || ''),
-        model: localStorage.getItem(STORAGE_KEYS.model) || 'gpt-5.1-codex',
-        baseUrl: localStorage.getItem(STORAGE_KEYS.baseUrl) || 'https://api.openai.com/v1',
-        timeout: localStorage.getItem(STORAGE_KEYS.timeout) || '45',
-      });
-    } catch {}
-  }, [generalForm, isReadonly]);
-
-  const loadMonitor = async (silent = false) => {
-    if (!silent) setMonitorLoading(true);
-    try {
-      const res = await fetchAiAssistantMcpMonitor({
-        tool: toolFilter || undefined,
-        status: statusFilter,
-        page: 1,
-        page_size: 100,
-      });
-      setMonitorData(res || { executions: [], stats: {}, total: 0, page: 1, page_size: 20, total_pages: 1 });
-    } catch {
-      if (!silent) message.error('Failed to load MCP monitor');
-      setMonitorData({ executions: [], stats: {}, total: 0, page: 1, page_size: 20, total_pages: 1 });
-    } finally {
-      if (!silent) setMonitorLoading(false);
-    }
-  };
-
-  const loadSkillMonitor = async () => {
-    setSkillMonitorLoading(true);
-    try {
-      const res = await fetchAiAssistantSkillMonitor();
-      setSkillMonitorData(res || { summary: {}, stats: [] });
-    } catch {
-      message.error('Failed to load skill monitor');
-      setSkillMonitorData({ summary: {}, stats: [] });
-    } finally {
-      setSkillMonitorLoading(false);
-    }
-  };
 
   const loadMcpServers = async () => {
     setMcpLoading(true);
@@ -166,6 +79,31 @@ export default function AiAssistantSettings() {
       setMcpServers([]);
     } finally {
       setMcpLoading(false);
+    }
+  };
+
+  const loadToolAccess = async () => {
+    setToolAccessReady(false);
+    setToolAccessError('');
+    setCanManageHttpAccess(false);
+    setCanManageMcpAccess(false);
+    setCanDisableApproval(false);
+    try {
+      const me = await getRbacMe();
+      const permissions: string[] = Array.isArray(me?.permissions) ? me.permissions : [];
+      setSkillPermissions(['view', 'add', 'change', 'delete'].filter((action) =>
+        !!me?.is_superuser || permissions.includes(`ai_assistant.${action}_skillconfig`)));
+      const httpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_httptoolconfig');
+      const mcpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_externalmcpserver');
+      const roles = httpAccess || mcpAccess ? await listAiAssistantToolAccessRoles() : [];
+      setToolAccessRoles(roles);
+      setCanManageHttpAccess(httpAccess);
+      setCanManageMcpAccess(mcpAccess);
+      setCanDisableApproval(!!me?.is_superuser);
+      setToolAccessReady(true);
+    } catch {
+      setSkillPermissions((current) => current ?? []);
+      setToolAccessError('Could not load tool access permissions. Role editing and automatic approval are unavailable.');
     }
   };
 
@@ -183,13 +121,15 @@ export default function AiAssistantSettings() {
     try {
       const res = await listAiAssistantSkillConfigs();
       setSkillConfigs(Array.isArray(res) ? res : []);
-    } catch {
-      message.error('Failed to load skill configs');
+    } catch (error: any) {
+      setSkillsError(error?.response?.status === 403 ? 'You do not have permission to view skill configurations.' : 'Failed to load skill configs. Please retry.');
       setSkillConfigs([]);
     }
   };
 
   const loadSkills = async () => {
+    if (!canViewSkills) return;
+    setSkillsError('');
     setSkillsLoading(true);
     try {
       await Promise.all([loadSkillCatalog(), loadSkillConfigs()]);
@@ -209,77 +149,44 @@ export default function AiAssistantSettings() {
   };
 
   useEffect(() => {
-    loadMonitor(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolFilter, statusFilter]);
-
-  useEffect(() => {
-    loadSkillMonitor();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
+    void loadToolAccess();
     loadMcpServers();
-    loadSkills();
     loadInternalMcpTools();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onSaveGeneral = async () => {
-    const values = await generalForm.validateFields();
-    try {
-      localStorage.setItem(STORAGE_KEYS.enabled, values.enabled ? '1' : '0');
-      localStorage.setItem(STORAGE_KEYS.apiKey, values.apiKey || '');
-      localStorage.setItem(STORAGE_KEYS.model, values.model || '');
-      localStorage.setItem(STORAGE_KEYS.baseUrl, values.baseUrl || '');
-      localStorage.setItem(STORAGE_KEYS.timeout, String(values.timeout || '45'));
-      message.success('General settings saved');
-    } catch (err) {
-      message.error('Failed to save general settings');
-    }
-  };
-
-  const onTestConnectivity = async () => {
-    setTestLoading(true);
-    try {
-      const values = await generalForm.validateFields();
-      const res = await testAiAssistantConnectivity({
-        api_key: values.apiKey || undefined,
-        model: values.model || undefined,
-        base_url: values.baseUrl || undefined,
-        timeout_seconds:
-          values.timeout && !Number.isNaN(Number(values.timeout)) ? Number(values.timeout) : undefined,
-      });
-      message.success(`Connected (${res?.model || values.model || 'model'})`);
-    } catch (err: any) {
-      const apiError = err?.response?.data?.error || err?.response?.data?.detail;
-      message.error(apiError ? String(apiError) : 'Connectivity test failed');
-    } finally {
-      setTestLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (canViewSkills) void loadSkills();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canViewSkills]);
 
   const openMcpModal = (row?: any) => {
+    if (!toolAccessReady || isReadonly) return;
     setMcpEditRow(row || null);
     mcpEditForm.setFieldsValue({
       name: row?.name || '',
       title: row?.title || '',
       endpoint: row?.endpoint || '',
-      token: row?.token || '',
+      token: '',
+      clear_token: false,
       enabled: row?.enabled !== false,
+      use_group_ids: row?.use_group_ids || [],
     });
     setMcpModalOpen(true);
   };
 
   const submitMcpModal = async () => {
+    if (!toolAccessReady || isReadonly) return;
     const values = await mcpEditForm.validateFields();
     try {
       if (mcpEditRow?.name) {
         await updateAiAssistantMcpServer(mcpEditRow.name, {
           title: values.title || '',
           endpoint: values.endpoint || '',
-          token: values.token || '',
+          ...(values.token ? { token: values.token } : {}),
+          ...(values.clear_token ? { clear_token: true } : {}),
           enabled: values.enabled !== false,
+          ...(canManageMcpAccess ? { use_group_ids: values.use_group_ids || [] } : {}),
         });
         message.success('MCP updated');
       } else {
@@ -289,6 +196,7 @@ export default function AiAssistantSettings() {
           endpoint: values.endpoint,
           token: values.token || '',
           enabled: values.enabled !== false,
+          ...(canManageMcpAccess ? { use_group_ids: values.use_group_ids || [] } : {}),
         });
         message.success('MCP created');
       }
@@ -296,7 +204,8 @@ export default function AiAssistantSettings() {
       setMcpEditRow(null);
       await loadMcpServers();
     } catch (err: any) {
-      const apiError = err?.response?.data?.error || err?.response?.data?.detail;
+      const data = err?.response?.data;
+      const apiError = data?.error || data?.detail || (data && Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(' ') : String(value)}`).join(' '));
       message.error(apiError ? String(apiError) : 'Failed to save MCP');
     }
   };
@@ -321,6 +230,11 @@ export default function AiAssistantSettings() {
   };
 
   const openSkillModal = (row?: any) => {
+    if (!canChangeSkills || (!row && !canAddSkills)) return;
+    const sequence = ++skillLoadSequence.current;
+    setSkillContentReady(!row?.name);
+    setSkillContentError('');
+    setSkillContentLoading(!!row?.name);
     setSkillEditRow(row || null);
     skillEditForm.setFieldsValue({
       name: row?.name || '',
@@ -333,23 +247,28 @@ export default function AiAssistantSettings() {
     setSkillContentPreview('');
     setSkillModalOpen(true);
     if (row?.name) {
-      setSkillContentLoading(true);
       fetchAiAssistantSkillContent(row.name)
         .then((res) => {
-          const content = String(res?.content || '');
+          if (sequence !== skillLoadSequence.current) return;
+          if (typeof res?.content !== 'string') throw new Error('Invalid skill content response');
+          const content = res.content;
           skillEditForm.setFieldsValue({ content });
           setSkillContentPreview(content);
+          setSkillContentReady(true);
         })
         .catch(() => {
-          skillEditForm.setFieldsValue({ content: '' });
-          setSkillContentPreview('');
+          if (sequence !== skillLoadSequence.current) return;
+          setSkillContentError('Could not load skill content. Saving is disabled; close and reopen to retry.');
         })
-        .finally(() => setSkillContentLoading(false));
+        .finally(() => { if (sequence === skillLoadSequence.current) setSkillContentLoading(false); });
     }
   };
 
   const submitSkillModal = async () => {
+    if (!canChangeSkills || (!skillEditRow && !canAddSkills) || !skillContentReady || skillContentLoading || skillSaving) return;
     const values = await skillEditForm.validateFields();
+    setSkillSaving(true);
+    let configSaved = false;
     try {
       if (skillEditRow?.name) {
         await updateAiAssistantSkillConfig(skillEditRow.name, {
@@ -358,6 +277,7 @@ export default function AiAssistantSettings() {
           enabled: values.enabled !== false,
           description: values.description || '',
         });
+        configSaved = true;
         await updateAiAssistantSkillContent(skillEditRow.name, {
           content: values.content || '',
           title: values.name || skillEditRow.name,
@@ -365,13 +285,15 @@ export default function AiAssistantSettings() {
         });
         message.success('Skill updated');
       } else {
-        await createAiAssistantSkillConfig({
+        const created = await createAiAssistantSkillConfig({
           name: values.name,
           version: values.version || 'v1',
           route: values.route || values.name,
           enabled: values.enabled !== false,
           description: values.description || '',
         });
+        configSaved = true;
+        setSkillEditRow({ ...values, ...created, name: values.name });
         await updateAiAssistantSkillContent(values.name, {
           content: values.content || '',
           title: values.name,
@@ -384,11 +306,15 @@ export default function AiAssistantSettings() {
       await loadSkillConfigs();
     } catch (err: any) {
       const apiError = err?.response?.data?.error || err?.response?.data?.detail;
-      message.error(apiError ? String(apiError) : 'Failed to save skill');
+      message.error(configSaved ? 'Skill configuration was saved, but content saving could not be confirmed. Check the content before retrying.' : apiError ? String(apiError) : 'Failed to save skill');
+      if (configSaved) await loadSkillConfigs();
+    } finally {
+      setSkillSaving(false);
     }
   };
 
   const onDeleteSkill = async (row: any) => {
+    if (!canDeleteSkills) return;
     try {
       await deleteAiAssistantSkillConfig(row.name);
       await loadSkillConfigs();
@@ -402,6 +328,7 @@ export default function AiAssistantSettings() {
     const name = String(row?.name || '').trim();
     if (!name) return;
     const existing = skillConfigMap.get(name);
+    if (existing ? !canChangeSkills : !canAddSkills) return;
     try {
       if (existing) {
         await updateAiAssistantSkillConfig(name, { enabled: true });
@@ -426,31 +353,6 @@ export default function AiAssistantSettings() {
     } catch (err: any) {
       const apiError = err?.response?.data?.error || err?.response?.data?.detail;
       message.error(apiError ? String(apiError) : 'Failed to enable skill');
-    }
-  };
-
-  const statusTag = (status: string) => {
-    if (status === 'completed') return <Tag color="green">Completed</Tag>;
-    if (status === 'failed') return <Tag color="red">Failed</Tag>;
-    if (status === 'running') return <Tag color="blue">Running</Tag>;
-    return <Tag>{status}</Tag>;
-  };
-
-  const copyText = async (value: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      message.success(`${label} copied`);
-    } catch {
-      message.error('Copy failed');
-    }
-  };
-
-  const formatTime = (value: string) => {
-    if (!value) return '-';
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
     }
   };
 
@@ -600,11 +502,14 @@ export default function AiAssistantSettings() {
 
   return (
     <div style={{ maxWidth: 980 }}>
+      {messageContextHolder}
+      {toolAccessError && <Alert type="warning" showIcon message={toolAccessError} action={<Button size="small" onClick={() => void loadToolAccess()}>Retry</Button>} style={{ marginBottom: 16 }} />}
+      {!toolAccessReady && !toolAccessError && <Typography.Paragraph type="secondary">Loading tool permissions…</Typography.Paragraph>}
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         AI Assistant Settings
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        General settings are stored locally in the browser. MCP/Skills management is stored server-side.
+        Models, Execution limits, Agents, MCP, Skills and HTTP Tools are managed server-side. Enable a model in Models to make it available in conversations.
       </Typography.Paragraph>
       {isReadonly ? (
         <Alert
@@ -617,199 +522,37 @@ export default function AiAssistantSettings() {
       ) : null}
 
       <Tabs
+        defaultActiveKey="models"
         items={[
           {
-            key: 'general',
-            label: 'General',
-            children: (
-              <Card>
-                <Form form={generalForm} layout="vertical" disabled={isReadonly}>
-                  <Form.Item label="Enable AI Assistant" name="enabled" valuePropName="checked">
-                    <Switch />
-                  </Form.Item>
-                  <Form.Item label="OpenAI API Key" name="apiKey">
-                    <Input.Password placeholder={isReadonly ? 'Hidden for read-only users' : 'sk-...'} />
-                  </Form.Item>
-                  <Form.Item label="Model" name="model">
-                    <Input placeholder="gpt-5.1-codex" />
-                  </Form.Item>
-                  <Form.Item label="Base URL" name="baseUrl">
-                    <Input placeholder="https://api.openai.com/v1" />
-                  </Form.Item>
-                  <Form.Item label="Timeout (seconds)" name="timeout">
-                    <Input />
-                  </Form.Item>
-                  {isReadonly ? null : (
-                    <Form.Item>
-                      <Space>
-                        <Button type="primary" onClick={onSaveGeneral}>
-                          Save General
-                        </Button>
-                        <Button onClick={onTestConnectivity} loading={testLoading}>
-                          Test Connectivity
-                        </Button>
-                      </Space>
-                    </Form.Item>
-                  )}
-                </Form>
-              </Card>
-            ),
+            key: 'models',
+            label: 'Models',
+            children: <ModelSettings readonly={isReadonly} />,
           },
           {
-            key: 'mcp-monitor',
-            label: 'MCP Status Monitor',
-            children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Card
-                  title="Execution Statistics"
-                  extra={
-                    <Button size="small" loading={monitorLoading} onClick={() => loadMonitor()}>
-                      Refresh
-                    </Button>
-                  }
-                >
-                  <Row gutter={[12, 12]}>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Total Calls</Typography.Text>
-                        <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{monitorSummary.total || 0}</div>
-                        <Typography.Text type="secondary">
-                          Success {monitorSummary.success || 0} / Failed {monitorSummary.failed || 0}
-                        </Typography.Text>
-                      </Card>
-                    </Col>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Success Rate</Typography.Text>
-                        <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{monitorSummary.successRate || 0}%</div>
-                        <Typography.Text type="secondary">Across all MCP tools</Typography.Text>
-                      </Card>
-                    </Col>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Last Invocation</Typography.Text>
-                        <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6 }}>
-                          {monitorSummary.lastInvocation || '-'}
-                        </div>
-                        <Typography.Text type="secondary">Current filter scope</Typography.Text>
-                      </Card>
-                    </Col>
-                    {toolStats.map((s: any) => (
-                      <Col key={s.tool} xs={24} sm={12} md={8} lg={6}>
-                        <Card size="small">
-                          <Typography.Text type="secondary">{s.tool}</Typography.Text>
-                          <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{s.total_calls || 0}</div>
-                          <Typography.Text type="secondary">
-                            Success {s.success_calls || 0} / Failed {s.failed_calls || 0}
-                          </Typography.Text>
-                        </Card>
-                      </Col>
-                    ))}
-                  </Row>
-                </Card>
-
-                <Card title="Recent Executions">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-                    <Input
-                      placeholder="Search tool name"
-                      style={{ width: 260 }}
-                      value={toolFilter}
-                      onChange={(e) => setToolFilter(e.target.value)}
-                    />
-                    <Select
-                      style={{ width: 180 }}
-                      value={statusFilter}
-                      onChange={(v) => setStatusFilter(v)}
-                      options={[
-                        { value: 'all', label: 'All Status' },
-                        { value: 'completed', label: 'Completed' },
-                        { value: 'failed', label: 'Failed' },
-                        { value: 'running', label: 'Running' },
-                      ]}
-                    />
-                  </div>
-                  <Table
-                    rowKey="key"
-                    loading={monitorLoading}
-                    pagination={{ pageSize: 6 }}
-                    dataSource={filteredRows}
-                    columns={[
-                      { title: 'Tool', dataIndex: 'tool', key: 'tool' },
-                      { title: 'Source', dataIndex: 'source', key: 'source' },
-                      {
-                        title: 'Status',
-                        dataIndex: 'status',
-                        key: 'status',
-                        render: (v: string) => statusTag(v),
-                      },
-                      { title: 'Start Time', dataIndex: 'startAt', key: 'startAt' },
-                      { title: 'Duration', dataIndex: 'duration', key: 'duration' },
-                      {
-                        title: 'Action',
-                        key: 'action',
-                        render: (_: any, row: any) => (
-                          <Space>
-                            <Button
-                              size="small"
-                              onClick={() => {
-                                setDetailRow(row);
-                                setDetailOpen(true);
-                              }}
-                            >
-                              Details
-                            </Button>
-                          </Space>
-                        ),
-                      },
-                    ]}
-                  />
-                </Card>
-              </Space>
-            ),
+            key: 'execution-limits',
+            label: 'Execution limits',
+            children: <ExecutionSettings readonly={isReadonly} />,
           },
           {
-            key: 'skill-monitor',
-            label: 'Skill Monitor',
-            children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Card
-                  title="Skill Execution Statistics"
-                  extra={
-                    <Button size="small" loading={skillMonitorLoading} onClick={() => loadSkillMonitor()}>
-                      Refresh
-                    </Button>
-                  }
-                >
-                  <Row gutter={[12, 12]}>
-                    <Col xs={24} sm={12} md={8} lg={6}>
-                      <Card size="small">
-                        <Typography.Text type="secondary">Total Calls</Typography.Text>
-                        <div style={{ fontSize: 30, fontWeight: 700, marginTop: 6 }}>{skillMonitorData?.summary?.total_calls || 0}</div>
-                        <Typography.Text type="secondary">
-                          Success {skillMonitorData?.summary?.success || 0} / Failed {skillMonitorData?.summary?.failed || 0}
-                        </Typography.Text>
-                      </Card>
-                    </Col>
-                  </Row>
-                </Card>
-
-                <Card title="Skill Usage">
-                  <Table
-                    rowKey={(row: any) => row.skill_name}
-                    loading={skillMonitorLoading}
-                    pagination={{ pageSize: 8 }}
-                    dataSource={Array.isArray(skillMonitorData?.stats) ? skillMonitorData.stats : []}
-                    columns={[
-                      { title: 'Skill', dataIndex: 'skill_name', key: 'skill_name' },
-                      { title: 'Total', dataIndex: 'total_calls', key: 'total_calls' },
-                      { title: 'Success', dataIndex: 'success_calls', key: 'success_calls' },
-                      { title: 'Failed', dataIndex: 'failed_calls', key: 'failed_calls' },
-                      { title: 'Last Call', dataIndex: 'last_call_time', key: 'last_call_time' },
-                    ]}
-                  />
-                </Card>
-              </Space>
-            ),
+            key: 'agents',
+            label: 'Agents',
+            children: <AgentSettings readonly={isReadonly} />,
+          },
+          {
+            key: 'http-tools',
+            label: 'Tools',
+            children: <HttpToolsSettings readonly={isReadonly || !toolAccessReady} roles={toolAccessRoles} canManageAccess={canManageHttpAccess} canDisableApproval={canDisableApproval} />,
+          },
+          {
+            key: 'tool-monitor',
+            label: 'AI tool monitor',
+            children: <AiUsageMonitor kind="tools" />,
+          },
+          {
+            key: 'model-monitor',
+            label: 'Model usage',
+            children: <AiUsageMonitor kind="models" />,
           },
           {
             key: 'mcp',
@@ -821,37 +564,41 @@ export default function AiAssistantSettings() {
                   extra={(
                     <Space>
                       <Button onClick={() => loadMcpServers()} loading={mcpLoading}>Refresh</Button>
-                      {isReadonly ? null : <Button type="primary" onClick={() => openMcpModal()}>Add MCP</Button>}
+                      {isReadonly ? null : <Button type="primary" disabled={!toolAccessReady} onClick={() => openMcpModal()}>Add MCP</Button>}
                     </Space>
                   )}
                 >
+                  <Typography.Paragraph type="secondary">Only users in a server's allowed roles can provide its tools to AI and approve their own calls. No roles selected means only superusers have access. Changes by other users restore required approval for all tools on the server.</Typography.Paragraph>
                   <Table
                     size="small"
                     rowKey={(r: any) => r.name}
                     loading={mcpLoading}
                     pagination={{ pageSize: 6 }}
+                    scroll={{ x: 850 }}
                     dataSource={mcpServers}
                     locale={{ emptyText: 'No MCP servers configured' }}
                     columns={[
                       { title: 'Name', dataIndex: 'name', key: 'name' },
                       { title: 'Title', dataIndex: 'title', key: 'title', render: (v: string) => v || '-' },
                       { title: 'Endpoint', dataIndex: 'endpoint', key: 'endpoint', ellipsis: true },
+                      { title: 'Allowed roles', key: 'use_group_ids', render: (_: any, row: any) => row.use_group_ids?.length ? row.use_group_ids.map((id: number) => <Tag key={id}>{toolAccessRoles.find((role) => role.id === id)?.name || `Role #${id}`}</Tag>) : 'Superusers only' },
                       {
                         title: 'Enabled',
                         key: 'enabled',
                         width: 110,
                         render: (_: any, row: any) => (
-                          <Switch disabled={isReadonly} checked={row.enabled !== false} onChange={(checked) => onToggleMcp(row, checked)} />
+                          <Switch disabled={isReadonly || !toolAccessReady} checked={row.enabled !== false} onChange={(checked) => onToggleMcp(row, checked)} />
                         ),
                       },
                       ...(isReadonly ? [] : [{
                         title: 'Action',
                         key: 'action',
-                        width: 180,
+                        width: 310,
                         render: (_: any, row: any) => (
                           <Space>
-                            <Button size="small" onClick={() => openMcpModal(row)}>Edit</Button>
-                            <Button danger size="small" onClick={() => onDeleteMcp(row)}>Delete</Button>
+                            <Button size="small" disabled={!toolAccessReady} onClick={() => openMcpModal(row)}>Edit</Button>
+                            <Button size="small" disabled={!toolAccessReady} onClick={() => setMcpToolsRow({ name: row.name, title: row.title })}>Configure tools</Button>
+                            <Button danger size="small" disabled={!toolAccessReady} onClick={() => onDeleteMcp(row)}>Delete</Button>
                           </Space>
                         ),
                       }]),
@@ -891,14 +638,15 @@ export default function AiAssistantSettings() {
           {
             key: 'skills',
             label: 'Skills Management',
-            children: (
+            children: !canViewSkills ? <Alert type="info" showIcon message={skillPermissions === null ? 'Loading skill permissions…' : 'You do not have permission to view skill configurations.'} /> : (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                {skillsError && <Alert type="error" showIcon message={skillsError} />}
                 <Card
                   title="Configured Skills"
                   extra={(
                     <Space>
                       <Button onClick={() => loadSkills()} loading={skillsLoading}>Refresh</Button>
-                      {isReadonly ? null : <Button type="primary" onClick={() => openSkillModal()}>Add Skill</Button>}
+                      {canAddSkills && canChangeSkills && <Button type="primary" onClick={() => openSkillModal()}>Add Skill</Button>}
                     </Space>
                   )}
                 >
@@ -918,17 +666,17 @@ export default function AiAssistantSettings() {
                         key: 'enabled',
                         width: 110,
                         render: (_: any, row: any) => (
-                          <Switch disabled={isReadonly} checked={row.enabled !== false} onChange={(checked) => updateAiAssistantSkillConfig(row.name, { enabled: checked }).then(loadSkillConfigs).catch(() => message.error('Failed to update skill'))} />
+                          <Switch disabled={!canChangeSkills} checked={row.enabled !== false} onChange={(checked) => updateAiAssistantSkillConfig(row.name, { enabled: checked }).then(loadSkillConfigs).catch(() => message.error('Failed to update skill'))} />
                         ),
                       },
-                      ...(isReadonly ? [] : [{
+                      ...(!canChangeSkills && !canDeleteSkills ? [] : [{
                         title: 'Action',
                         key: 'action',
                         width: 180,
                         render: (_: any, row: any) => (
                           <Space>
-                            <Button size="small" onClick={() => openSkillModal(row)}>Edit</Button>
-                            <Button danger size="small" onClick={() => onDeleteSkill(row)}>Delete</Button>
+                            {canChangeSkills && <Button size="small" onClick={() => openSkillModal(row)}>Edit</Button>}
+                            {canDeleteSkills && <Button danger size="small" onClick={() => onDeleteSkill(row)}>Delete</Button>}
                           </Space>
                         ),
                       }]),
@@ -967,93 +715,12 @@ export default function AiAssistantSettings() {
           },
         ]}
       />
-      <Modal
-        title="Tool call details"
-        open={detailOpen}
-        onCancel={() => setDetailOpen(false)}
-        width={980}
-        styles={{ body: { maxHeight: '75vh', overflow: 'auto' } }}
-        footer={[
-          <Button key="ok" type="primary" onClick={() => setDetailOpen(false)}>
-            OK
-          </Button>,
-        ]}
-      >
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Card size="small" title="Execution info">
-            <Row gutter={[12, 12]}>
-              <Col xs={24} sm={12} md={8}>
-                <Card size="small">
-                  <Typography.Text type="secondary">TOOL</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 700 }}>{detailRow?.tool || '-'}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <Card size="small">
-                  <Typography.Text type="secondary">STATUS</Typography.Text>
-                  <div style={{ marginTop: 6 }}>{statusTag(detailRow?.status || '')}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <Card size="small">
-                  <Typography.Text type="secondary">TIME</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 600 }}>{formatTime(detailRow?.startAt || '')}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={12}>
-                <Card size="small">
-                  <Typography.Text type="secondary">EXECUTION ID</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 600, wordBreak: 'break-all' }}>{detailRow?.executionId || '-'}</div>
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={12}>
-                <Card size="small">
-                  <Typography.Text type="secondary">ENDPOINT</Typography.Text>
-                  <div style={{ marginTop: 6, fontWeight: 600, wordBreak: 'break-all' }}>{detailRow?.requestUrl || '-'}</div>
-                </Card>
-              </Col>
-            </Row>
-          </Card>
-
-          <Card
-            size="small"
-            title="Request params"
-            extra={(
-              <Button size="small" onClick={() => copyText(JSON.stringify({ tool: detailRow?.tool, arguments: detailRow?.requestPayload || {} }, null, 2), 'Request JSON')}>
-                Copy JSON
-              </Button>
-            )}
-          >
-            <pre style={{ margin: 0, background: '#f6f8fa', border: '1px solid #f0f0f0', padding: 12, borderRadius: 6, whiteSpace: 'pre', maxHeight: 360, overflow: 'auto' }}>
-{JSON.stringify({ tool: detailRow?.tool, arguments: detailRow?.requestPayload || {} }, null, 2)}
-            </pre>
-          </Card>
-
-          <Card
-            size="small"
-            title="Response"
-            extra={(
-              <Button size="small" onClick={() => copyText(JSON.stringify(detailRow?.responsePayload || {}, null, 2), 'Response content')}>
-                Copy content
-              </Button>
-            )}
-          >
-            <pre style={{ margin: 0, background: '#f6f8fa', border: '1px solid #f0f0f0', padding: 12, borderRadius: 6, whiteSpace: 'pre', maxHeight: 420, overflow: 'auto' }}>
-{JSON.stringify(detailRow?.responsePayload || {}, null, 2)}
-            </pre>
-          </Card>
-
-          {detailRow?.error ? (
-            <Card size="small" title="Error">
-              <div style={{ whiteSpace: 'pre-wrap', color: '#cf1322' }}>{detailRow.error}</div>
-            </Card>
-          ) : null}
-        </Space>
-      </Modal>
+      {mcpToolsRow && toolAccessReady && <McpToolApprovals server={mcpToolsRow} readonly={isReadonly} canDisableApproval={canDisableApproval} onClose={() => setMcpToolsRow(null)}
+        onSaved={() => { setMcpToolsRow(null); message.success('MCP tool approvals saved'); void loadMcpServers(); }} />}
 
       <Modal
         title={mcpEditRow ? 'Edit MCP Server' : 'Add MCP Server'}
-        open={mcpModalOpen && !isReadonly}
+        open={mcpModalOpen && !isReadonly && toolAccessReady}
         onCancel={() => setMcpModalOpen(false)}
         onOk={submitMcpModal}
         okText={mcpEditRow ? 'Save' : 'Create'}
@@ -1069,6 +736,8 @@ export default function AiAssistantSettings() {
           <Form.Item label="Title" name="title">
             <Input placeholder="MCP Server" />
           </Form.Item>
+          {canManageMcpAccess && <Form.Item name="use_group_ids" label="Roles allowed to use this server" extra="Applies to all tools on this server. No roles selected means only superusers can use them."><Select mode="multiple" allowClear optionFilterProp="label" options={toolAccessRoles.map((role) => ({ value: role.id, label: role.name }))} placeholder="Select allowed roles" /></Form.Item>}
+          {!canManageMcpAccess && <Typography.Paragraph type="secondary">Changing allowed roles requires the MCP access management permission.</Typography.Paragraph>}
           <Form.Item
             label="Endpoint"
             name="endpoint"
@@ -1076,9 +745,11 @@ export default function AiAssistantSettings() {
           >
             <Input placeholder="https://host/mcp-connect/..." />
           </Form.Item>
-          <Form.Item label="Token" name="token">
-            <Input.Password placeholder="optional token" />
+          <Form.Item label={mcpEditRow?.has_token ? 'Replace saved token (optional)' : 'Token'} name="token" extra={mcpEditRow?.has_token ? 'Leave blank to keep the saved token. Changing the endpoint requires a replacement token or clearing it.' : undefined}>
+            <Input.Password disabled={clearingMcpToken} autoComplete="new-password" placeholder={mcpEditRow?.has_token ? 'Saved token is not displayed' : 'Optional token'} />
           </Form.Item>
+          {mcpEditRow?.has_token && <Form.Item name="clear_token" valuePropName="checked"><Checkbox onChange={(event) => { if (event.target.checked) mcpEditForm.setFieldValue('token', ''); }}>Clear saved token</Checkbox></Form.Item>}
+          {mcpEditRow && <Typography.Paragraph type="secondary">{canDisableApproval ? 'Changing the endpoint or token resets per-tool approval choices to require approval.' : 'Saving changes requires approval for every tool on this server.'}</Typography.Paragraph>}
           <Form.Item label="Enabled" name="enabled" valuePropName="checked">
             <Switch />
           </Form.Item>
@@ -1087,15 +758,19 @@ export default function AiAssistantSettings() {
 
       <Modal
         title={skillEditRow ? 'Edit Skill' : 'Add Skill'}
-        open={skillModalOpen && !isReadonly}
-        onCancel={() => setSkillModalOpen(false)}
+        open={skillModalOpen && canChangeSkills}
+        onCancel={() => { if (!skillSaving) { skillLoadSequence.current++; setSkillModalOpen(false); } }}
         onOk={submitSkillModal}
         okText={skillEditRow ? 'Save' : 'Create'}
-        confirmLoading={skillContentLoading}
+        confirmLoading={skillSaving}
+        okButtonProps={{ disabled: !skillContentReady || skillContentLoading || skillSaving }}
+        cancelButtonProps={{ disabled: skillSaving }}
       >
+        {skillContentError && <Alert type="error" showIcon message={skillContentError} />}
         <Form
           form={skillEditForm}
           layout="vertical"
+          disabled={skillContentLoading || skillSaving}
           onValuesChange={(changed) => {
             if (Object.prototype.hasOwnProperty.call(changed, 'content')) {
               setSkillContentPreview(String(changed.content || ''));

@@ -8,6 +8,7 @@ export interface Workflow extends BaseWorkflow {
 
 export {
   // types
+  type WorkflowWritePayload,
   type WorkflowStep,
   type PrefectDeployment,
   type WorkflowSchedule,
@@ -18,7 +19,6 @@ export {
   type WorkflowStats,
   type SavedWorkflowNode,
   type TicketWorkflowBinding,
-  type WorkflowWritePayload,
 
   listWorkflows,
   getWorkflow,

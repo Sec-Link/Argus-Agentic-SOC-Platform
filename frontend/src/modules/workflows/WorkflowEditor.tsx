@@ -33,6 +33,7 @@ import {
   getAvailableActions,
   executeWorkflow,
   Workflow,
+  type WorkflowWritePayload,
   WorkflowStep,
   ActionInfo,
 } from 'services/workflows';
@@ -41,7 +42,6 @@ import type { InterfaceEndpoint } from 'services/interfaces';
 import WorkflowVariablesPanel, { VariableReference } from './components/WorkflowVariablesPanel';
 import { declarationsToPayload, getWorkflowVariableOptions, variablesToDeclarations } from './variables';
 import type { VariableDeclaration } from './variables';
-import type { WorkflowWritePayload } from 'services/workflows';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
