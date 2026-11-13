@@ -25,10 +25,11 @@ from accounts.permissions import DenyReadonlyUser
 from accounts.services import is_user_readonly
 from ai_assistant.chat_agent import ChatCancelled, run_chat_agent
 from ai_assistant.chat_errors import event_progress, safe_chat_error
+from ai_assistant.internal_tool_permissions import _check_internal
 from ai_assistant.call_details import snapshot
 from ai_assistant.model_client import ModelCallError, model_request_summary_text
 from ai_assistant.mcp_protocol_views import _call_tool, _tool_defs
-from ai_assistant.models import ExternalMCPServer, HttpToolConfig, MCPToolExecution, SkillConfig
+from ai_assistant.models import ExternalMCPServer, HttpToolConfig, MCPToolExecution
 from ai_assistant.http_tool_crypto import decrypt_http_tool_secret
 from ai_assistant.http_tools import HttpToolError, build_tool_request, execute_http_tool, tool_input_schema
 from ai_assistant.skill_config import get_enabled_skill_names
@@ -121,20 +122,6 @@ def _actor(user_id):
     if not user or is_user_readonly(user):
         raise PermissionError("Inactive or readonly accounts cannot execute assistant tools.")
     return user
-
-
-def _check_internal(user, name, arguments):
-    required = []
-    if name in {"ticket_context", "ticket_search_similar_cases"} or arguments.get("ticket_number"):
-        required.append("tickets.view_eventticket")
-    if name == "cmdb_asset_lookup":
-        required.append("cmdb.view_asset")
-    if name in {"list_knowledge_risk_types", "search_knowledge_base"}:
-        required.append("ai_assistant.view_knowledgebaseitem")
-    if not all(user.has_perm(perm) for perm in required):
-        raise PermissionError("Your account does not have permission to read this resource.")
-    if name == "read_skill" and not SkillConfig.objects.filter(name=arguments.get("skill_name"), enabled=True).exists():
-        raise PermissionError("This skill is no longer enabled.")
 
 
 def _builtin_tools() -> list[BaseTool]:

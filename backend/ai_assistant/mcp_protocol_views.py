@@ -6,6 +6,8 @@ from django.http import HttpResponse, JsonResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
+from accounts.services import is_user_readonly
+from ai_assistant.internal_tool_permissions import _check_internal
 from ai_assistant.mcp_views import _extract_hostnames, _extract_iocs, _extract_observables, _flatten_observables, _json_dumps_safe
 from cmdb.models import Asset
 from tickets.models import EventTicket, TicketWorkLog
@@ -15,10 +17,10 @@ def _rpc_ok(rpc_id: Any, result: Dict[str, Any]) -> JsonResponse:
     return JsonResponse({"jsonrpc": "2.0", "id": rpc_id, "result": result})
 
 
-def _rpc_error(rpc_id: Any, code: int, message: str) -> JsonResponse:
+def _rpc_error(rpc_id: Any, code: int, message: str, status: int = 400) -> JsonResponse:
     return JsonResponse(
         {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}},
-        status=400,
+        status=status,
     )
 
 
@@ -336,6 +338,9 @@ def mcp_rpc(request):
             args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
             if not name:
                 return _rpc_error(rpc_id, -32602, "tools/call requires params.name")
+            if not request.user.is_active or is_user_readonly(request.user):
+                raise PermissionError("Account cannot execute assistant tools.")
+            _check_internal(request.user, name, args)
             payload = _call_tool(name, args)
             return _rpc_ok(
                 rpc_id,
@@ -347,6 +352,8 @@ def mcp_rpc(request):
             )
 
         return _rpc_error(rpc_id, -32601, f"method not found: {method}")
+    except PermissionError:
+        return _rpc_error(rpc_id, -32003, "You do not have permission to execute this tool.", status=403)
     except ValueError as exc:
         return _rpc_error(rpc_id, -32602, str(exc))
     except Exception as exc:

@@ -571,7 +571,8 @@ def _ticket_enrichment(name, overrides, **arguments):
         return [] if list_result else {}
 
     # Reuse the page assistant's resource checks without a credential-bearing loopback request.
-    from ai_assistant.page_agent import _actor, _check_internal
+    from ai_assistant.page_agent import _actor
+    from ai_assistant.internal_tool_permissions import _check_internal
     from ai_assistant.mcp_protocol_views import _call_tool
 
     actor = _actor(mcp["actor_id"])
