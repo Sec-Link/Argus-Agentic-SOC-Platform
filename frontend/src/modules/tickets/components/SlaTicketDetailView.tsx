@@ -8,7 +8,7 @@ import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageCont
 import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
 import { fetchModelCatalog, type ModelCatalogEntry } from 'services/aiAssistant/models';
 import { buildTicketDetailContext } from '../aiContext';
-import { canContinueTicketChat, type TicketChatCapabilities, type TicketChatScope } from '../ticketChatHistory';
+import { canContinueTicketChat, ticketChatHistoryForApi, type TicketChatCapabilities, type TicketChatScope } from '../ticketChatHistory';
 import layoutStyles from './TicketLayout.module.css';
 
 type Props = {
@@ -432,7 +432,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
   const [chatWidthTouched, setChatWidthTouched] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; hidden?: boolean; trace?: any[]; owner?: string }>>([]);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; trace?: any[]; owner?: string }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
@@ -664,21 +664,6 @@ export default function SlaTicketDetailView(props: Props) {
     setPlaybookSuggestOpen(false);
   };
 
-  const buildChatContext = () => {
-    const context = {
-      ticket_number: ticket.ticket_number,
-      title: ticket.title,
-      status: ticket.status,
-      priority: ticket.priority,
-      event_category: ticket.event_category,
-      event_result: ticket.event_result,
-      event_platform: ticket.event_platform,
-      event_sources: ticket.event_sources,
-      alert_message: ticket.alert_message,
-    };
-    return `Ticket context (read-only):\n${JSON.stringify(context, null, 2)}`;
-  };
-
   const loadChatHistory = async (scope: TicketChatScope = chatScope) => {
     const sequence = ++chatHistorySequence.current;
     setChatScope(scope);
@@ -689,7 +674,6 @@ export default function SlaTicketDetailView(props: Props) {
     setChatInput('');
     setChatNextBefore(null);
     setCollapsedTraces({});
-    const system = { role: 'system', content: buildChatContext(), hidden: true };
     try {
       const res = await fetchSlaTicketAiChatHistory(ticket.ticket_number, { limit: 50, scope });
       if (sequence !== chatHistorySequence.current) return;
@@ -704,10 +688,10 @@ export default function SlaTicketDetailView(props: Props) {
         }));
       setChatCapabilities(res);
       setChatNextBefore(res?.next_before || null);
-      setChatMessages([system, ...normalized]);
+      setChatMessages(normalized);
     } catch {
       if (sequence !== chatHistorySequence.current) return;
-      setChatMessages([system]);
+      setChatMessages([]);
       setChatNextBefore(null);
       setChatHistoryError('Could not load chat history. Check your permissions and retry.');
     } finally {
@@ -733,11 +717,7 @@ export default function SlaTicketDetailView(props: Props) {
           owner: typeof row.created_by === 'string' ? row.created_by : 'Unknown legacy owner',
         }));
       setChatNextBefore(res?.next_before || null);
-      setChatMessages((prev) => {
-        const system = prev.find((m) => m.hidden) || { role: 'system', content: buildChatContext(), hidden: true };
-        const rest = prev.filter((m) => !m.hidden);
-        return [system, ...normalized, ...rest];
-      });
+      setChatMessages((prev) => [...normalized, ...prev]);
     } catch {
       if (sequence !== chatHistorySequence.current) return;
       setChatNextBefore(null);
@@ -797,7 +777,7 @@ export default function SlaTicketDetailView(props: Props) {
       }));
     }
     setChatOpen(true);
-    if (!chatMessages.length) {
+    if (chatCapabilities === null && !chatHistoryLoading) {
       loadChatHistory();
     }
   };
@@ -807,7 +787,7 @@ export default function SlaTicketDetailView(props: Props) {
     if (!text || chatLoading || !chatCanContinue) return;
     const sequence = chatHistorySequence.current;
     if (!requireAiModel()) return;
-    const historyForApi = chatMessages.map((m) => ({ role: m.role, content: m.content }));
+    const historyForApi = ticketChatHistoryForApi(chatMessages);
     setChatMessages((prev) => [...prev, { role: 'user', content: text }]);
     setChatInput('');
     setChatLoading(true);
@@ -1932,7 +1912,7 @@ export default function SlaTicketDetailView(props: Props) {
                   try {
                     await clearSlaTicketAiChatHistory(ticket.ticket_number);
                     if (sequence !== chatHistorySequence.current) return;
-                    setChatMessages([{ role: 'system', content: buildChatContext(), hidden: true }]);
+                    setChatMessages([]);
                     setChatNextBefore(null);
                   } catch {
                     if (sequence === chatHistorySequence.current) message.error('Failed to clear chat history');
@@ -1946,9 +1926,9 @@ export default function SlaTicketDetailView(props: Props) {
             </div>
             {chatHistoryLoading ? (
               <Typography.Text type="secondary">Loading chat history...</Typography.Text>
-            ) : chatMessages.filter((m) => !m.hidden).length ? (
+            ) : chatMessages.length ? (
               <List
-                dataSource={chatMessages.filter((m) => !m.hidden)}
+                dataSource={chatMessages}
                   renderItem={(msg, idx) => (
                   <List.Item>
                     <div style={{ width: '100%' }}>
@@ -2074,7 +2054,7 @@ export default function SlaTicketDetailView(props: Props) {
             disabled={chatLoading || !chatCanContinue}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Button disabled={chatLoading || !chatCanContinue} onClick={() => setChatMessages([{ role: 'system', content: buildChatContext(), hidden: true }])}>
+            <Button disabled={chatLoading || !chatCanContinue} onClick={() => setChatMessages([])}>
               Reset Context
             </Button>
             <Space>

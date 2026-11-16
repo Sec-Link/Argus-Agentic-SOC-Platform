@@ -10,3 +10,9 @@ export interface TicketChatCapabilities {
 export function canContinueTicketChat(scope: TicketChatScope, access: TicketChatCapabilities | null): boolean {
   return scope === 'mine' && access?.readonly === false && access.can_continue === true;
 }
+
+export function ticketChatHistoryForApi(messages: Array<{ role: string; content: string }>) {
+  return messages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map(({ role, content }) => ({ role, content }));
+}
