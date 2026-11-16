@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Callable
 
 from django.http import JsonResponse
+from django.urls import Resolver404, resolve
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.views import APIView
 
 
 class DRFTokenAuthMiddleware:
@@ -23,6 +25,18 @@ class DRFTokenAuthMiddleware:
         try:
             authenticated = TokenAuthentication().authenticate(request)
         except AuthenticationFailed as exc:
+            try:
+                callback = resolve(request.path_info, getattr(request, "urlconf", None)).func
+            except Resolver404:
+                callback = None
+            view_class = getattr(callback, "cls", None)
+            if isinstance(view_class, type) and issubclass(view_class, APIView):
+                authentication_classes = callback.initkwargs.get(
+                    "authentication_classes", view_class.authentication_classes,
+                )
+                # Respect views that explicitly opt out of authentication, not merely AllowAny.
+                if authentication_classes in ([], ()):
+                    return self.get_response(request)
             response = JsonResponse({"detail": str(exc.detail)}, status=401)
             response["WWW-Authenticate"] = "Token"
             return response

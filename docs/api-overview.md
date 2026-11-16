@@ -9,6 +9,8 @@ This document tracks the current code structure, key APIs, database mappings, an
 - Response style: standard DRF JSON responses
 - Pagination/filtering behavior depends on the individual viewset or view implementation
 
+Invalid Token headers return 401 before the view runs, except for DRF views explicitly configured with empty `authentication_classes` (such as report generation). These views still apply their own permissions; `AllowAny` alone does not exempt a view from Token validation. Valid Token and session identity handling is unchanged.
+
 ## Schema / API Discovery
 - Django admin: `/admin/`
 - Current route discovery is primarily through Django router/viewset URL registration
