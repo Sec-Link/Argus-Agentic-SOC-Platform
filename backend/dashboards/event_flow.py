@@ -32,6 +32,7 @@ def build_event_flow(resolved, categories, alerts, open_tickets, incidents):
         group["total_docs"] += docs
         group["sources"].append({
             "source_key": s["source_key"],
+            "source_label": s.get("source_label", s["source_key"]),
             "docs": docs,
             "last_seen": s.get("last_seen"),
             "hosts": s.get("hosts_approx"),
@@ -64,5 +65,5 @@ def build_event_flow(resolved, categories, alerts, open_tickets, incidents):
     }
 
 
-def load_categories():
-    return list(LogSourceCategory.objects.all())
+def load_categories(platform="elk"):
+    return list(LogSourceCategory.objects.filter(platform=platform))

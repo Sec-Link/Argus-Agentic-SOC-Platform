@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Empty, Progress, Spin, Statistic, Tag, Tooltip, Typography, message } from 'antd';
-import { CloseOutlined, DownOutlined, PushpinFilled, ReloadOutlined, SettingOutlined, UndoOutlined, UpOutlined } from '@ant-design/icons';
+import { CloseOutlined, DownOutlined, PushpinFilled, SettingOutlined, UndoOutlined, UpOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { fetchDashboardLogSourceCoverage, rescanLogSources, resetLogSourceMappings, saveLogSourceMappings } from 'services/dashboards';
-import type { LogSourceBrief, LogSourceCoverage } from 'types';
+import { fetchDashboardLogSourceCoverage, resetLogSourceMappings, saveLogSourceMappings } from 'services/dashboards';
+import type { LogSourceBrief, LogSourceCoverage, MonitoringPlatform } from 'types';
 import LogSourceConfigDrawer from './LogSourceConfigDrawer';
 import LogSourceLegend from './LogSourceLegend';
 import ScanAge from './ScanAge';
@@ -11,6 +11,8 @@ import ClickValue from './ClickValue';
 import MetricDetailModal, { type MetricKind } from './MetricDetailModal';
 import HelpTip from './HelpTip';
 import { STATUS_META, sourceStatus } from './logSourceStatus';
+import RescanLogSourcesButton from './RescanLogSourcesButton';
+import { coverageWindowLabel } from './coverageTimeRange';
 
 const coverageColor = (percent: number) => (percent >= 60 ? '#52c41a' : percent >= 30 ? '#faad14' : '#f5222d');
 const DRAG_TYPE = 'application/x-log-source';
@@ -22,52 +24,41 @@ const HIGHLIGHT_BG = 'var(--menu-selected-bg, rgba(26, 110, 245, 0.11))';
 
 type DropTarget = number | typeof POOL | null;
 
-const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
+const LogSourceCoverageCard: React.FC<{ isStaff: boolean; platform?: MonitoringPlatform }> = ({ isStaff, platform = 'elk' }) => {
   const [data, setData] = useState<LogSourceCoverage | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [ignoredOpen, setIgnoredOpen] = useState(false);
   const [detailKind, setDetailKind] = useState<MetricKind | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [rescanning, setRescanning] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dropTarget, setDropTarget] = useState<DropTarget>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [poolExpanded, setPoolExpanded] = useState(false);
+  const requestRef = useRef(0);
 
   const load = useCallback((silent = false) => {
+    const requestId = ++requestRef.current;
     if (!silent) setLoading(true);
     setLoadError(null);
-    fetchDashboardLogSourceCoverage()
-      .then((res) => setData(res))
+    fetchDashboardLogSourceCoverage(7, platform)
+      .then((res) => { if (requestId === requestRef.current) setData(res); })
       .catch((err: any) => {
+        if (requestId !== requestRef.current) return;
         setData(null);
         const status = err?.response?.status;
         setLoadError(status ? `Request failed (HTTP ${status})` : 'Request failed or timed out');
       })
-      .finally(() => setLoading(false));
-  }, []);
-
-  const rescan = async () => {
-    setRescanning(true);
-    try {
-      const res = await rescanLogSources();
-      if (res.reason) message.warning(`Re-scan failed: ${res.reason}`);
-      else message.success('Log sources re-scanned');
-      load(true);
-    } catch {
-      message.error('Re-scan failed');
-    } finally {
-      setRescanning(false);
-    }
-  };
+      .finally(() => { if (requestId === requestRef.current) setLoading(false); });
+  }, [platform]);
 
   useEffect(() => {
     load();
+    return () => { requestRef.current += 1; };
   }, [load]);
 
   const save = async (sourceKey: string, categoryId: number | null, ignored = false) => {
     try {
-      await saveLogSourceMappings([{ source_key: sourceKey, category_id: categoryId, ignored }]);
+      await saveLogSourceMappings([{ source_key: sourceKey, category_id: categoryId, ignored }], platform);
       load(true);
     } catch {
       message.error('Failed to update the log source');
@@ -76,7 +67,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
 
   const restore = async (sourceKey: string) => {
     try {
-      await resetLogSourceMappings([sourceKey]);
+      await resetLogSourceMappings([sourceKey], platform);
       load(true);
     } catch {
       message.error('Failed to restore the log source');
@@ -115,6 +106,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
 
   type ChipSource = {
     source_key: string;
+    source_label?: string;
     docs: number;
     last_seen: string | null;
     enabled_rules: number;
@@ -144,7 +136,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
           }}
         >
           {manual && <PushpinFilled className="ls-chip__pin" />}
-          {s.source_key}
+          {s.source_label || s.source_key}
         </Tag>
       </Tooltip>
     );
@@ -165,7 +157,6 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
 
   const percent = data?.coverage_percent;
   const nothingConfigured = !!data && data.configured_categories === 0;
-  const esDown = !!data && !data.initialized;
   const rules = data?.rules;
 
   return (
@@ -178,9 +169,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
           {data && <ScanAge scannedAt={data.scanned_at} ageSeconds={data.scan_age_seconds} />}
           {isStaff && (
             <>
-              <Button size="small" icon={<ReloadOutlined />} loading={rescanning} onClick={rescan}>
-                Rescan
-              </Button>
+              <RescanLogSourcesButton platform={platform} onScanned={() => load(true)} />
               <Button size="small" icon={<SettingOutlined />} onClick={() => setDrawerOpen(true)}>
                 Configure
               </Button>
@@ -198,13 +187,13 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
         <Empty description={`Unable to load log source coverage${loadError ? ` — ${loadError}` : ''}`} />
       ) : (
         <>
-          {esDown && data.es_reason && (
+          {data.es_reason && (
             <Alert
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
               message="Log sources could not be scanned"
-              description={`${data.es_reason} Coverage falls back to alert sources only.`}
+              description={`${data.es_reason}${data.initialized ? ' The previous successful scan is retained.' : platform === 'elk' ? ' Coverage falls back to alert sources only.' : ''}`}
             />
           )}
           {!data.initialized && !data.es_reason && (
@@ -213,21 +202,22 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
               showIcon
               style={{ marginBottom: 16 }}
               message="Log sources have not been scanned yet"
-              description={isStaff ? 'Click Rescan to read the indices from Elasticsearch.' : 'Ask an administrator to scan log sources.'}
+              description={isStaff ? `Click Rescan to read log sources from ${platform === 'splunk' ? 'Splunk' : 'Elasticsearch'}.` : 'Ask an administrator to scan log sources.'}
             />
           )}
           {nothingConfigured && (
             <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="No log source categories are available" />
           )}
+          {data.truncated && <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="Only the busiest sources are included. Coverage outside this scan is unknown." />}
           <div className="cov-stats">
             <Statistic
-              title={<HelpTip id="logCoverage" label="Log source coverage" tip="Share of configured log source categories that received logs in the last scan window (receiving / configured). Only categories with at least one assigned source count." />}
+              title={<HelpTip id="logCoverage" label="Log source coverage" tip="Receiving categories / all enabled categories after a successful scan, including empty categories." />}
               value={percent == null ? '—' : `${percent}%`}
               formatter={() => <ClickValue onClick={() => setDetailKind('categories')}>{percent == null ? '—' : `${percent}%`}</ClickValue>}
               valueStyle={{ color: percent == null ? undefined : coverageColor(percent), fontSize: 26, fontWeight: 600 }}
             />
             <Statistic
-              title={<HelpTip id="receiving" label={`Receiving logs (last ${data.window_days}d)`} tip="Categories with at least one log in the window, out of all configured categories." />}
+              title={<HelpTip id="receiving" label={`Receiving logs (${coverageWindowLabel(data.window_days)})`} tip="Categories with at least one log in the window, out of all configured categories." />}
               value={`${data.active_categories} / ${data.configured_categories}`}
               formatter={() => <ClickValue onClick={() => setDetailKind('categories')}>{`${data.active_categories} / ${data.configured_categories}`}</ClickValue>}
               valueStyle={{ fontSize: 26, fontWeight: 600 }}
@@ -235,25 +225,25 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
             {rules && (
               <>
                 <Statistic
-                  title={<HelpTip id="enabledRules" label="Enabled rules / total" tip="Detection rules that are currently enabled, out of all rules in the library. Disabled rules do not detect anything or count toward ATT&CK coverage." />}
+                  title={<HelpTip id="enabledRules" platform={platform} label="Enabled rules / total" tip={platform === 'splunk' ? 'Confirmed enabled rules / published Splunk rules.' : 'Enabled detection rules / all rules in the library.'} />}
                   value={`${rules.enabled_rules} / ${rules.total_rules}`}
                   formatter={() => <ClickValue onClick={() => setDetailKind('rules_enabled')}>{`${rules.enabled_rules} / ${rules.total_rules}`}</ClickValue>}
                   suffix={rules.enabled_percent == null ? undefined : <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.65 }}>({rules.enabled_percent}%)</span>}
                   valueStyle={{ fontSize: 26, fontWeight: 600 }}
                 />
                 <Statistic
-                    title={<HelpTip id="withData" label="Rules with live data" tip="Enabled rules whose log source category is receiving data, so they can actually fire." />}
+                    title={<HelpTip id="withData" platform={platform} label="Rules with live data" tip="Enabled rules with matching log sources receiving data in the scan window." />}
                     value={rules.enabled_with_data}
                     formatter={() => <ClickValue onClick={() => setDetailKind('rules_with_data')}>{rules.enabled_with_data}</ClickValue>}
                     valueStyle={{ fontSize: 26, fontWeight: 600, color: '#52c41a' }}
                   />
                 <Statistic
-                    title={<HelpTip id="withoutData" label="Rules without data" tip="Enabled rules whose category received no data in the window. They are blind spots until logs arrive." />}
+                    title={<HelpTip id="withoutData" platform={platform} label="Rules without data" tip="Enabled rules with known sources but no data in the scan window." />}
                     value={rules.enabled_without_data}
                     formatter={() => <ClickValue onClick={() => setDetailKind('rules_without_data')}>{rules.enabled_without_data}</ClickValue>}
                     valueStyle={{ fontSize: 26, fontWeight: 600, color: rules.enabled_without_data > 0 ? '#f5222d' : undefined }}
                   />
-                <Statistic title={<HelpTip id="unknown" label="Rules, source unknown" tip="Enabled rules we cannot tie to a log source category (no index pattern or recognizable name). Add an index pattern to the rule to attribute it." />} value={rules.enabled_unmapped} formatter={() => <ClickValue onClick={() => setDetailKind('rules_unknown')}>{rules.enabled_unmapped}</ClickValue>} valueStyle={{ fontSize: 26, fontWeight: 600 }} />
+                <Statistic title={<HelpTip id="unknown" platform={platform} label="Rules, source unknown" tip="Enabled rules that cannot be matched to a classified log source." />} value={rules.enabled_unmapped} formatter={() => <ClickValue onClick={() => setDetailKind('rules_unknown')}>{rules.enabled_unmapped}</ClickValue>} valueStyle={{ fontSize: 26, fontWeight: 600 }} />
               </>
             )}
           </div>
@@ -272,7 +262,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Typography.Text strong>
-                  <HelpTip id="unclassified" label={`Unclassified sources (${data.unclassified.length})`} tip="Log sources found in Elasticsearch that no category rule matched. Drag one onto a category to assign it, or click × to ignore it (e.g. metrics or noise)." />
+                  <HelpTip id="unclassified" platform={platform} label={`Unclassified sources (${data.unclassified.length})`} tip="Discovered sources that have no category assignment." />
                 </Typography.Text>
 
                 <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
@@ -334,7 +324,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                         {c.last_seen
                           ? `Last seen ${dayjs(c.last_seen).format('MM-DD HH:mm')}`
-                          : `No data in the last ${data.window_days} days`}
+                          : `No data (${coverageWindowLabel(data.window_days)})`}
                       </Typography.Text>
                     )}
                     {c.total_rules > 0 && (
@@ -381,7 +371,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
                   <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {data.ignored.map((s) => (
                       <Tag key={s.source_key} icon={<UndoOutlined />} className="ls-chip ls-chip--silent ls-chip--ignored" style={{ cursor: 'pointer' }} onClick={() => restore(s.source_key)}>
-                        {s.source_key}
+                        {s.source_label || s.source_key}
                       </Tag>
                     ))}
                   </div>
@@ -391,8 +381,8 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
           )}
         </>
       )}
-      {data && <MetricDetailModal kind={detailKind} data={data} onClose={() => setDetailKind(null)} />}
-      <LogSourceConfigDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} onChanged={() => load(true)} />
+      {data && <MetricDetailModal kind={detailKind} platform={platform} data={data} onClose={() => setDetailKind(null)} />}
+      <LogSourceConfigDrawer platform={platform} open={drawerOpen} onClose={() => setDrawerOpen(false)} onChanged={() => load(true)} />
     </Card>
   );
 };

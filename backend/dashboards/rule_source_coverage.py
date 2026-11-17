@@ -2,9 +2,10 @@
 import fnmatch
 import logging
 
-from detections.models import LocalDetectionRule
+from detections.models import SplunkRulePublication
 
 from .log_source_classifier import UNCLASSIFIED, classify_source
+from .source_scope import dashboard_rules
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ def _as_patterns(value):
 
 
 def _rule_patterns(row):
+    if 'source_patterns' in row:
+        return _as_patterns(row['source_patterns'])
     patterns = _as_patterns(row.get("payload__elastic_index_patterns"))
     meta = row.get("payload__kibana_metadata")
     if isinstance(meta, dict):
@@ -70,6 +73,8 @@ def _categories_for_rule(row, sources, names_by_id):
 
 def _sources_for_rule(row, source_keys):
     """Source keys a rule's index patterns point at (generic patterns are ignored)."""
+    if 'matched_sources' in row:
+        return row['matched_sources']
     hit = set()
     for pattern in _rule_patterns(row):
         matched = {k for k in source_keys if fnmatch.fnmatch(k, pattern) or fnmatch.fnmatch(pattern, k)}
@@ -78,15 +83,37 @@ def _sources_for_rule(row, source_keys):
     return hit
 
 
-def compute_rule_coverage(category_results, sources):
+def compute_rule_coverage(category_results, sources, platform=None):
     """`category_results` come from compute_log_source_coverage; `sources` from resolve_sources."""
     names_by_id = {c["id"]: c["name"] for c in category_results}
     active_by_id = {c["id"]: c["active"] for c in category_results}
     per_cat = {cid: {"enabled_rules": 0, "total_rules": 0} for cid in names_by_id}
 
-    rows = LocalDetectionRule.objects.filter(is_deleted=False).values(
+    rows = dashboard_rules(platform).values(
         "rule_uuid", "name", "enabled", "payload__elastic_index_patterns", "payload__kibana_metadata", "payload__list_meta"
     )
+    if platform == 'splunk':
+        from .splunk_sources import target_identity
+
+        enabled_ids = set(dashboard_rules(platform, enabled_only=True).values_list('rule_uuid', flat=True))
+        targets = {}
+        for publication in SplunkRulePublication.objects.filter(
+            published_version__isnull=False, integration__type='splunk_rule_publisher',
+        ).select_related('integration', 'rule'):
+            config = publication.published_config
+            if not isinstance(config, dict):
+                continue
+            identity = target_identity(publication.integration.config)
+            matched = {s['source_key'] for s in sources if not s.get('ignored')
+                       and identity and s.get('target_id') == identity and s.get('index') == config.get('index')
+                       and (not config.get('sourcetype') or s.get('sourcetype') == config['sourcetype'])}
+            all_keys, enabled_keys = targets.setdefault(publication.rule.rule_uuid, (set(), set()))
+            all_keys.update(matched)
+            if publication.enabled and publication.status == 'synced':
+                enabled_keys.update(matched)
+        rows = [{**row, 'enabled': row['rule_uuid'] in enabled_ids, 'source_patterns': [],
+                 'matched_sources': targets.get(row['rule_uuid'], (set(), set()))[0],
+                 'enabled_sources': targets.get(row['rule_uuid'], (set(), set()))[1]} for row in rows]
     source_keys = [s["source_key"] for s in sources]
     per_source = {}
     total = enabled = with_data = blind = unmapped = 0
@@ -96,9 +123,13 @@ def compute_rule_coverage(category_results, sources):
         for key in _sources_for_rule(row, source_keys):
             counts = per_source.setdefault(key, {"enabled_rules": 0, "total_rules": 0})
             counts["total_rules"] += 1
-            if row["enabled"]:
+            if row["enabled"] and (platform != 'splunk' or key in row['enabled_sources']):
                 counts["enabled_rules"] += 1
-        cats = _categories_for_rule(row, sources, names_by_id)
+        if platform == 'splunk':
+            keys = row['enabled_sources'] if row['enabled'] else row['matched_sources']
+            cats = {c['id'] for c in category_results if any(s['source_key'] in keys for s in c['sources'])}
+        else:
+            cats = _categories_for_rule(row, sources, names_by_id)
         for cid in cats:
             per_cat[cid]["total_rules"] += 1
             if row["enabled"]:
@@ -109,7 +140,9 @@ def compute_rule_coverage(category_results, sources):
             if not cats:
                 unmapped += 1
                 state = "unknown"
-            elif any(active_by_id.get(cid) for cid in cats):
+            elif (any(s['docs'] > 0 and s['source_key'] in row['enabled_sources']
+                      for c in category_results for s in c['sources'])
+                  if platform == 'splunk' else any(active_by_id.get(cid) for cid in cats)):
                 with_data += 1
                 state = "with_data"
             else:

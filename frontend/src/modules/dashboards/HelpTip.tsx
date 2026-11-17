@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Popover, Tooltip, Typography } from 'antd';
 import { QuestionCircleOutlined } from '@ant-design/icons';
+import type { MonitoringPlatform } from 'types';
 
 interface Detail {
   what: string;
@@ -13,7 +14,7 @@ interface Detail {
 const DETAILS: Record<string, Detail> = {
   logCoverage: {
     what: 'The share of configured log source categories that actually sent logs recently.',
-    how: 'Receiving categories ÷ configured categories. A category is configured once at least one log source is assigned to it, and receiving when any of its sources had documents in the scan window.',
+    how: 'Receiving categories / configured categories. After a successful scan, every enabled category counts, including empty categories. Receiving means at least one assigned source had documents in the scan window.',
     why: 'A category with no logs is a blind spot: even good rules cannot detect anything there.',
     fix: 'Check agents/shippers for the silent categories, or assign the right sources in Configure.',
   },
@@ -77,12 +78,48 @@ const DETAILS: Record<string, Detail> = {
   },
 };
 
+const SPLUNK_DETAILS: Record<string, Detail> = {
+  unclassified: {
+    what: 'Scanned Splunk index/sourcetype pairs without a category assignment.',
+    how: 'Automatic suggestions use index and sourcetype names; explicit assignments take precedence.',
+    why: 'Unclassified log sources do not contribute to a monitored category.',
+    fix: 'Assign a category or ignore sources that should not count.',
+  },
+  withData: {
+    what: 'Confirmed enabled Splunk rules with matching data in the latest scan.',
+    how: 'The published target must match the scanned Splunk origin, index and optional sourcetype, and belong to a category.',
+    why: 'An unrelated active source must not make a rule appear covered.',
+  },
+  withoutData: {
+    what: 'Confirmed enabled Splunk rules with known sources but no data.',
+    how: 'Matched sources in a category have no documents in the scan window.',
+    why: 'Rules cannot detect activity until their data feed is restored.',
+  },
+  unknown: {
+    what: 'Enabled published Splunk rules without a matching classified source.',
+    how: 'No scanned source matches the published origin, index and optional sourcetype, or the source is unclassified or ignored.',
+    why: 'Sources outside the scan scope are unknown, not evidence of healthy coverage.',
+    fix: 'Scan the relevant indices and assign their sources to categories.',
+  },
+  enabledRules: {
+    what: 'Published Splunk rules last confirmed enabled.',
+    how: 'Non-deleted rules with a published Splunk binding marked enabled and synced. Multiple bindings for one rule count once.',
+    why: 'Drafts and uncertain remote states do not count as confirmed active coverage.',
+  },
+  attackCoverage: {
+    what: 'ATT&CK techniques covered by confirmed enabled Splunk publications.',
+    how: 'Distinct parent techniques from the published Sigma versions divided by the shared ATT&CK catalog. Unpublished edits do not change this coverage.',
+    why: 'Separates the deployed detection coverage from changes that exist only in the local library.',
+  },
+};
+
 interface Props {
   label: React.ReactNode;
   /** One-line hint shown on hover. */
   tip: React.ReactNode;
   /** Key into DETAILS; when set, clicking the icon opens a detail popover. */
   id?: keyof typeof DETAILS | string;
+  platform?: MonitoringPlatform;
 }
 
 const Section: React.FC<{ title: string; text?: string }> = ({ title, text }) =>
@@ -96,9 +133,9 @@ const Section: React.FC<{ title: string; text?: string }> = ({ title, text }) =>
   ) : null;
 
 /** Label with a "?" icon: hover for a short hint, click for a detailed explanation popover. */
-const HelpTip: React.FC<Props> = ({ label, tip, id }) => {
+const HelpTip: React.FC<Props> = ({ label, tip, id, platform = 'elk' }) => {
   const [open, setOpen] = useState(false);
-  const detail = id ? DETAILS[id] : undefined;
+  const detail = id ? (platform === 'splunk' ? SPLUNK_DETAILS[id] || DETAILS[id] : DETAILS[id]) : undefined;
   const icon = (
     <QuestionCircleOutlined style={{ marginLeft: 6, fontSize: 12, opacity: 0.6, cursor: detail ? 'pointer' : 'help' }} />
   );

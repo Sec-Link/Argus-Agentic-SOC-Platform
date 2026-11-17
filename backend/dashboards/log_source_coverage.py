@@ -5,13 +5,13 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from alerts.models import Alert
 from cmdb.models import Asset
 
 from .es_http import EsHttp
-from .log_source_discovery import DEFAULT_WINDOW_DAYS, resolve_sources
+from .log_source_discovery import DEFAULT_WINDOW_DAYS, load_snapshot, resolve_sources, source_matches
 from .rule_source_coverage import compute_rule_coverage
 from .models import LogSourceCategory
+from .source_scope import dashboard_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +59,11 @@ def _es_category_stats(es, category, patterns, since):
     return {"events": total, "last_seen": last_seen if total else None, "hosts": hosts}
 
 
-def _alert_category_stats(patterns, since):
+def _alert_category_stats(patterns, since, platform=None):
     """Fallback: infer activity from alert source_index values matching the category patterns."""
+    alerts = dashboard_alerts(platform, active_index=False)
     indices = (
-        Alert.objects.filter(timestamp__gte=since)
+        alerts.filter(timestamp__gte=since)
         .exclude(source_index__isnull=True)
         .values_list("source_index", flat=True)
         .distinct()
@@ -71,7 +72,7 @@ def _alert_category_stats(patterns, since):
     if not matched:
         return {"events": 0, "last_seen": None, "hosts": set()}
     last = (
-        Alert.objects.filter(source_index__in=matched, timestamp__gte=since)
+        alerts.filter(source_index__in=matched, timestamp__gte=since)
         .order_by("-timestamp")
         .values_list("timestamp", flat=True)
         .first()
@@ -79,13 +80,13 @@ def _alert_category_stats(patterns, since):
     return {"events": len(matched), "last_seen": last.isoformat() if last else None, "hosts": set()}
 
 
-def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
+def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False, platform=None):
     """`passive=True` reads only stored data (no scan, no ES queries); used by the anonymous report."""
-    es, _cfg = (None, None) if passive else _es_client()
-    categories = list(LogSourceCategory.objects.filter(enabled=True))
+    es, _cfg = (None, None) if passive or platform == 'splunk' else _es_client()
+    categories = list(LogSourceCategory.objects.filter(enabled=True, platform=platform or 'elk'))
 
     # Stored scan (plus manual overrides). Visiting the page never re-scans ES.
-    resolved = resolve_sources(allow_scan=not passive)
+    resolved = resolve_sources(allow_scan=not passive, platform=platform or 'elk', include_host_values=True)
     initialized = resolved["initialized"]
     days = resolved["window_days"]
     since = timezone.now() - timedelta(days=days)
@@ -107,8 +108,10 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
         for src in resolved["sources"]:
             if (
                 not src["ignored"]
+                and platform != 'splunk'
                 and src["source_key"] not in assigned
-                and any(fnmatch.fnmatch(src["source_key"], p) for p in cat.matchers)
+                and src["origin"] != "manual"
+                and any(source_matches(src, p) for p in cat.matchers)
             ):
                 cat_sources.append(src)
         patterns = list(dict.fromkeys([*cat.matchers, *(s["source_key"] for s in cat_sources)]))
@@ -121,7 +124,8 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
             "configured": bool(patterns) or initialized,
             "source_count": len(cat_sources),
             "sources": [
-                {"source_key": s["source_key"], "docs": s["docs"], "last_seen": s["last_seen"], "origin": s["origin"]}
+                {"source_key": s["source_key"], "source_label": s.get("source_label", s["source_key"]),
+                 "docs": s["docs"], "last_seen": s["last_seen"], "origin": s["origin"]}
                 for s in cat_sources
             ],
             "active": False,
@@ -132,23 +136,29 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
             "data_source": None,
         }
         if initialized:
-            entry["data_source"] = "elasticsearch"
+            entry["data_source"] = "splunk" if platform == 'splunk' else "elasticsearch"
             entry["last_seen"] = max(seen) if seen else None
             entry["active"] = bool(seen)
-        elif patterns:
-            stats = _alert_category_stats(patterns, since)
+        elif patterns and platform != 'splunk':
+            stats = _alert_category_stats(patterns, since, platform=platform)
             entry["data_source"] = "alerts"
             entry["active"] = bool(stats["last_seen"])
             entry["last_seen"] = stats["last_seen"]
 
         # Host-level coverage needs live host names, so only categories linked to CMDB assets query ES.
-        if es and initialized and cat.asset_types and patterns:
-            stats = _es_category_stats(es, cat, patterns, since)
+        if initialized and cat.asset_types and patterns and (es or platform == 'splunk'):
+            if platform == 'splunk':
+                # Host evidence is collected during explicit scans, not on every dashboard visit.
+                complete = all(cat.host_field in s.get('host_values', {}) for s in cat_sources)
+                stats = {'hosts': {h for s in cat_sources for h in s.get('host_values', {}).get(cat.host_field, [])}} if complete else None
+            else:
+                stats = _es_category_stats(es, cat, patterns, since)
             if stats is not None:
                 hostnames = {
                     h.lower()
                     for h in Asset.objects.filter(asset_type__in=cat.asset_types)
                     .exclude(hostname="")
+                    .exclude(hostname__isnull=True)
                     .values_list("hostname", flat=True)
                 }
                 entry["expected_assets"] = len(hostnames)
@@ -158,7 +168,7 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
         results.append(entry)
 
     try:
-        rules = compute_rule_coverage(results, resolved["sources"])
+        rules = compute_rule_coverage(results, resolved["sources"], platform=platform)
     except Exception:
         logger.exception("log source coverage: rule coverage failed")
         rules = None
@@ -181,6 +191,7 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
     def brief(src):
         return with_rules({
             "source_key": src["source_key"],
+            "source_label": src.get("source_label", src["source_key"]),
             "docs": src["docs"],
             "last_seen": src["last_seen"],
             "auto_category": src["auto_category"],
@@ -195,7 +206,9 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
         "unclassified": [brief(s) for s in resolved["sources"] if not s["ignored"] and s["effective_category_id"] is None][:100],
         "ignored": [brief(s) for s in resolved["sources"] if s["ignored"]][:100],
         "window_days": days,
+        **({"time_range": resolved["time_range"]} if platform == "splunk" else {}),
         "initialized": initialized,
+        "truncated": resolved['truncated'],
         "es_available": initialized,
         "es_reason": resolved.get("reason"),
         "scanned_at": resolved["scanned_at"],
@@ -211,8 +224,28 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False):
     }
 
 
-def preview_matchers(matchers, days=7):
+def preview_matchers(matchers, days=7, platform="elk", time_range=None):
     """Return the ES indices hit by `matchers` with their document counts over the last `days` days."""
+    if platform == "splunk":
+        if time_range is not None:
+            from .splunk_sources import ScanTimeRangeSerializer, TIME_RANGES, scan
+
+            serializer = ScanTimeRangeSerializer(data={"time_range": time_range})
+            serializer.is_valid(raise_exception=True)
+            time_range = serializer.validated_data["time_range"]
+            snapshot = load_snapshot(platform)
+            if not snapshot or not snapshot.targets:
+                return {"es_available": False, "indices": [], "time_range": time_range,
+                        "window_days": TIME_RANGES[time_range][1], "reason": "Run a Splunk source scan to select an integration and indices first."}
+            result = scan({**snapshot.targets, "time_range": time_range}, [])
+            return {"es_available": True, "time_range": time_range, "window_days": result["window_days"],
+                    "truncated": result["truncated"],
+                    "indices": [{"index": s["source_label"], "docs": s["docs"]}
+                                for s in result["sources"] if any(source_matches(s, p) for p in matchers)]}
+        resolved = resolve_sources(allow_scan=False, platform=platform)
+        return {"es_available": resolved["initialized"], "window_days": resolved["window_days"],
+                "indices": [{"index": s.get("source_label", s["source_key"]), "docs": s["docs"]}
+                            for s in resolved["sources"] if any(source_matches(s, p) for p in matchers)]}
     es, _cfg = _es_client()
     if not es:
         return {"es_available": False, "indices": []}

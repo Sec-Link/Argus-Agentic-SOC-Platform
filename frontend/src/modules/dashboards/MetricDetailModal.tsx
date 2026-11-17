@@ -3,9 +3,10 @@ import { Modal, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useRouter } from 'next/navigation';
 import dayjs from 'dayjs';
-import type { LogSourceCoverage, LogSourceRuleItem } from 'types';
+import type { LogSourceCoverage, LogSourceRuleItem, MonitoringPlatform } from 'types';
 import { sourceStatus, STATUS_META } from './logSourceStatus';
 import LogSourceLegend from './LogSourceLegend';
+import { coverageWindowLabel } from './coverageTimeRange';
 
 export type MetricKind = 'categories' | 'rules_enabled' | 'rules_with_data' | 'rules_without_data' | 'rules_unknown' | 'unmonitored';
 
@@ -13,6 +14,7 @@ interface Props {
   kind: MetricKind | null;
   data: LogSourceCoverage;
   onClose: () => void;
+  platform?: MonitoringPlatform;
 }
 
 const DETECTION_BASE = '/settings/detection';
@@ -41,7 +43,7 @@ const RULE_META: Record<string, { title: string; source: string; filter: (r: Log
   },
 };
 
-const MetricDetailModal: React.FC<Props> = ({ kind, data, onClose }) => {
+const MetricDetailModal: React.FC<Props> = ({ kind, data, onClose, platform = 'elk' }) => {
   const router = useRouter();
   if (!kind) return null;
 
@@ -60,7 +62,7 @@ const MetricDetailModal: React.FC<Props> = ({ kind, data, onClose }) => {
         const status = src ? sourceStatus(src) : 'silent';
         return (
           <Tooltip key={k} title={src ? `${STATUS_META[status].label}: ${STATUS_META[status].description}` : 'Not in the latest scan'}>
-            <Tag className={`ls-chip ls-chip--${status}`}>{k}</Tag>
+            <Tag className={`ls-chip ls-chip--${status}`}>{src?.source_label || k}</Tag>
           </Tooltip>
         );
       });
@@ -84,14 +86,14 @@ const MetricDetailModal: React.FC<Props> = ({ kind, data, onClose }) => {
   let body: React.ReactNode = null;
 
   if (kind === 'categories') {
-    title = `Log source categories (last ${data.window_days}d)`;
-    sourceNote = `Data comes from the Elasticsearch scan${data.scanned_at ? ` taken ${dayjs(data.scanned_at).format('MM-DD HH:mm')}` : ''}. A category is configured when at least one source is assigned to it, and receiving when any of its sources had documents in the window.`;
+    title = `Log source categories (${coverageWindowLabel(data.window_days)})`;
+    sourceNote = `Data comes from the ${platform === 'splunk' ? 'Splunk' : 'Elasticsearch'} scan${data.scanned_at ? ` taken ${dayjs(data.scanned_at).format('MM-DD HH:mm')}` : ''}. After a successful scan, all enabled categories count, including categories with no sources. Receiving means at least one source had documents in the window.`;
     const configured = data.categories.filter((c) => c.configured);
     const cols: ColumnsType<(typeof configured)[number]> = [
       { title: 'Category', dataIndex: 'name', render: (v: string) => <Typography.Text strong>{v}</Typography.Text> },
       { title: 'Status', dataIndex: 'active', width: 120, render: (a: boolean) => <Tag color={a ? 'green' : 'red'}>{a ? 'Receiving' : 'No logs'}</Tag>, sorter: (a, b) => Number(b.active) - Number(a.active), defaultSortOrder: 'ascend' },
       { title: 'Sources', dataIndex: 'sources', render: (srcs: (typeof configured)[number]['sources']) => (
-          <span>{srcs.map((s) => <Tag key={s.source_key}>{s.source_key}</Tag>)}</span>
+          <span>{srcs.map((s) => <Tag key={s.source_key}>{s.source_label || s.source_key}</Tag>)}</span>
         ) },
       { title: 'Last seen', dataIndex: 'last_seen', width: 120, render: fmtTime },
       { title: 'Rules on', width: 100, render: (_: unknown, c) => `${c.enabled_rules}/${c.total_rules}` },
@@ -120,7 +122,7 @@ const MetricDetailModal: React.FC<Props> = ({ kind, data, onClose }) => {
         pagination={{ pageSize: 10, hideOnSinglePage: true }}
         dataSource={rows}
         columns={[
-          { title: 'Source', dataIndex: 'source_key' },
+          { title: 'Source', dataIndex: 'source_key', render: (key: string, r) => r.source_label || key },
           { title: 'Category', dataIndex: 'category', width: 140 },
           { title: 'Docs', dataIndex: 'docs', width: 100, render: (v: number) => v.toLocaleString() },
           { title: 'Last seen', dataIndex: 'last_seen', width: 120, render: fmtTime },
@@ -132,6 +134,11 @@ const MetricDetailModal: React.FC<Props> = ({ kind, data, onClose }) => {
     const meta = RULE_META[kind];
     title = meta.title;
     sourceNote = meta.source;
+    if (platform === 'splunk') {
+      sourceNote = kind === 'rules_enabled'
+        ? 'Published Splunk rules confirmed enabled in the last successful synchronization. A rule published to multiple instances is counted once.'
+        : 'Enabled published Splunk rules matched to scanned sources on the same Splunk origin, index and optional sourcetype. Unmatched sources remain unknown.';
+    }
     const items = data.rules?.items;
     const rows = (items || []).filter(meta.filter);
     body = !items ? (

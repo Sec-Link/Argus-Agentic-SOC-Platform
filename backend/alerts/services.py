@@ -1023,16 +1023,28 @@ class AlertService:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         all_time: bool = False,
+        platform: str | None = None,
     ) -> Dict:
         # Default behavior: keep existing fields for backward compatibility.
         # Additionally, compute richer dashboard metrics directly from Postgres so
         # counts are not limited to the latest 100 cached rows.
 
-        alerts, source = AlertService.list_alerts(
-            force_es=force_es,
-            force_mock=force_mock,
-            force_db=force_db,
-        )
+        if platform is not None:
+            from dashboards.source_scope import dashboard_alerts, dashboard_rules
+
+            scoped = dashboard_alerts(platform)
+            if start_time and not all_time:
+                scoped = scoped.filter(timestamp__gte=start_time)
+            if end_time and not all_time:
+                scoped = scoped.filter(timestamp__lte=end_time)
+            alerts = [_serialize_alert_row(row) for row in scoped.order_by('-timestamp')[:100]]
+            source = 'db'
+        else:
+            alerts, source = AlertService.list_alerts(
+                force_es=force_es,
+                force_mock=force_mock,
+                force_db=force_db,
+            )
 
         severity_counts: Dict[str, int] = {}
         timeline: Dict[str, int] = {}
@@ -1040,9 +1052,9 @@ class AlertService:
         daily_trend: Dict[str, int] = {}
         message_topN: Dict[str, int] = {}
 
-        ts_field = None
+        ts_field = 'timestamp'
         try:
-            cfg = _get_global_es_config()
+            cfg = _get_global_es_config() if platform is None else None
             if cfg:
                 ts_field = _detect_timestamp_field(cfg) or 'timestamp'
         except Exception:
@@ -1113,7 +1125,7 @@ class AlertService:
         top_rules: List[Dict[str, int | str]] = []
 
         try:
-            qs = _alerts_queryset_for_active_index()
+            qs = scoped if platform is not None else _alerts_queryset_for_active_index()
             if range_start:
                 qs = qs.filter(timestamp__gte=range_start)
             if range_end:
@@ -1129,8 +1141,8 @@ class AlertService:
             cache_key = None
             cached_summary = None
             if all_time:
-                active_idx = _get_active_index_name() or 'all'
-                cache_key = f"alerts:dashboard:alltime:summary:{active_idx}"
+                active_idx = (_get_active_index_name() or 'all') if platform != 'splunk' else 'all'
+                cache_key = f"alerts:dashboard:alltime:summary:v2:{platform or 'legacy'}:{active_idx}"
                 cached_summary = cache.get(cache_key)
 
             if cached_summary:
@@ -1143,7 +1155,10 @@ class AlertService:
                 total_alerts_db = qs.count()
                 last_1h_alerts_db = qs.filter(timestamp__gte=cutoff_1h).count()
                 data_source_count_db = qs.exclude(source_index__isnull=True).exclude(source_index='').values('source_index').distinct().count()
-                enabled_rule_count_db = qs.exclude(rule_id__isnull=True).exclude(rule_id='').values('rule_id').distinct().count()
+                enabled_rule_count_db = (
+                    dashboard_rules(platform, enabled_only=True).count() if platform is not None
+                    else qs.exclude(rule_id__isnull=True).exclude(rule_id='').values('rule_id').distinct().count()
+                )
                 detected_rule_count_1h_db = (
                     qs.filter(timestamp__gte=cutoff_1h)
                     .exclude(rule_id__isnull=True)
@@ -1371,6 +1386,8 @@ class AlertService:
             for name, c in sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
                 top_users.append({'name': name, 'count': int(c)})
         except Exception:
+            if platform is not None:
+                raise
             logger.exception('DB aggregate_dashboard failed; using limited in-memory aggregates')
 
         return {

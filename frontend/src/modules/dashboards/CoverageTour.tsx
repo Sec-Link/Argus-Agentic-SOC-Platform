@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Tour } from 'antd';
 import type { TourProps } from 'antd';
+import type { MonitoringPlatform } from 'types';
 
 export type TourMode = 'overview' | 'coverage';
 
@@ -103,7 +104,16 @@ const STEPS: Record<TourMode, StepDef[]> = {
   ],
 };
 
-const CoverageTour: React.FC<{ mode: TourMode; open: boolean; onClose: () => void }> = ({ mode, open, onClose }) => {
+const SPLUNK_DESCRIPTIONS: Record<string, string> = {
+  '[data-tour="ov-card"]': 'Coverage of published Splunk rules confirmed enabled in the last successful synchronization.',
+  '[data-tour="ov-setup"]': 'Scan selected Splunk indices and classify log sources in Coverage settings.',
+  '[data-node-key="coverage"]': 'Coverage settings for the selected platform, including the shared ATT&CK catalog.',
+  '[data-tour="ls-actions"]': 'Rescan aggregates log activity from selected indices using a saved Splunk integration. Configure manages source assignments, categories and icons.',
+  '[data-tour="ls-card"] .cov-stats': 'Log source activity from the latest successful scan and coverage of published Splunk rules.',
+  '[data-tour="at-tactics"]': 'Techniques covered by enabled published Splunk rule versions. Unpublished Sigma changes do not alter these results.',
+};
+
+const CoverageTour: React.FC<{ mode: TourMode; platform?: MonitoringPlatform; open: boolean; onClose: () => void }> = ({ mode, platform = 'elk', open, onClose }) => {
   const [steps, setSteps] = useState<TourProps['steps']>([]);
 
   // Only keep steps whose target is on screen right now (cards may be unconfigured, collapsed or still loading).
@@ -113,12 +123,12 @@ const CoverageTour: React.FC<{ mode: TourMode; open: boolean; onClose: () => voi
     setSteps(
       present.map((s) => ({
         title: s.title,
-        description: s.description,
+        description: platform === 'splunk' ? SPLUNK_DESCRIPTIONS[s.selector] || s.description : s.description,
         placement: s.placement,
         target: () => find(s.selector) as HTMLElement,
       })),
     );
-  }, [open, mode]);
+  }, [open, mode, platform]);
 
   if (!open || !steps || steps.length === 0) return null;
   return (

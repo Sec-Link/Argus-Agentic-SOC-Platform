@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Collapse, Drawer, Form, Input, Popconfirm, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload, message } from 'antd';
-import { DeleteOutlined, PlusOutlined, ReloadOutlined, UndoOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined, UndoOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import ScanAge from './ScanAge';
 import {
@@ -12,12 +12,13 @@ import {
   fetchLogSourceCategories,
   fetchLogSourceCategoryOptions,
   previewLogSourceMatchers,
-  rescanLogSources,
   resetLogSourceMappings,
   saveLogSourceMappings,
   updateLogSourceCategory,
 } from 'services/dashboards';
-import type { DiscoveredLogSource, LogSourceCategory, LogSourceDiscovery } from 'types';
+import type { DiscoveredLogSource, LogSourceCategory, LogSourceDiscovery, MonitoringPlatform, SplunkCoverageTimeRange } from 'types';
+import RescanLogSourcesButton from './RescanLogSourcesButton';
+import { COVERAGE_TIME_RANGES, coverageWindowLabel } from './coverageTimeRange';
 
 type Preview = Awaited<ReturnType<typeof previewLogSourceMatchers>>;
 
@@ -25,7 +26,7 @@ const ICON_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const ICON_MAX_BYTES = 256 * 1024;
 
 /** Custom category icon: PNG/JPEG/WebP up to 256 KB. The server re-encodes it, so this is only a first filter. */
-const CategoryIconField: React.FC<{ category: LogSourceCategory; onChanged: () => void }> = ({ category, onChanged }) => {
+const CategoryIconField: React.FC<{ category: LogSourceCategory; platform: MonitoringPlatform; onChanged: () => void }> = ({ category, platform, onChanged }) => {
   const [busy, setBusy] = useState(false);
   const upload = async (file: File) => {
     if (!ICON_TYPES.includes(file.type)) {
@@ -38,7 +39,7 @@ const CategoryIconField: React.FC<{ category: LogSourceCategory; onChanged: () =
     }
     setBusy(true);
     try {
-      await uploadLogSourceCategoryIcon(category.id, file);
+      await uploadLogSourceCategoryIcon(category.id, file, platform);
       message.success('Icon updated');
       onChanged();
     } catch (err: any) {
@@ -51,7 +52,7 @@ const CategoryIconField: React.FC<{ category: LogSourceCategory; onChanged: () =
   const remove = async () => {
     setBusy(true);
     try {
-      await deleteLogSourceCategoryIcon(category.id);
+      await deleteLogSourceCategoryIcon(category.id, platform);
       onChanged();
     } catch {
       message.error('Failed to reset icon');
@@ -84,13 +85,15 @@ const CategoryIconField: React.FC<{ category: LogSourceCategory; onChanged: () =
 
 const CategoryEditor: React.FC<{
   category: LogSourceCategory | null;
+  platform: MonitoringPlatform;
   assetTypeOptions: string[];
   onSaved: () => void;
-}> = ({ category, assetTypeOptions, onSaved }) => {
+}> = ({ category, platform, assetTypeOptions, onSaved }) => {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [timeRange, setTimeRange] = useState<SplunkCoverageTimeRange>('7d');
 
   useEffect(() => {
     form.setFieldsValue({
@@ -98,18 +101,18 @@ const CategoryEditor: React.FC<{
       enabled: category?.enabled ?? true,
       matchers: category?.matchers ?? [],
       asset_types: category?.asset_types ?? [],
-      host_field: category?.host_field ?? 'host.name',
+      host_field: category?.host_field ?? (platform === 'splunk' ? 'host' : 'host.name'),
     });
     setPreview(null);
-  }, [category, form]);
+  }, [category, form, platform]);
 
   const handleSave = async () => {
     const values = await form.validateFields();
     setSaving(true);
     try {
-      if (category) await updateLogSourceCategory(category.id, values);
+      if (category) await updateLogSourceCategory(category.id, values, platform);
       else {
-        await createLogSourceCategory(values);
+        await createLogSourceCategory(values, platform);
         form.resetFields();
       }
       message.success('Saved');
@@ -129,10 +132,11 @@ const CategoryEditor: React.FC<{
       return;
     }
     setTesting(true);
+    setPreview(null);
     try {
-      setPreview(await previewLogSourceMatchers(matchers));
-    } catch {
-      message.error('Preview failed');
+      setPreview(await previewLogSourceMatchers(matchers, platform, timeRange));
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || 'Preview failed');
     } finally {
       setTesting(false);
     }
@@ -141,7 +145,7 @@ const CategoryEditor: React.FC<{
   const handleDelete = async () => {
     if (!category) return;
     try {
-      await deleteLogSourceCategory(category.id);
+      await deleteLogSourceCategory(category.id, platform);
       onSaved();
     } catch {
       message.error('Failed to delete category');
@@ -171,7 +175,7 @@ const CategoryEditor: React.FC<{
           </Form.Item>
         </Space>
         {category ? (
-          <CategoryIconField category={category} onChanged={onSaved} />
+          <CategoryIconField category={category} platform={platform} onChanged={onSaved} />
         ) : (
           <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
             Save the category first, then you can upload a custom icon.
@@ -189,19 +193,21 @@ const CategoryEditor: React.FC<{
                 <>
                   <Form.Item
                     name="matchers"
-                    extra="Sources are discovered and classified automatically. Add patterns here only to include indices that discovery misses. Wildcards allowed."
                   >
-                    <Select mode="tags" tokenSeparators={[',', ' ']} open={false} placeholder="winlogbeat-*" />
+                    <Select mode="tags" disabled={testing} tokenSeparators={[',', ' ']} open={false} placeholder={platform === 'splunk' ? 'main/WinEventLog:*' : 'winlogbeat-*'} />
                   </Form.Item>
-                  <Space style={{ marginBottom: 12 }}>
+                  <Space wrap style={{ marginBottom: 12 }}>
+                    {platform === 'splunk' && <Select<SplunkCoverageTimeRange> aria-label="Matcher time range"
+                      style={{ width: 140 }} value={timeRange} options={COVERAGE_TIME_RANGES} disabled={testing}
+                      onChange={(value) => { setTimeRange(value); setPreview(null); }} />}
                     <Button size="small" onClick={handleTest} loading={testing}>Test match</Button>
                   </Space>
                   {preview && (
                     <div style={{ marginBottom: 12 }}>
                       {!preview.es_available ? (
-                        <Typography.Text type="warning">Elasticsearch is not enabled or not reachable.</Typography.Text>
+                        <Typography.Text type="warning">{preview.reason || (platform === 'splunk' ? 'No successful Splunk scan is available.' : 'Elasticsearch is not enabled or not reachable.')}</Typography.Text>
                       ) : preview.indices.length === 0 ? (
-                        <Typography.Text type="warning">No data in the last {preview.window_days} days matches these patterns.</Typography.Text>
+                        <Typography.Text type="warning">No matching data ({coverageWindowLabel(preview.window_days ?? 7)}).</Typography.Text>
                       ) : (
                         <Space wrap size={[4, 4]}>
                           {preview.indices.map((i) => (
@@ -209,6 +215,7 @@ const CategoryEditor: React.FC<{
                           ))}
                         </Space>
                       )}
+                      {preview.truncated && <Alert type="warning" showIcon message="Only the busiest sources are included." style={{ marginTop: 8 }} />}
                     </div>
                   )}
                 </>
@@ -228,7 +235,7 @@ const CategoryEditor: React.FC<{
           />
         </Form.Item>
         <Form.Item name="host_field" label="Host field in logs">
-          <Input placeholder="host.name" />
+          <Input placeholder={platform === 'splunk' ? 'host' : 'host.name'} />
         </Form.Item>
         <Button type="primary" size="small" loading={saving} onClick={handleSave}>
           {category ? 'Save' : 'Add category'}
@@ -244,36 +251,22 @@ const CONFIDENCE_COLOR: Record<string, string> = { high: 'green', medium: 'gold'
 
 const isUnclassified = (r: DiscoveredLogSource) => !r.ignored && r.effective_category_id == null;
 
-const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => void }> = ({ categories, onChanged }) => {
+const SourcesTab: React.FC<{ categories: LogSourceCategory[]; platform: MonitoringPlatform; onChanged: () => void }> = ({ categories, platform, onChanged }) => {
   const [data, setData] = useState<LogSourceDiscovery | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<SourceFilter>('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkTarget, setBulkTarget] = useState<string | undefined>();
+  const [timeRange, setTimeRange] = useState<SplunkCoverageTimeRange>('7d');
 
   const load = useCallback(() => {
     setLoading(true);
-    fetchDiscoveredLogSources()
-      .then(setData)
+    fetchDiscoveredLogSources(platform)
+      .then((res) => { setData(res); setTimeRange(res.time_range || '7d'); })
       .catch(() => message.error('Failed to load log sources'))
       .finally(() => setLoading(false));
-  }, []);
-
-  const rescan = async () => {
-    setLoading(true);
-    try {
-      const res = await rescanLogSources();
-      setData(res);
-      onChanged();
-      if (res.reason) message.warning(`Re-scan failed: ${res.reason}`);
-      else message.success('Log sources re-scanned');
-    } catch {
-      message.error('Re-scan failed');
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [platform]);
 
   useEffect(() => {
     load();
@@ -281,7 +274,7 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => v
 
   const apply = async (keys: string[], value: string) => {
     try {
-      if (value === 'auto') await resetLogSourceMappings(keys);
+      if (value === 'auto') await resetLogSourceMappings(keys, platform);
       else {
         const ignored = value === 'ignore';
         await saveLogSourceMappings(
@@ -289,7 +282,7 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => v
             source_key,
             ignored,
             category_id: ignored || value === 'none' ? null : Number(value),
-          })),
+          })), platform,
         );
       }
       setSelected([]);
@@ -315,27 +308,23 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => v
     if (filter === 'unclassified' && !isUnclassified(r)) return false;
     if (filter === 'manual' && !r.manual) return false;
     if (filter === 'ignored' && !r.ignored) return false;
-    return !search || r.source_key.toLowerCase().includes(search.toLowerCase());
+    return !search || (r.source_label || r.source_key).toLowerCase().includes(search.toLowerCase());
   });
 
   return (
     <>
-      {data && !data.es_available && (
+      {data && (!data.es_available || data.reason) && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Elasticsearch is not available"
-          description={data.reason || 'Enable the Elasticsearch integration to discover log sources.'}
+          message={data.initialized ? 'The previous successful scan is retained' : 'No successful log source scan is available'}
+          description={data.reason}
         />
       )}
       {data?.truncated && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Only the busiest sources are listed." />
       )}
-      <Typography.Paragraph type="secondary">
-        Sources are read from the connected Elasticsearch and classified automatically from their names and ECS fields.
-        Suggestions can be wrong — pick a category to override, or Ignore for sources that should not count.
-      </Typography.Paragraph>
       <Space style={{ marginBottom: 12 }} wrap>
         <Segmented
           value={filter}
@@ -348,7 +337,13 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => v
           ]}
         />
         <Input.Search allowClear placeholder="Search sources" style={{ width: 200 }} onChange={(e) => setSearch(e.target.value)} />
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={rescan}>Re-scan</Button>
+        {platform === 'splunk' && <Select<SplunkCoverageTimeRange> aria-label="Scan time range"
+          style={{ width: 140 }} value={timeRange} options={COVERAGE_TIME_RANGES} onChange={setTimeRange} />}
+        <RescanLogSourcesButton platform={platform} timeRange={timeRange} onTimeRangeChange={setTimeRange}
+          onScanned={(res) => { setData(res); setSelected([]); onChanged(); }} />
+        {platform === 'splunk' && data?.initialized && <Typography.Text type="secondary">
+          Last scan: {coverageWindowLabel(data.window_days)}
+        </Typography.Text>}
         <ScanAge scannedAt={data?.scanned_at} ageSeconds={data?.scan_age_seconds} />
       </Space>
       {selected.length > 0 && (
@@ -369,6 +364,7 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => v
       <Table<DiscoveredLogSource>
         size="small"
         rowKey="source_key"
+        scroll={{ x: 650 }}
         loading={loading}
         dataSource={rows}
         pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: false }}
@@ -379,7 +375,7 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => v
             dataIndex: 'source_key',
             render: (v: string, r) => (
               <Tooltip title={`${r.index_count} index${r.index_count === 1 ? '' : 'es'}`}>
-                <Typography.Text code style={{ fontSize: 12 }}>{v}</Typography.Text>
+                <Typography.Text code style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{r.source_label || v}</Typography.Text>
               </Tooltip>
             ),
           },
@@ -429,8 +425,9 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; onChanged: () => v
   );
 };
 
-const LogSourceConfigDrawer: React.FC<{ open: boolean; onClose: () => void; onChanged: () => void }> = ({
+const LogSourceConfigDrawer: React.FC<{ open: boolean; platform: MonitoringPlatform; onClose: () => void; onChanged: () => void }> = ({
   open,
+  platform,
   onClose,
   onChanged,
 }) => {
@@ -439,9 +436,9 @@ const LogSourceConfigDrawer: React.FC<{ open: boolean; onClose: () => void; onCh
   const [adding, setAdding] = useState(false);
 
   const load = useCallback(() => {
-    fetchLogSourceCategories().then(setCategories).catch(() => message.error('Failed to load categories'));
-    fetchLogSourceCategoryOptions().then((o) => setAssetTypes(o.asset_types)).catch(() => setAssetTypes([]));
-  }, []);
+    fetchLogSourceCategories(platform).then(setCategories).catch(() => message.error('Failed to load categories'));
+    fetchLogSourceCategoryOptions(platform).then((o) => setAssetTypes(o.asset_types)).catch(() => setAssetTypes([]));
+  }, [platform]);
 
   useEffect(() => {
     if (open) load();
@@ -460,7 +457,7 @@ const LogSourceConfigDrawer: React.FC<{ open: boolean; onClose: () => void; onCh
           {
             key: 'sources',
             label: 'Discovered sources',
-            children: <SourcesTab categories={categories} onChanged={onChanged} />,
+            children: <SourcesTab categories={categories} platform={platform} onChanged={onChanged} />,
           },
           {
             key: 'categories',
@@ -468,14 +465,14 @@ const LogSourceConfigDrawer: React.FC<{ open: boolean; onClose: () => void; onCh
             children: (
               <>
                 <Typography.Paragraph type="secondary">
-                  A category counts as covered when any source mapped to it received data in the last 7 days. Optionally
+                  A category counts as covered when any source mapped to it received data in the scan window. Optionally
                   link CMDB asset types to also measure how many hosts actually send logs.
                 </Typography.Paragraph>
                 {categories.map((c) => (
-                  <CategoryEditor key={c.id} category={c} assetTypeOptions={assetTypes} onSaved={handleSaved} />
+                  <CategoryEditor key={c.id} category={c} platform={platform} assetTypeOptions={assetTypes} onSaved={handleSaved} />
                 ))}
                 {adding ? (
-                  <CategoryEditor category={null} assetTypeOptions={assetTypes} onSaved={handleSaved} />
+                  <CategoryEditor category={null} platform={platform} assetTypeOptions={assetTypes} onSaved={handleSaved} />
                 ) : (
                   <Button icon={<PlusOutlined />} onClick={() => setAdding(true)}>Add category</Button>
                 )}
