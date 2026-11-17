@@ -496,7 +496,7 @@ class ModelProfile(models.Model):
     model = models.CharField(max_length=200)
     base_url = models.CharField(max_length=2000)
     send_temperature = models.BooleanField(default=True)
-    temperature = models.FloatField(default=0.2, validators=[MinValueValidator(0), MaxValueValidator(2)])
+    temperature = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(2)])
     streaming_enabled = models.BooleanField(default=True)
     timeout_seconds = models.PositiveSmallIntegerField(
         default=45, validators=[MinValueValidator(1), MaxValueValidator(120)],

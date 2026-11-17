@@ -409,6 +409,7 @@ def open_chat_model(overrides=None, *, use_responses_api=False):
     streaming = (overrides or {}).get("streaming_enabled", True)
     send_temperature = (overrides or {}).get("send_temperature", True)
     temperature = (overrides or {}).get("temperature", 0.2)
+    temperature_to_send = temperature if (send_temperature and type(temperature) in (int, float)) else None
     if not config["api_key"]:
         raise ModelCallError("OPENAI_API_KEY is not configured", code="model_key_missing")
     usage_context = dict((overrides or {}).get("_usage_context") or {})
@@ -435,10 +436,10 @@ def open_chat_model(overrides=None, *, use_responses_api=False):
             stream_usage=streaming and urlsplit(config["base_url"]).hostname in {"api.openai.com", *_MINIMAX_HOSTS},
             callbacks=callbacks,
             max_tokens=1200 if use_responses_api else None,
-            temperature=temperature if send_temperature else None,
+            temperature=temperature_to_send,
             # Keep the existing wire parameter even for gateway model aliases
             # for which the integration otherwise strips temperature by name.
-            extra_body={"temperature": temperature} if send_temperature else None,
+            extra_body={"temperature": temperature_to_send} if temperature_to_send is not None else None,
             http_client=client,
         )
         if use_responses_api and callbacks and streaming:

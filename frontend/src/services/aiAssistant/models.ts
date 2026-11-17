@@ -5,7 +5,7 @@ export interface ModelProfile extends ModelCatalogEntry {
   base_url: string;
   timeout_seconds: number;
   send_temperature: boolean;
-  temperature: number;
+  temperature: number | null;
   streaming_enabled: boolean;
   enabled: boolean;
   has_api_key: boolean;
@@ -16,7 +16,8 @@ export interface ModelProfile extends ModelCatalogEntry {
   created_at: string;
   updated_at: string;
 }
-export type ModelProfileWrite = Partial<Pick<ModelProfile, 'name' | 'model' | 'base_url' | 'timeout_seconds' | 'send_temperature' | 'temperature' | 'streaming_enabled' | 'enabled' | 'input_price_per_million' | 'output_price_per_million' | 'cached_input_price_per_million' | 'currency'>> & {
+export type ModelProfileWrite = Omit<Partial<Pick<ModelProfile, 'name' | 'model' | 'base_url' | 'timeout_seconds' | 'send_temperature' | 'temperature' | 'streaming_enabled' | 'enabled' | 'input_price_per_million' | 'output_price_per_million' | 'cached_input_price_per_million' | 'currency'>>, 'temperature'> & {
+  temperature?: number | null;
   api_key?: string; clear_api_key?: boolean;
 };
 const base = '/ai-assistant/models/';

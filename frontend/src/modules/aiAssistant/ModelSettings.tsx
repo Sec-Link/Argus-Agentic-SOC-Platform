@@ -52,13 +52,13 @@ export default function ModelSettings({ readonly = false }: { readonly?: boolean
   const edit = (row?: ModelProfile) => {
     form.resetFields(); setEditing(row || null); setSaveError('');
     form.setFieldsValue(row ? { name: row.name, model: row.model, base_url: row.base_url,
-      send_temperature: row.send_temperature ?? true, temperature: row.temperature ?? 0.2,
+      send_temperature: row.send_temperature ?? true, temperature: row.temperature,
       streaming_enabled: row.streaming_enabled ?? true,
       timeout_seconds: String(row.timeout_seconds), enabled: row.enabled, api_key: '', clear_api_key: false,
       input_price_per_million: row.input_price_per_million ?? '', output_price_per_million: row.output_price_per_million ?? '',
       cached_input_price_per_million: row.cached_input_price_per_million ?? '', currency: row.currency || 'USD' }
       : { name: '', model: '', base_url: '', timeout_seconds: '45', enabled: false, api_key: '', clear_api_key: false,
-        send_temperature: true, temperature: 0.2, streaming_enabled: true,
+        send_temperature: true, temperature: null, streaming_enabled: true,
         input_price_per_million: '', output_price_per_million: '', cached_input_price_per_million: '', currency: 'USD' });
     setOpen(true);
   };
@@ -70,7 +70,7 @@ export default function ModelSettings({ readonly = false }: { readonly?: boolean
         name: values.name, model: values.model, base_url: values.base_url, enabled: values.enabled,
         timeout_seconds: Number(values.timeout_seconds), api_key: values.api_key || undefined,
         send_temperature: values.send_temperature, streaming_enabled: values.streaming_enabled,
-        temperature: values.temperature ?? 0.2,
+        temperature: values.temperature,
         clear_api_key: values.clear_api_key || false,
         input_price_per_million: parseModelPrice(values.input_price_per_million),
         output_price_per_million: parseModelPrice(values.output_price_per_million),
@@ -147,12 +147,12 @@ export default function ModelSettings({ readonly = false }: { readonly?: boolean
         <Form.Item label="Send temperature" name="send_temperature" valuePropName="checked"
           extra="Turn off if the model rejects this parameter; the provider will use its default."><Switch /></Form.Item>
         <Form.Item label="Temperature" name="temperature" dependencies={['send_temperature']}
-          extra="0–2, default 0.2. Use a value supported by your model. Ignored when Send temperature is off."
-          rules={[({ getFieldValue }) => ({ validator: async (_, value) => {
-            if (getFieldValue('send_temperature') && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 2)) {
+          extra="Optional, 0–2. Leave blank to use the provider default without sending a temperature parameter. Ignored when Send temperature is off."
+          rules={[{ validator: async (_, value) => {
+            if (value != null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 2)) {
               throw new Error('Enter a number from 0 to 2.');
             }
-          } })]}>
+          } }]}>
           <InputNumber min={0} max={2} controls={false} disabled={readonly || saving || !sendTemperature} style={{ width: '100%' }} />
         </Form.Item>
         <Form.Item label="Stream model responses" name="streaming_enabled" valuePropName="checked"
