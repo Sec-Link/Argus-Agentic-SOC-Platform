@@ -3,7 +3,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Layout, Card, ConfigProvider, theme as antdTheme } from 'antd';
 import { usePathname, useRouter } from 'next/navigation';
-import { clearAccessToken, getRbacMe } from 'services/accounts';
+import { clearAccessToken, getEnabledModules, getRbacMe } from 'services/accounts';
+import { isRouteModuleEnabled } from '../../modules/accounts/moduleState';
 import { permissionByKey, resolveRouteKey, type RouteKey } from '../../route';
 import HeaderBar from './Header';
 import Sidebar from './Sidebar';
@@ -23,6 +24,8 @@ export default function BasicLayout({
   const [username, setUsername] = useState<string | null>(null);
   const [rbacMe, setRbacMe] = useState<any | null>(null);
   const [effectivePermissions, setEffectivePermissions] = useState<string[]>([]);
+  // Modules loaded by the backend; null until known (see modules/accounts/moduleState.ts).
+  const [enabledModules, setEnabledModules] = useState<string[] | null>(null);
 
   const [siderWidth, setSiderWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return 260;
@@ -119,6 +122,12 @@ export default function BasicLayout({
   }, []);
 
   useEffect(() => {
+    getEnabledModules()
+      .then((res) => setEnabledModules(Array.isArray(res?.enabled_modules) ? res.enabled_modules : null))
+      .catch(() => setEnabledModules(null));
+  }, []);
+
+  useEffect(() => {
     if (impersonation && Array.isArray(impersonation.permissions)) {
       setEffectivePermissions(impersonation.permissions);
     } else {
@@ -170,7 +179,7 @@ export default function BasicLayout({
     else if (['detection','integrations', 'orchestrator', 'correlation'].includes(selectedKey)) setOpenKeys(['dataPipelineGroup']);
     else if (['interfaces', 'workflows', 'workflow-executions'].includes(selectedKey)) {
       setOpenKeys(['automationGroup']);
-    } else if (['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs', 'system-settings'].includes(selectedKey)) {
+    } else if (['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs', 'system-settings', 'module-management'].includes(selectedKey)) {
       setOpenKeys(['administrationGroup']);
     } else {
       setOpenKeys(['monitorGroup']);
@@ -178,7 +187,9 @@ export default function BasicLayout({
   }, [selectedKey]);
 
   const canAccess = (perm?: string, key?: RouteKey) => {
-    if (key === 'system-settings') {
+    // Hide routes whose backend module is not loaded.
+    if (key && !isRouteModuleEnabled(key, enabledModules)) return false;
+    if (key === 'system-settings' || key === 'module-management') {
       return !impersonation && Boolean(rbacMe?.is_staff);
     }
     if (!perm) return true;
@@ -201,9 +212,10 @@ export default function BasicLayout({
         { key: 'registration-approvals' as RouteKey, label: 'Approvals' },
         { key: 'audit-logs' as RouteKey, label: 'Audit Logs' },
         { key: 'system-settings' as RouteKey, label: 'System Settings' },
+        { key: 'module-management' as RouteKey, label: 'Module Management' },
         { key: 'ai-assistant' as RouteKey, label: 'AI Assistant' },
       ].filter((item) => canAccess(permissionByKey[item.key], item.key)),
-    [effectivePermissions, impersonation, rbacMe]
+    [effectivePermissions, impersonation, rbacMe, enabledModules]
   );
 
   const autoSiderWidth = useMemo(() => {
@@ -274,8 +286,18 @@ export default function BasicLayout({
     </Card>
   );
 
+  const renderModuleDisabled = () => (
+    <Card title="Module disabled">
+      <div>This feature belongs to a module that is not enabled on this deployment.</div>
+    </Card>
+  );
+
   const currentPerm = permissionByKey[selectedKey];
-  const content = canAccess(currentPerm, selectedKey) ? children : renderDenied();
+  const content = !isRouteModuleEnabled(selectedKey, enabledModules)
+    ? renderModuleDisabled()
+    : canAccess(currentPerm, selectedKey)
+      ? children
+      : renderDenied();
   const antdThemeConfig = useMemo(
     () =>
       uiTheme === 'dark'

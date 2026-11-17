@@ -12,8 +12,11 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 import os
+import sys
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
+
+from siem_project import modules as argus_modules
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -99,6 +102,46 @@ SECURE_PROXY_SSL_HEADER = tuple(_SECURE_PROXY_SSL_HEADER) if _SECURE_PROXY_SSL_H
 
 # Application definition
 
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('POSTGRES_DB', 'siem_db'),
+        'USER': os.getenv('POSTGRES_USER', 'siem_user'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'siem_password'),
+        'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+        'PORT': os.getenv('POSTGRES_PORT', '5432'),
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Argus modules
+# Optional modules can be disabled so they are not loaded into INSTALLED_APPS
+# and their URLs are not mounted. The registry, dependency rules, and startup
+# safety behavior live in siem_project/modules.py.
+#
+# Two sources are combined:
+#   1. ARGUS_DISABLED_MODULES (environment): operator override, always wins.
+#   2. The state saved on the Module Management page (database).
+# INSTALLED_APPS cannot change while a process is running, so a change saved
+# from the UI applies at the next backend restart.
+# ---------------------------------------------------------------------------
+ARGUS_ENV_DISABLED_MODULES = argus_modules.parse_env_disabled_modules(
+    os.getenv(argus_modules.ENV_DISABLED_MODULES)
+)
+# The saved state is not read while running the test suite (tests must be
+# deterministic and must not depend on a developer database), or when the
+# operator sets ARGUS_MODULE_DB_BOOTSTRAP=false to recover from a bad state.
+_MODULE_DB_BOOTSTRAP = _env_bool(argus_modules.ENV_DB_BOOTSTRAP, True) and sys.argv[1:2] != ['test']
+if _MODULE_DB_BOOTSTRAP:
+    _admin_disabled_modules, ARGUS_MODULE_STATE_LOADED = argus_modules.load_admin_disabled_modules(
+        DATABASES['default']
+    )
+else:
+    _admin_disabled_modules, ARGUS_MODULE_STATE_LOADED = [], False
+_module_state = argus_modules.resolve_module_state(_admin_disabled_modules, ARGUS_ENV_DISABLED_MODULES)
+# Modules loaded in this process. Use siem_project.modules.is_module_enabled().
+ARGUS_ENABLED_MODULES = _module_state.enabled
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -109,20 +152,7 @@ INSTALLED_APPS = [
     'django.contrib.postgres',
     'rest_framework',
     'rest_framework.authtoken',
-    'accounts',
-    'correlation',
-    'integrations',
-    'alerts',
-    'dashboards',
-    'tickets',
-    'cmdb',
-    'ai_assistant',
-    'orchestrator.apps.OrchestratorConfig',
-    'workflows.apps.WorkflowsConfig',
-    'workflow_interfaces',
-    'detections',
-    'risk',
-    'reports',
+    *argus_modules.installed_apps_for(ARGUS_ENABLED_MODULES),
     'django_scheduled_tasks',
 ]
 
@@ -178,19 +208,7 @@ TEMPLATES = [
 WSGI_APPLICATION = 'siem_project.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('POSTGRES_DB', 'siem_db'),
-        'USER': os.getenv('POSTGRES_USER', 'siem_user'),
-        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'siem_password'),
-        'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
-        'PORT': os.getenv('POSTGRES_PORT', '5432'),
-    }
-}
+# Database: DATABASES is defined above, before the module state is loaded.
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators

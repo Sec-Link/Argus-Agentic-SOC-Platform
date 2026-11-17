@@ -11,6 +11,7 @@ from rest_framework import serializers
 
 from .models import AuditLog, RegistrationRequest, SystemSettings, UserAuthProfile
 from .services import normalize_email
+from siem_project.modules import MODULE_KEYS, validate_disabled_modules
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -215,3 +216,21 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
         model = SystemSettings
         fields = ("auto_approve_enabled", "workflow_http_allowlist", "updated_at")
         read_only_fields = ("updated_at",)
+
+
+class ModuleStateUpdateSerializer(serializers.Serializer):
+    """Validate the complete set of modules an administrator wants disabled."""
+
+    disabled_modules = serializers.ListField(
+        child=serializers.CharField(max_length=64),
+        allow_empty=True,
+        max_length=len(MODULE_KEYS),
+    )
+
+    def validate_disabled_modules(self, value):
+        errors = validate_disabled_modules(value)
+        if errors:
+            raise serializers.ValidationError(errors)
+        # Store a canonical, de-duplicated list in registry order.
+        requested = set(value)
+        return [key for key in MODULE_KEYS if key in requested]

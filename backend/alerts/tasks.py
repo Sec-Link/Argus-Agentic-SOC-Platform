@@ -21,6 +21,7 @@ from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone as django_timezone
 
+from siem_project.modules import is_module_enabled
 from .models import Alert, ESIntegrationConfig, AlertSyncSchedule
 from .services import (
     _http_search,
@@ -613,7 +614,8 @@ def sync_es_alerts_to_db(
                 # RBA: extract risk_objects for newly ingested alerts. Surface
                 # rule_id/severity to the top level first (raw ES doc nests them
                 # under `body`), then run the pipeline best-effort.
-                if created:
+                # Skipped when the optional risk module is not loaded.
+                if created and is_module_enabled('risk'):
                     try:
                         from risk.services import process_alert_for_risk
                         doc['rule_id'] = defaults.get('rule_id')

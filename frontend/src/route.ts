@@ -13,6 +13,7 @@ export type RouteKey =
   | 'registration-approvals'
   | 'audit-logs'
   | 'system-settings'
+  | 'module-management'
   | 'workflows'
   | 'workflow-executions'
   | 'ai-assistant'
@@ -33,6 +34,7 @@ export const permissionByKey: Record<RouteKey, string | undefined> = {
   'registration-approvals': 'accounts.view_user',
   'audit-logs': 'accounts.view_user',
   'system-settings': 'accounts.view_user',
+  'module-management': 'accounts.view_user',
   workflows: 'workflows.view_workflow',
   'workflow-executions': 'workflows.view_workflowexecution',
   profile: undefined,
@@ -54,6 +56,7 @@ export const keyToPath: Record<RouteKey, string> = {
   'registration-approvals': '/settings/registration-approvals',
   'audit-logs': '/settings/audit-logs',
   'system-settings': '/settings/system',
+  'module-management': '/settings/modules',
   workflows: '/settings/workflows',
   'workflow-executions': '/settings/workflows/executions',
   'ai-assistant': '/settings/ai-assistant',
@@ -88,6 +91,7 @@ export function resolveRouteKey(pathname: string): { key: RouteKey; ticketNumber
   if (p === '/settings/registration-approvals') return { key: 'registration-approvals' };
   if (p === '/settings/audit-logs') return { key: 'audit-logs' };
   if (p === '/settings/system') return { key: 'system-settings' };
+  if (p === '/settings/modules') return { key: 'module-management' };
   if (p === '/settings/workflows') return { key: 'workflows' };
   if (p === '/settings/workflows/executions') return { key: 'workflow-executions' };
   if (p === '/settings/ai-assistant') return { key: 'ai-assistant' };

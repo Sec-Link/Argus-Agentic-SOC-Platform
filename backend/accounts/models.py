@@ -160,6 +160,10 @@ class AuditLog(models.Model):
 class SystemSettings(models.Model):
     auto_approve_enabled = models.BooleanField(default=True)
     workflow_http_allowlist = models.JSONField(default=list, blank=True)
+    # Desired state from the Module Management page: keys of optional modules
+    # that should not be loaded. Read by settings.py at startup (see
+    # siem_project/modules.py), so a change applies at the next restart.
+    disabled_modules = models.JSONField(default=list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

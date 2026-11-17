@@ -27,6 +27,21 @@ The project uses a classic frontend-backend separation:
 - `ai_assistant`: AI assistant, MCP gateway and JSON-RPC tooling.
 - `siem_project`: Django project settings, URL routing, middleware.
 
+## Optional modules
+
+Backend apps are registered as modules in `backend/siem_project/modules.py`. Optional modules that a deployment does not need can be turned off; they are then left out of `INSTALLED_APPS` and their URLs are not mounted.
+
+- **Core (always loaded):** accounts, integrations, alerts, detections, tickets, ai_assistant, dashboards, cmdb. Other modules import these at module level; dashboards is the landing page, and it imports cmdb.
+- **Optional:** correlation, orchestrator, workflows, workflow_interfaces, risk, reports.
+- **Dependencies:** orchestrator requires correlation; workflow_interfaces requires workflows; reports requires correlation and risk. A module is disabled automatically when one of its requirements is disabled.
+- **How to change it:** Administration → Module Management (superusers save, staff can view), or the `ARGUS_DISABLED_MODULES` environment variable, which always wins.
+- **Restart required:** `INSTALLED_APPS` is fixed when a process starts. A saved change applies only after every backend process restarts (and any Prefect worker that loads the Django settings).
+- **Data is kept:** disabling a module does not drop its tables or run its migrations. Re-enable it and restart to get it back; pending migrations for it run at that startup.
+- **Disabled APIs:** requests under a disabled module's prefix return `404` with `"code": "module_disabled"` (authentication is still required).
+- **Startup safety:** invalid saved values are ignored. If the database cannot be read at startup, the backend starts with only `ARGUS_DISABLED_MODULES` applied and logs a warning, so a module disabled in the UI may be loaded until the next successful start. Use the environment variable for modules that must stay off.
+- **Recovery / rollback:** set `ARGUS_MODULE_DB_BOOTSTRAP=false` and restart to ignore the saved selection and load every module not listed in `ARGUS_DISABLED_MODULES`.
+- **Adding a cross-module import:** declare it in `requires` or guard it with `is_module_enabled()`; `siem_project/tests/test_modules.py` fails otherwise.
+
 ## Frontend code map (important files/areas)
 - App shell & routing: `frontend/src/app` (Next.js App Router pages and layout)
 - API proxy: `frontend/src/app/api/v1/[...path]/route.ts` (forwards requests to backend)

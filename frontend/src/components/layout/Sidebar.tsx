@@ -25,6 +25,7 @@ import {
   ScrollText,
   FileText,
   SlidersHorizontal,
+  Puzzle,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -76,6 +77,8 @@ function iconByKey(key: RouteKey): React.ReactNode {
       return Ic(ScrollText);
     case 'system-settings':
       return Ic(SlidersHorizontal);
+    case 'module-management':
+      return Ic(Puzzle);
     default:
       return null;
   }
@@ -124,6 +127,7 @@ export default function Sidebar({
     'registration-approvals': labelOverrides['registration-approvals'] || 'Approvals',
     'audit-logs': labelOverrides['audit-logs'] || 'Audit Logs',
     'system-settings': labelOverrides['system-settings'] || 'System Settings',
+    'module-management': labelOverrides['module-management'] || 'Module Management',
     workflows: labelOverrides.workflows || 'Workflows',
     'workflow-executions': labelOverrides['workflow-executions'] || 'Executions',
     'ai-assistant': labelOverrides['ai-assistant'] || 'AI Assistant',
@@ -150,7 +154,7 @@ export default function Sidebar({
       key: 'administrationGroup',
       title: 'Administration',
       icon: Ic(Shield),
-      items: ['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs', 'system-settings'],
+      items: ['permissions', 'ai-assistant', 'registration-approvals', 'audit-logs', 'system-settings', 'module-management'],
     },
   ];
 

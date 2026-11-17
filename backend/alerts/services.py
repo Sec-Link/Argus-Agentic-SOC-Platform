@@ -29,6 +29,7 @@ from django.core.cache import cache
 
 from .models import Alert, ESIntegrationConfig
 from detections.models import LocalDetectionRule
+from siem_project.modules import is_module_enabled
 
 MOCK_FILE = Path(__file__).resolve().parent / 'mock_alerts.json'
 
@@ -489,7 +490,8 @@ def _upsert_docs_to_db(docs: List[Dict]) -> None:
                     # RBA: extract risk_objects for newly ingested alerts. The raw
                     # ES doc keeps rule_id/severity under `body`, so surface them at
                     # the top level (mirrors orchestrator sync) before processing.
-                    if created:
+                    # Skipped when the optional risk module is not loaded.
+                    if created and is_module_enabled('risk'):
                         try:
                             from risk.services import process_alert_for_risk
                             doc['rule_id'] = defaults.get('rule_id')

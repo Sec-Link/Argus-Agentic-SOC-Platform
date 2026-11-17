@@ -13,6 +13,7 @@ from integrations.models import Integration
 from alerts.models import Alert
 from correlation.models import CorrelationPolicy, CorrelationEvent
 from tickets.models import EventTicket, TicketWorkLog
+from siem_project.modules import is_module_enabled
 
 DEST_TABLE = "alerts_alert"
 MAX_ALERT_CHAR_LENGTHS = {
@@ -336,7 +337,8 @@ def execute_task(task: Task) -> TaskRun:
             )
 
             # --- Risk scoring: process newly inserted alerts ---
-            if inserted > 0:
+            # Skipped when the optional risk module is not loaded.
+            if inserted > 0 and is_module_enabled('risk'):
                 try:
                     from risk.services import process_alert_for_risk
                     risk_events_total = 0
@@ -659,6 +661,9 @@ def execute_task(task: Task) -> TaskRun:
             except Exception as e:
                 log_lines.append(f"Ticket creation failed: {str(e)}")
                 had_nonfatal_errors = True
+        elif cfg.get('sync') == 'risk_score_decay' and not is_module_enabled('risk'):
+            # The task stays defined but does nothing while risk is disabled.
+            log_lines.append('Risk decay skipped: the risk module is disabled.')
         elif cfg.get('sync') == 'risk_score_decay':
             try:
                 from risk.services import apply_score_decay

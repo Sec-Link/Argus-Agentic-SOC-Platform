@@ -3,6 +3,7 @@ from django.urls import include, path
 from rest_framework.routers import SimpleRouter
 
 from accounts.api.views import GroupAdminViewSet, UserAdminViewSet
+from accounts.module_views import EnabledModulesAPIView, ModuleManagementAPIView
 from accounts.views import (
     AuditLogListAPIView,
     GuestEmailStatusAPIView,
@@ -49,5 +50,8 @@ urlpatterns = [
     ),
     path('audit-logs/', AuditLogListAPIView.as_view(), name='audit_logs'),
     path('system-settings/', SystemSettingsAPIView.as_view(), name='system_settings'),
+    # module management — see siem_project/modules.py
+    path('modules/', ModuleManagementAPIView.as_view(), name='modules'),
+    path('modules/enabled/', EnabledModulesAPIView.as_view(), name='modules_enabled'),
     path('', include(router.urls)),
 ]

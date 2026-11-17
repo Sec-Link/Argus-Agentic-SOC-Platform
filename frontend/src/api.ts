@@ -243,6 +243,24 @@ export async function updateSystemSettings(payload: {
   return res.data;
 }
 
+// Module management (backend: accounts/module_views.py).
+export async function getEnabledModules(): Promise<{ enabled_modules: string[] }> {
+  const res = await client.get('/accounts/modules/enabled/');
+  return res.data;
+}
+
+export async function getModuleManagement() {
+  const res = await client.get('/accounts/modules/');
+  return res.data;
+}
+
+// Sends the complete list of modules that should be disabled. The change
+// applies after the backend restarts.
+export async function updateModuleManagement(payload: { disabled_modules: string[] }) {
+  const res = await client.put('/accounts/modules/', payload);
+  return res.data;
+}
+
 export type AuditLogQueryParams = {
   event_type?: string;
   email?: string;

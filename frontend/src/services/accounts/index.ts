@@ -30,5 +30,8 @@ export {
   rejectRegistrationRequest,
   getSystemSettings,
   updateSystemSettings,
+  getEnabledModules,
+  getModuleManagement,
+  updateModuleManagement,
   listAuditLogs,
 } from '../../api';
