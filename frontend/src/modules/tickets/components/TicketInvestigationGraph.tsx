@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Empty } from 'antd';
 import type { TicketInvestigationSession } from 'services/tickets';
 import styles from './TicketLayout.module.css';
+import { relatedNodeIds } from './ticketGraphSelection';
 
 type GraphKind = 'task' | 'goal' | 'intent' | 'fact' | 'finding' | 'note';
 type GraphNode = {
@@ -30,6 +31,7 @@ const edgeTypes: Record<string, { label: string; color: string }> = {
   delegates: { label: 'Delegates', color: '#6366f1' },
   yields: { label: 'Yields', color: '#f59e0b' },
   responds: { label: 'Responds', color: '#8b5cf6' },
+  supports: { label: 'Supports', color: '#6366f1' },
 };
 
 const buildGraph = (session: TicketInvestigationSession) => {
@@ -38,7 +40,7 @@ const buildGraph = (session: TicketInvestigationSession) => {
   const rootId = `session:${session.id}`;
   const add = (node: GraphNode) => { if (!nodes.some((item) => item.id === node.id)) nodes.push(node); };
   const edge = (source: string, target: string, relation: string) => {
-    if (source !== target && !edges.some((item) => item.source === source && item.target === target && item.relation === relation)) {
+    if (source !== target && nodes.some((node) => node.id === source) && nodes.some((node) => node.id === target) && !edges.some((item) => item.source === source && item.target === target && item.relation === relation)) {
       edges.push({ source, target, relation });
     }
   };
@@ -54,7 +56,7 @@ const buildGraph = (session: TicketInvestigationSession) => {
     edge(run.parent_id ? `run:${run.parent_id}` : rootId, `run:${run.id}`, run.role === 'worker' ? 'delegates' : run.role === 'planner' ? 'plans' : 'coordinates');
     for (const message of run.messages || []) {
       if (message.role === 'system') continue;
-      const messageKind: GraphKind = message.role === 'assistant' && run.role === 'worker' ? 'finding' : message.role === 'assistant' ? 'fact' : 'note';
+      const messageKind: GraphKind = 'note';
       const messageId = `message:${message.id}`;
       add({
         id: messageId,
@@ -66,6 +68,20 @@ const buildGraph = (session: TicketInvestigationSession) => {
       });
       edge(`run:${run.id}`, messageId, message.role === 'assistant' ? 'yields' : 'responds');
     }
+  }
+  // Findings cite exact saved receipts; these links make the evidence chain
+  // navigable without inferring support from adjacent dialogue or timestamps.
+  for (const receipt of session.tool_receipts || []) {
+    add({ id: `receipt:${receipt.id}`, type: 'fact', title: receipt.tool_name,
+      summary: receipt.result_preview, status: receipt.status, raw: receipt });
+    edge(`run:${receipt.run_id}`, `receipt:${receipt.id}`, 'yields');
+  }
+  for (const finding of session.findings || []) {
+    add({ id: `finding:${finding.id}`, type: 'finding', title: finding.claim,
+      summary: `Evidence receipts: ${finding.receipt_ids.join(', ')}\n${finding.limitations.join('\n')}`,
+      status: 'completed', raw: finding });
+    edge(`run:${finding.worker_id}`, `finding:${finding.id}`, 'yields');
+    for (const receiptId of finding.receipt_ids) edge(`receipt:${receiptId}`, `finding:${finding.id}`, 'supports');
   }
   return { nodes, edges };
 };
@@ -104,6 +120,7 @@ const displayStatus = (status: string) => ({ open: 'Queued', running: 'Running',
 export default function TicketInvestigationGraph({ session }: { session: TicketInvestigationSession | null }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [selectedId, setSelectedId] = useState('');
+  const [detailId, setDetailId] = useState('');
   const [highlight, setHighlight] = useState<GraphKind | ''>('');
   const [view, setView] = useState({ x: 40, y: 80, scale: 0.82 });
   const drag = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
@@ -115,8 +132,25 @@ export default function TicketInvestigationGraph({ session }: { session: TicketI
     const minX = Math.min(...values.map((point) => point.x)); const minY = Math.min(...values.map((point) => point.y));
     return { minX, minY, width: Math.max(...values.map((point) => point.x)) + 240 - minX, height: Math.max(...values.map((point) => point.y)) + 124 - minY };
   }, [positions]);
-  const selected = graph.nodes.find((node) => node.id === selectedId) || null;
+  const selected = graph.nodes.find((node) => node.id === detailId) || null;
+  const focusedNode = graph.nodes.find((node) => node.id === selectedId) || null;
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const highlightedIds = useMemo(() => selectedId
+    ? relatedNodeIds(graph.nodes, graph.edges, selectedId)
+    : new Set(graph.nodes.filter((node) => node.type === highlight).map((node) => node.id)), [graph, selectedId, highlight]);
+  const emphasisActive = Boolean(focusedNode || highlight);
+  const clearSelection = () => { setSelectedId(''); setHighlight(''); setDetailId(''); };
+  useEffect(() => { setSelectedId(''); setHighlight(''); setDetailId(''); }, [session?.id]);
+  useEffect(() => {
+    if (selectedId && !nodeById.has(selectedId)) setSelectedId('');
+    if (detailId && !nodeById.has(detailId)) setDetailId('');
+  }, [nodeById, selectedId, detailId]);
+  useEffect(() => {
+    if (!detailId) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setDetailId(''); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [detailId]);
 
   const fit = useCallback(() => {
     const canvas = canvasRef.current;
@@ -137,22 +171,67 @@ export default function TicketInvestigationGraph({ session }: { session: TicketI
     return () => observer.disconnect();
   }, [fit]);
 
-  if (!session) return <Empty description="Create or select an investigation session to view its Exploration Graph." />;
+  const zoom = useCallback((factor: number, anchor?: Point) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !Number.isFinite(factor) || factor <= 0) return;
+    const point = anchor || { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 };
+    setView((current) => {
+      const scale = Math.max(0.25, Math.min(1.8, current.scale * factor));
+      const ratio = scale / current.scale;
+      return { x: point.x - (point.x - current.x) * ratio, y: point.y - (point.y - current.y) * ratio, scale };
+    });
+  }, []);
 
-  const related = selected ? new Set(graph.edges.filter((edge) => edge.source === selected.id || edge.target === selected.id).flatMap((edge) => [edge.source, edge.target])) : new Set<string>();
-  const zoom = (factor: number) => setView((current) => ({ ...current, scale: Math.max(0.25, Math.min(1.8, current.scale * factor)) }));
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    let gestureActive = false;
+    let lastGestureScale = 1;
+    const wheel = (event: WheelEvent) => {
+      // React delegates wheel events passively. A local non-passive listener
+      // is required to cancel browser page zoom during trackpad pinch (Ctrl+wheel).
+      event.preventDefault();
+      event.stopPropagation();
+      if (gestureActive) return;
+      const rect = canvas.getBoundingClientRect();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1;
+      zoom(Math.exp(-Math.max(-80, Math.min(80, event.deltaY * unit)) * 0.005), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+    };
+    const gesture = (event: Event) => {
+      // WebKit exposes trackpad pinch through native gesture events instead.
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.type === 'gesturestart') { gestureActive = true; lastGestureScale = 1; return; }
+      if (event.type === 'gestureend') { gestureActive = false; lastGestureScale = 1; return; }
+      const value = event as Event & { scale?: number; clientX?: number; clientY?: number };
+      if (typeof value.scale !== 'number' || !Number.isFinite(value.scale) || value.scale <= 0) return;
+      const rect = canvas.getBoundingClientRect();
+      const anchor = typeof value.clientX === 'number' && typeof value.clientY === 'number'
+        ? { x: value.clientX - rect.left, y: value.clientY - rect.top } : undefined;
+      zoom(value.scale / lastGestureScale, anchor);
+      lastGestureScale = value.scale;
+    };
+    canvas.addEventListener('wheel', wheel, { passive: false });
+    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) canvas.addEventListener(type, gesture, { passive: false });
+    return () => {
+      canvas.removeEventListener('wheel', wheel);
+      for (const type of ['gesturestart', 'gesturechange', 'gestureend']) canvas.removeEventListener(type, gesture);
+    };
+  }, [session?.id, zoom]);
+
+  if (!session) return <Empty description="Create or select an investigation session to view its Exploration Graph." />;
   const miniScale = Math.min(180 / bounds.width, 108 / bounds.height);
   const miniOffset = { x: (200 - bounds.width * miniScale) / 2, y: (128 - bounds.height * miniScale) / 2 };
 
   return <section className={styles.ticketGraphPanel}>
     <div className={styles.ticketGraphFilterbar}>
-      <span>{graph.nodes.length} nodes · {graph.edges.length} relationships · persisted ticket investigation data</span>
-      {selected ? <button type="button" onClick={() => setSelectedId('')}>Show all</button> : null}
+      <span>{graph.nodes.length} nodes · {graph.edges.length} relationships{focusedNode ? ` · Related paths · ${focusedNode.title}` : highlight ? ` · Highlighting ${nodeTypes[highlight].label}` : ''}{emphasisActive ? ` · ${highlightedIds.size} highlighted` : ''}</span>
+      {focusedNode ? <button type="button" onClick={() => setDetailId(focusedNode.id)}>Details</button> : null}
+      <button type="button" onClick={clearSelection} disabled={!emphasisActive}>Show all</button>
     </div>
     <div
       ref={canvasRef}
       className={styles.ticketGraphCanvas}
-      onWheel={(event) => { event.preventDefault(); zoom(Math.exp(-event.deltaY * 0.005)); }}
       onPointerDown={(event) => { if ((event.target as HTMLElement).closest(`.${styles.ticketGraphNode}, .${styles.ticketGraphLegend}, .${styles.ticketGraphControls}`)) return; drag.current = { x: event.clientX, y: event.clientY, originX: view.x, originY: view.y }; }}
       onPointerMove={(event) => { if (drag.current) setView((current) => ({ ...current, x: drag.current!.originX + event.clientX - drag.current!.x, y: drag.current!.originY + event.clientY - drag.current!.y })); }}
       onPointerUp={() => { drag.current = null; }}
@@ -160,12 +239,12 @@ export default function TicketInvestigationGraph({ session }: { session: TicketI
     >
       <div className={styles.ticketGraphLegend}>
         <div className={styles.ticketGraphLegendKinds}>
-          {(Object.keys(nodeTypes) as GraphKind[]).map((kind) => <button key={kind} type="button" aria-pressed={highlight === kind} onClick={() => setHighlight((current) => current === kind ? '' : kind)}>
+          {(Object.keys(nodeTypes) as GraphKind[]).map((kind) => <button key={kind} type="button" aria-pressed={highlight === kind} disabled={!graph.nodes.some((node) => node.type === kind)} onClick={() => { setSelectedId(''); setDetailId(''); setHighlight((current) => current === kind ? '' : kind); }}>
             <i style={{ background: nodeTypes[kind].color }}>{nodeTypes[kind].icon}</i>{nodeTypes[kind].label}<small>{graph.nodes.filter((node) => node.type === kind).length}</small>
           </button>)}
         </div>
         <div className={styles.ticketGraphRelations}>{Object.values(edgeTypes).map((relation) => <span key={relation.label}><i style={{ background: relation.color }} />{relation.label}</span>)}</div>
-        <small>Click a type or node to highlight; drag to pan. The stored graph stays intact.</small>
+        <small>Click a type or node to highlight; click again to clear. The full graph stays visible.</small>
       </div>
       <div className={styles.ticketGraphControls}>
         <button type="button" aria-label="Zoom in" onClick={() => zoom(1.25)}>+</button>
@@ -182,14 +261,14 @@ export default function TicketInvestigationGraph({ session }: { session: TicketI
         if (canvas) setView((current) => ({ ...current, x: canvas.clientWidth / 2 - targetX * current.scale, y: canvas.clientHeight / 2 - targetY * current.scale }));
       }}>
         {graph.edges.map((edge) => { const source = positions.get(edge.source); const target = positions.get(edge.target); if (!source || !target) return null; return <line key={`mini_${edge.source}_${edge.target}_${edge.relation}`} x1={miniOffset.x + (source.x + 120 - bounds.minX) * miniScale} y1={miniOffset.y + (source.y + 62 - bounds.minY) * miniScale} x2={miniOffset.x + (target.x + 120 - bounds.minX) * miniScale} y2={miniOffset.y + (target.y + 62 - bounds.minY) * miniScale} stroke="#94a3b8" strokeWidth="1" />; })}
-        {graph.nodes.map((node) => { const point = positions.get(node.id); if (!point) return null; return <rect key={`mini_${node.id}`} x={miniOffset.x + (point.x - bounds.minX) * miniScale} y={miniOffset.y + (point.y - bounds.minY) * miniScale} width={Math.max(3, 240 * miniScale)} height={Math.max(3, 124 * miniScale)} rx="1" fill={nodeTypes[node.type].color} opacity=".8" />; })}
+        {graph.nodes.map((node) => { const point = positions.get(node.id); if (!point) return null; return <rect key={`mini_${node.id}`} x={miniOffset.x + (point.x - bounds.minX) * miniScale} y={miniOffset.y + (point.y - bounds.minY) * miniScale} width={Math.max(3, 240 * miniScale)} height={Math.max(3, 124 * miniScale)} rx="1" fill={nodeTypes[node.type].color} opacity={!emphasisActive || highlightedIds.has(node.id) ? .8 : .15} />; })}
       </svg>
       <div className={styles.ticketGraphBoard} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
         <svg className={styles.ticketGraphLinks} aria-hidden="true">
           {graph.edges.map((edge) => {
             const source = positions.get(edge.source); const target = positions.get(edge.target); if (!source || !target) return null;
             const style = edgeTypes[edge.relation] || { label: edge.relation, color: '#64748b' };
-            const muted = Boolean((highlight && nodeById.get(edge.source)?.type !== highlight && nodeById.get(edge.target)?.type !== highlight) || (selected && !related.has(edge.source) && !related.has(edge.target)));
+            const muted = emphasisActive && !(highlightedIds.has(edge.source) && highlightedIds.has(edge.target));
             return <g key={`${edge.source}_${edge.target}_${edge.relation}`} className={muted ? styles.ticketGraphEdgeMuted : ''}>
               <path d={`M ${source.x + 240} ${source.y + 62} C ${source.x + 292} ${source.y + 62}, ${target.x - 52} ${target.y + 62}, ${target.x} ${target.y + 62}`} stroke={style.color} />
               <text x={(source.x + target.x + 240) / 2} y={(source.y + target.y) / 2 + 52} fill={style.color}>{style.label}</text>
@@ -198,9 +277,9 @@ export default function TicketInvestigationGraph({ session }: { session: TicketI
         </svg>
         {graph.nodes.map((node) => {
           const point = positions.get(node.id) || { x: 0, y: 0 };
-          const muted = Boolean((highlight && node.type !== highlight) || (selected && !related.has(node.id)));
+          const muted = emphasisActive && !highlightedIds.has(node.id);
           const type = nodeTypes[node.type];
-          return <button key={node.id} type="button" className={`${styles.ticketGraphNode} ${selectedId === node.id ? styles.ticketGraphNodeSelected : ''} ${muted ? styles.ticketGraphNodeMuted : ''} ${node.status === 'running' ? styles.ticketGraphNodeLive : ''}`} style={{ left: point.x, top: point.y, borderLeftColor: type.color }} onClick={() => setSelectedId((current) => current === node.id ? '' : node.id)}>
+          return <button key={node.id} type="button" aria-pressed={selectedId === node.id} aria-label={`Highlight related paths: ${node.title}`} className={`${styles.ticketGraphNode} ${selectedId === node.id ? styles.ticketGraphNodeSelected : ''} ${muted ? styles.ticketGraphNodeMuted : ''} ${node.status === 'running' ? styles.ticketGraphNodeLive : ''}`} style={{ left: point.x, top: point.y, borderLeftColor: type.color }} onClick={() => { setHighlight(''); setDetailId(''); setSelectedId((current) => current === node.id ? '' : node.id); }}>
             <span className={styles.ticketGraphNodeHead}><i style={{ background: type.color }}>{type.icon}</i><strong>{node.title}</strong></span>
             <span className={styles.ticketGraphNodeSummary}>{node.summary || 'No detail recorded.'}</span>
             <span className={styles.ticketGraphNodeFoot}><code>{node.id.replace(/^(session|run|message):/, '$1-')}</code><em data-status={node.status}>{displayStatus(node.status)}</em></span>
@@ -209,11 +288,17 @@ export default function TicketInvestigationGraph({ session }: { session: TicketI
       </div>
     </div>
     {selected ? <div className={styles.ticketGraphSheetOverlay} role="dialog" aria-modal="true" aria-label="Exploration graph node details">
-      <button className={styles.ticketGraphBackdrop} type="button" aria-label="Close details" onClick={() => setSelectedId('')} />
+      <button className={styles.ticketGraphBackdrop} type="button" aria-label="Close details" onClick={() => setDetailId('')} />
       <aside className={styles.ticketGraphSheet}>
-        <header><div><span className={styles.ticketGraphTypeTag} style={{ background: nodeTypes[selected.type].color }}>{nodeTypes[selected.type].label}</span><h2>{selected.title}</h2><code>{selected.id}</code></div><button type="button" onClick={() => setSelectedId('')} aria-label="Close details">×</button></header>
+        <header><div><span className={styles.ticketGraphTypeTag} style={{ background: nodeTypes[selected.type].color }}>{nodeTypes[selected.type].label}</span><h2>{selected.title}</h2><code>{selected.id}</code></div><button type="button" onClick={() => setDetailId('')} aria-label="Close details">×</button></header>
         <div className={styles.ticketGraphSheetBody}>
           <h3>Summary</h3><p>{selected.summary || 'No detail recorded.'}</p>
+          <button type="button" onClick={() => { setSelectedId(selected.id); setHighlight(''); setDetailId(''); }}>Highlight related paths</button>
+          <h3>Connected nodes</h3>
+          {graph.edges.filter((edge) => edge.source === selected.id || edge.target === selected.id).map((edge) => {
+            const target = nodeById.get(edge.source === selected.id ? edge.target : edge.source);
+            return target ? <button key={`${edge.source}_${edge.target}_${edge.relation}`} type="button" onClick={() => setDetailId(target.id)}>{target.title} · {edgeTypes[edge.relation]?.label || edge.relation}</button> : null;
+          })}
           <dl><dt>Status</dt><dd>{displayStatus(selected.status)}</dd><dt>Upstream</dt><dd>{graph.edges.filter((edge) => edge.target === selected.id).map((edge) => nodeById.get(edge.source)?.title).filter(Boolean).join(', ') || 'No linked nodes'}</dd><dt>Downstream</dt><dd>{graph.edges.filter((edge) => edge.source === selected.id).map((edge) => nodeById.get(edge.target)?.title).filter(Boolean).join(', ') || 'No linked nodes'}</dd></dl>
           <h3>Source record</h3><pre>{JSON.stringify(selected.raw, null, 2)}</pre>
         </div>

@@ -26,6 +26,7 @@ from .models import (
 from .ticket_investigation_agent import run_investigation_turn
 from .ticket_investigation_graph import launch_ticket_investigation_graph
 from .ticket_investigation_runtime import event, record_trace
+from .ticket_investigation_contracts import findings
 from .ticket_side_question_agent import build_snapshot, cancel as cancel_side_question, submit as submit_side_question
 from .usage_recording import model_usage_context
 from tickets.models import EventTicket
@@ -104,6 +105,7 @@ def _serialize_run(run, messages):
         "role": run.role, "title": run.title, "objective": run.objective, "status": run.status,
         "created_at": run.created_at.isoformat(), "updated_at": run.updated_at.isoformat(),
         "messages": [_serialize_message(message) for message in messages if message.run_id == run.id],
+        "result": run.result, "synthesis": run.synthesis,
     }
 
 
@@ -118,6 +120,7 @@ def _serialize_session(session):
         "title": session.title, "model_profile_id": str(session.model_profile_id) if session.model_profile_id else None,
         "created_at": session.created_at.isoformat(), "updated_at": session.updated_at.isoformat(),
         "runs": [_serialize_run(run, messages) for run in runs],
+        "findings": findings(session),
         "goals": [{"id": str(row.id), "title": row.title, "acceptance_criteria": row.acceptance_criteria,
                    "status": row.status, "evidence_summary": row.evidence_summary, "created_at": row.created_at.isoformat(),
                    "updated_at": row.updated_at.isoformat()} for row in goals],
@@ -162,6 +165,43 @@ def _serialize_side_conversation(conversation, parent_run):
     }
 
 
+def create_ticket_investigation_session(*, ticket, actor, title=None, model_profile_id=None):
+    """Create an owner-scoped investigation session and its fixed role runs.
+
+    Ticket creation calls this helper so a case always has its Main Agent ready.
+    It deliberately does not invoke a model: starting an investigation remains an
+    explicit action by the analyst.
+    """
+    with transaction.atomic():
+        next_sequence = (
+            TicketInvestigationSession.objects.select_for_update()
+            .filter(ticket=ticket, owner=actor)
+            .aggregate(value=Max("sequence"))["value"]
+            or 0
+        ) + 1
+        session = TicketInvestigationSession.objects.create(
+            ticket=ticket,
+            owner=actor,
+            sequence=next_sequence,
+            title=title or f"Investigation #{next_sequence}",
+            model_profile_id=model_profile_id,
+        )
+        for role, role_title in ROLE_TITLES.items():
+            TicketInvestigationRun.objects.create(
+                session=session,
+                created_by=actor,
+                role=role,
+                title=role_title,
+            )
+        event(
+            session=session,
+            event_type="session_created",
+            title="Investigation session created",
+            payload={"sequence": next_sequence},
+        )
+    return session
+
+
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated, DenyReadonlyUser])
 def investigation_sessions(request, ticket_number):
@@ -175,17 +215,12 @@ def investigation_sessions(request, ticket_number):
 
     serializer = SessionCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    with transaction.atomic():
-        next_sequence = (TicketInvestigationSession.objects.select_for_update().filter(ticket=ticket, owner=actor)
-                         .aggregate(value=Max("sequence"))["value"] or 0) + 1
-        session = TicketInvestigationSession.objects.create(
-            ticket=ticket, owner=actor, sequence=next_sequence,
-            title=serializer.validated_data.get("title") or f"Investigation #{next_sequence}",
-            model_profile_id=serializer.validated_data.get("model_profile_id"),
-        )
-        for role, title in ROLE_TITLES.items():
-            TicketInvestigationRun.objects.create(session=session, created_by=actor, role=role, title=title)
-        event(session=session, event_type="session_created", title="Investigation session created", payload={"sequence": next_sequence})
+    session = create_ticket_investigation_session(
+        ticket=ticket,
+        actor=actor,
+        title=serializer.validated_data.get("title"),
+        model_profile_id=serializer.validated_data.get("model_profile_id"),
+    )
     return Response(_serialize_session(session), status=status.HTTP_201_CREATED)
 
 
@@ -278,6 +313,8 @@ def investigation_message(request, ticket_number, session_id):
         raise serializers.ValidationError({"run_id": "Choose a role in this investigation session."})
     if run.role == "side_question":
         raise serializers.ValidationError({"run_id": "Side Question is an independent panel; select Main Agent, Planner, or a Worker."})
+    if run.role == "worker":
+        raise serializers.ValidationError({"run_id": "Send Worker feedback through the worker-feedback endpoint; Worker execution and settlement are scheduled by Planner."})
     if run.status in {"paused", "cancelled"}:
         raise serializers.ValidationError({"run_id": "Resume this role before sending a message."})
     if run.status == "running":
@@ -294,6 +331,7 @@ def investigation_message(request, ticket_number, session_id):
     text = serializer.validated_data["message"]
     if run.role == "planner" and not session.messages.filter(run__role="main", role="user").exists():
         raise serializers.ValidationError({"run_id": "Begin this investigation from Main Agent. Main Agent defines the goal and hands work to Planner."})
+    prior_status = run.status
     TicketInvestigationMessage.objects.create(session=session, run=run, created_by=actor, role="user", content=text)
     event(session=session, run=run, event_type="user_message", title=f"Message to {run.title}", content=text)
     run.status = "running"
@@ -383,13 +421,14 @@ def investigation_message(request, ticket_number, session_id):
         return Response(_serialize_session(session), status=status.HTTP_202_ACCEPTED)
 
     try:
-        result = run_investigation_turn(run=run, actor=actor, message=text, overrides=overrides, model_guard=guard)
+        result = run_investigation_turn(run=run, actor=actor, message=text, overrides=overrides, model_guard=guard,
+                                        records_only=run.role in {"reviewer", "reporter", "explainer"})
         assistant_message = TicketInvestigationMessage.objects.create(
             session=session, run=run, created_by=actor, role="assistant",
             content=str(result.get("response") or "No response was returned."), trace=result.get("trace") or [],
         )
         record_trace(session=session, run=run, message=assistant_message, trace=result.get("trace"))
-        run.status = "completed"
+        run.status = prior_status if run.role in {"reviewer", "reporter", "explainer"} else "completed"
         run.save(update_fields=["status", "updated_at"])
     except Exception as exc:
         diagnostic = safe_chat_error(exc)

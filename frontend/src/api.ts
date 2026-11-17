@@ -771,7 +771,14 @@ export type TicketInvestigationRun = {
   role: 'main' | 'planner' | 'worker' | 'reviewer' | 'reporter' | 'explainer' | 'side_question';
   title: string;
   objective: string;
-  status: 'open' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+  status: 'open' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'blocked' | 'exhausted';
+  result?: { outcome?: string; conclusion?: string; remaining?: string; next_operation?: string; limitations?: string[]; content?: string; verdict?: string; action?: string; reason?: string; required_material?: string };
+  synthesis?: {
+    reason?: string;
+    result_hash?: string;
+    assignment?: { question_key?: string; source_key?: string; method_key?: string };
+    plan?: { priority: 'P1' | 'P2' | 'P3'; capability: string; reason: string; start_condition: string; artifacts: string[]; expected_output: string; round_number: number };
+  };
   created_at: string;
   updated_at: string;
   messages: TicketInvestigationMessage[];
@@ -786,6 +793,7 @@ export type TicketInvestigationSession = {
   created_at: string;
   updated_at: string;
   runs?: TicketInvestigationRun[];
+  findings?: Array<{ id: string; worker_id: string; claim: string; receipt_ids: string[]; limitations: string[] }>;
   goals?: Array<{ id: string; title: string; acceptance_criteria: string; status: 'open' | 'met' | 'blocked'; evidence_summary: string; created_at: string; updated_at: string }>;
   runtime_events?: Array<{ id: string; run_id: string | null; message_id: string | null; event_type: string; title: string; content: string; payload: Record<string, unknown>; created_at: string }>;
   tool_receipts?: Array<{ id: string; run_id: string; message_id: string | null; call_id: string; execution_id: string; tool_name: string; status: string; arguments: Record<string, unknown>; result_preview: string; created_at: string }>;

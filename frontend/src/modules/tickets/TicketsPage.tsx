@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { App, Button, Tabs } from 'antd';
+import { App, Tabs } from 'antd';
 import { addSlaTicketWorklog, fetchSlaTicket, fetchSlaTicketAttachments, fetchSlaTicketTimeline, fetchSlaTickets, updateSlaTicketStatus, uploadSlaTicketAttachment } from 'services/tickets';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketListItem, SlaTicketWorkLog } from '../../types';
 import SlaTicketDetailView from './components/SlaTicketDetailView';
@@ -166,10 +166,6 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
     <>
       {slaDetailOpen ? (
         <div style={{ marginTop: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ fontWeight: 600 }}>Ticket Details</div>
-            <Button onClick={closeSlaDetail}>Back to List</Button>
-          </div>
           {!slaDetail ? (
             <div style={{ padding: 16 }}>Loading...</div>
           ) : (
@@ -186,6 +182,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
               onUploadWorkLogImage={uploadWorkLogImage}
               onRefresh={() => openSlaDetail(slaDetail.ticket_number)}
               onRefreshWorkLogs={() => refreshSlaWorkLogs(slaDetail.ticket_number)}
+              onBackToList={closeSlaDetail}
               loading={slaLoading}
             />
           )}

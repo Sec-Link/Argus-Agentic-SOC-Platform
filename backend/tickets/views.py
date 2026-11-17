@@ -36,6 +36,7 @@ from ai_assistant.usage_recording import model_usage_context
 from ai_assistant.models import TicketAIChatMessage
 from ai_assistant.skill_config import get_enabled_skill_configs
 from ai_assistant.serializers import AIAssistantRequestSerializer
+from ai_assistant.ticket_investigation_views import create_ticket_investigation_session
 
 
 def _build_mitre_tags_map(ticket_numbers: list[str]) -> dict[str, list[str]]:
@@ -152,17 +153,21 @@ class EventTicketViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def perform_create(self, serializer):
-        instance = serializer.save()
-        TicketSLA.objects.get_or_create(ticket=instance)
-        labels = getattr(instance, "labels", [])
-        labels = labels if isinstance(labels, list) else []
-        if labels:
-            added = ", ".join(self._format_label_item(item) for item in labels)
-            TicketHandleLog.objects.create(
-                ticket=instance,
-                handler=self.request.user,
-                action_taken=f"Labels updated. Added: {added}",
-            )
+        with transaction.atomic():
+            instance = serializer.save()
+            TicketSLA.objects.get_or_create(ticket=instance)
+            # Set up the Main Agent and its role graph with the new case, without
+            # making a model request. The analyst explicitly starts investigation.
+            create_ticket_investigation_session(ticket=instance, actor=self.request.user)
+            labels = getattr(instance, "labels", [])
+            labels = labels if isinstance(labels, list) else []
+            if labels:
+                added = ", ".join(self._format_label_item(item) for item in labels)
+                TicketHandleLog.objects.create(
+                    ticket=instance,
+                    handler=self.request.user,
+                    action_taken=f"Labels updated. Added: {added}",
+                )
 
     def perform_update(self, serializer):
         before_labels = deepcopy(getattr(serializer.instance, "labels", []) or [])
