@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
-import { Bot, CheckCircle2, CirclePause, Clock3, ListChecks, MessageCircleQuestion, Plus, Send, ShieldCheck, Wrench } from 'lucide-react';
+import { Bot, Clock3, ListChecks, MessageCircleQuestion, Plus, Send, ShieldCheck, Wrench } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
 import { aiAssistantChat, askTicketInvestigationSideQuestion, cancelTicketInvestigationSideQuestion, clearSlaTicketAiChatHistory, clearTicketInvestigationSideQuestions, controlTicketInvestigationRun, createTicketInvestigation, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketInvestigation, fetchTicketInvestigationSideQuestions, fetchTicketInvestigations, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, sendTicketInvestigationMessage, sendTicketInvestigationWorkerFeedback, toggleSlaTicketPending, type TicketInvestigationRun, type TicketInvestigationSession, type TicketInvestigationSideConversation, updateSlaTicket } from 'services/tickets';
 import TicketInvestigationGraph from './TicketInvestigationGraph';
+import TicketPlannerOutline from './TicketPlannerOutline';
 import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
 import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
 import { fetchAlerts } from 'services/alerts';
@@ -27,6 +28,7 @@ type Props = {
   onUploadWorkLogImage?: (file: File) => Promise<SlaTicketAttachment>;
   onRefresh: () => void;
   onRefreshWorkLogs?: () => void | Promise<void>;
+  onBackToList: () => void;
   loading?: boolean;
 };
 
@@ -415,7 +417,7 @@ function WarRoomView({
 }
 
 export default function SlaTicketDetailView(props: Props) {
-  const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, onRefreshWorkLogs, loading } = props;
+  const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, onRefreshWorkLogs, onBackToList, loading } = props;
   const [showEmpty, setShowEmpty] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('incident');
   const [assistantInnerTab, setAssistantInnerTab] = useState<string>('sessions');
@@ -446,6 +448,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [activeInvestigation, setActiveInvestigation] = useState<TicketInvestigationSession | null>(null);
   const [activeInvestigationRunId, setActiveInvestigationRunId] = useState('');
   const [investigationPane, setInvestigationPane] = useState<'run' | 'organization' | 'goals' | 'runtime'>('run');
+  const [plannerView, setPlannerView] = useState<'plan' | 'history'>('plan');
   const [investigationLoading, setInvestigationLoading] = useState(false);
   const [investigationSending, setInvestigationSending] = useState(false);
   const [investigationError, setInvestigationError] = useState('');
@@ -1542,10 +1545,56 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   const selectedInvestigationRun = activeInvestigation?.runs?.find((run) => run.id === activeInvestigationRunId) || null;
+  useEffect(() => { setPlannerView('plan'); }, [activeInvestigation?.id, activeInvestigationRunId]);
   const activeInvestigationRun = investigationPane === 'run' ? selectedInvestigationRun : null;
   const investigationRunsByRole = (role: TicketInvestigationRun['role']) => activeInvestigation?.runs?.filter((run) => run.role === role) || [];
   const mainInvestigationStarted = Boolean(investigationRunsByRole('main').some((run) => run.messages.some((message) => message.role === 'user')));
   const plannerAwaitingMain = activeInvestigationRun?.role === 'planner' && !mainInvestigationStarted;
+  const runStatusBadge = (run: TicketInvestigationRun) => {
+    const label = {
+      open: 'Waiting', running: 'Running', paused: 'Paused', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', blocked: 'Missing evidence / blocked', exhausted: 'Budget exhausted / unfinished',
+    }[run.status];
+    const symbol = {
+      open: '○', running: '◷', paused: 'Ⅱ', completed: '✓', failed: '!', cancelled: '–', blocked: '!', exhausted: '◷',
+    }[run.status];
+    const stateClass = `${run.status[0].toUpperCase()}${run.status.slice(1)}`;
+    return <span className={`${layoutStyles.ticketSessionStatus} ${layoutStyles[`ticketSessionStatus${stateClass}`]}`} title={label} aria-label={label}>{symbol}</span>;
+  };
+  const startInvestigation = async () => {
+    if (investigationSending || mainInvestigationStarted || !requireAiModel()) return;
+    setInvestigationSending(true);
+    setInvestigationError('');
+    try {
+      let detail = activeInvestigation;
+      if (!detail) {
+        detail = await createTicketInvestigation(ticket.ticket_number, { model_profile_id: aiModelId });
+      }
+      const mainRun = (detail.runs || []).find((run) => run.role === 'main');
+      if (!mainRun) {
+        throw new Error('Main Agent is unavailable for this investigation session.');
+      }
+      if (mainRun.messages.some((message) => message.role === 'user')) {
+        applyInvestigation(detail, mainRun.id);
+        setInvestigationPane('run');
+        return;
+      }
+      const started = await sendTicketInvestigationMessage(ticket.ticket_number, detail.id, {
+        run_id: mainRun.id,
+        message: 'Begin the investigation from the ticket context. Define goals, acceptance criteria, confirmed facts, and material gaps, then hand off to Planner.',
+        model_profile_id: aiModelId,
+      });
+      applyInvestigation(started, mainRun.id);
+      setInvestigationPane('run');
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error || err?.message;
+      const failedSession = err?.response?.data?.session;
+      if (failedSession?.id) applyInvestigation(failedSession);
+      setInvestigationError(detail ? String(detail) : 'Could not start this investigation.');
+    } finally {
+      setInvestigationSending(false);
+    }
+  };
   const selectInvestigationRun = (runId: string) => {
     setActiveInvestigationRunId(runId);
     setInvestigationPane('run');
@@ -1562,8 +1611,8 @@ export default function SlaTicketDetailView(props: Props) {
       : investigationPane === 'runtime'
         ? 'System Events · Runtime'
         : activeInvestigationRun?.role === 'main'
-          ? `主 Agent · 会话 #${activeInvestigation?.sequence || ''}`
-          : activeInvestigationRun?.title || '选择或新建一个会话';
+          ? `Main Agent · Session #${activeInvestigation?.sequence || ''}`
+          : activeInvestigationRun?.title || 'Select or create a session';
   const sideQuestionParent = activeInvestigationRun && ['main', 'planner', 'worker'].includes(activeInvestigationRun.role) ? activeInvestigationRun : null;
   const sideQuestionRunning = Boolean(sideConversation?.messages.some((item) => item.role === 'user' && ['queued', 'running'].includes(item.status)));
 
@@ -1631,9 +1680,9 @@ export default function SlaTicketDetailView(props: Props) {
   const clearSideQuestions = () => {
     if (!activeInvestigation || !sideQuestionParent) return;
     Modal.confirm({
-      title: '清空旁路提问历史？',
-      content: '只会删除当前 Agent 的独立旁路讨论；主会话和该 Agent 的调查上下文会保留。',
-      okText: '清空历史', cancelText: '取消', okButtonProps: { danger: true },
+      title: 'Clear Side Question history?',
+      content: "Only this Agent's independent Side Question history will be deleted. The main session and investigation context will be preserved.",
+      okText: 'Clear history', cancelText: 'Cancel', okButtonProps: { danger: true },
       onOk: async () => {
         await clearTicketInvestigationSideQuestions(ticket.ticket_number, activeInvestigation.id, sideQuestionParent.id);
         setSideConversation({ id: null, parent_run_id: sideQuestionParent.id, model_profile_id: null, snapshot_available: true, messages: [] });
@@ -1664,58 +1713,54 @@ export default function SlaTicketDetailView(props: Props) {
 
   const assistantTabs = [
     {
-      key: 'sessions', label: '会话', children: (
+      key: 'sessions', label: 'Sessions', children: (
         <section className={`${layoutStyles.ticketSessions} ${sideQuestionOpen ? layoutStyles.ticketSessionsWithSide : ''}`}>
           <aside className={layoutStyles.ticketSessionSidebar}>
             <header className={layoutStyles.ticketSessionSidebarHead}>
               <div className={layoutStyles.ticketSessionSidebarTitle}>
-                <Typography.Text type="secondary">会话列表</Typography.Text>
+                <Typography.Text type="secondary">Sessions</Typography.Text>
                 <Typography.Text type="secondary" className={layoutStyles.ticketSessionRunState}>
-                  {investigationSending ? '● 执行中' : investigationLoading ? '◌ 加载中' : '○ 可交互'}
+                  {investigationSending ? '● Running' : investigationLoading ? '◌ Loading' : '○ Interactive'}
                 </Typography.Text>
               </div>
               <div className={layoutStyles.ticketSessionMetrics}>
                 <span>Ticket</span><b>{ticket.ticket_number}</b>
-                <span>会话</span><b>{investigationSessions.length}</b>
+                <span>Sessions</span><b>{investigationSessions.length}</b>
               </div>
             </header>
             <div className={layoutStyles.ticketSessionSidebarBody}>
               <section className={layoutStyles.ticketSessionBlock}>
                 <div className={layoutStyles.ticketSessionGroup}>
                   <Bot size={16} /><span>Main Agent</span><span className={layoutStyles.ticketSessionGrow} />
-                  <Button type="text" size="small" icon={<Plus size={13} />} onClick={() => void createInvestigation()} loading={investigationLoading} disabled={investigationSending || !aiModelReady}>新建</Button>
+                  <Button type="primary" size="small" onClick={() => void startInvestigation()} loading={investigationSending && !mainInvestigationStarted} disabled={investigationLoading || investigationSending || mainInvestigationStarted || !aiModelReady}>{mainInvestigationStarted ? 'Started' : 'Start investigation'}</Button>
+                  <Button type="text" size="small" icon={<Plus size={13} />} onClick={() => void createInvestigation()} loading={investigationLoading} disabled={investigationSending || !aiModelReady}>New</Button>
                 </div>
                 {investigationSessions.map((session) => (
                   <button key={session.id} type="button" className={`${layoutStyles.ticketSessionItem} ${activeInvestigation?.id === session.id && investigationPane === 'run' && selectedInvestigationRun?.role === 'main' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => void openInvestigation(session.id)}>
-                    <span className={layoutStyles.ticketSessionItemMain}>主 Agent · 会话 #{session.sequence}</span>
-                    {session.id !== activeInvestigation?.id ? <small>已归档</small> : null}
+                    <span className={layoutStyles.ticketSessionItemMain}>Main Agent · Session #{session.sequence}</span>
+                    {session.id !== activeInvestigation?.id ? <small>Archived</small> : null}
                   </button>
                 ))}
-                {!investigationSessions.length && !investigationLoading ? <div className={layoutStyles.ticketSessionEmpty}>新建一个会话开始调查</div> : null}
+                {!investigationSessions.length && !investigationLoading ? <div className={layoutStyles.ticketSessionEmpty}>No sessions found.</div> : null}
               </section>
 
               {activeInvestigation ? <>
                 <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><ShieldCheck size={16} /><span>Organization</span></div>
                   <button type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'organization' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationPane('organization')}>
-                    <ShieldCheck size={16} /><span className={layoutStyles.ticketSessionItemMain}>Organization</span>
+                    <span className={layoutStyles.ticketSessionItemMain}>Ticket organization and evidence scope</span>
                   </button>
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
                   <button type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'goals' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationPane('goals')}>
                     <ListChecks size={16} /><span className={layoutStyles.ticketSessionItemMain}>Goals · Deliverables and Acceptance</span>
                   </button>
-                  {activeInvestigation.goals?.length ? activeInvestigation.goals.map((goal) => (
-                    <button key={goal.id} type="button" className={layoutStyles.ticketRuntimeGoal} onClick={() => selectInvestigationPane('goals')}>
-                      <strong>{goal.status === 'met' ? '✓' : goal.status === 'blocked' ? '!' : '○'} {goal.title}</strong>
-                      <small>{goal.acceptance_criteria || 'Acceptance criteria pending'}</small>
-                    </button>
-                  )) : <div className={layoutStyles.ticketSessionReadonly}>Planner 定义调查目标与验收条件后会显示在这里</div>}
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
-                  <div className={layoutStyles.ticketSessionGroup}><ListChecks size={16} /><span>规划 Planner</span></div>
+                  <div className={layoutStyles.ticketSessionGroup}><ListChecks size={16} /><span>Planner</span></div>
                   {investigationRunsByRole('planner').map((run) => (
                     <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'run' && activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationRun(run.id)}>
-                      <CheckCircle2 size={15} /><span className={layoutStyles.ticketSessionItemMain}>{run.title}</span>
+                      {runStatusBadge(run)}<span className={layoutStyles.ticketSessionItemMain}>{run.title}</span>
                     </button>
                   ))}
                 </section>
@@ -1723,25 +1768,26 @@ export default function SlaTicketDetailView(props: Props) {
                   <div className={layoutStyles.ticketSessionGroup}><ShieldCheck size={16} /><span>Review and Reporting</span></div>
                   {(['reviewer', 'reporter', 'explainer'] as const).map((role) => investigationRunsByRole(role).map((run) => (
                     <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'run' && activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationRun(run.id)}>
-                      {run.status === 'failed' ? <CirclePause size={15} /> : <CheckCircle2 size={15} />}<span className={layoutStyles.ticketSessionItemMain}>{run.title}</span><small>{run.status}</small>
+                      {runStatusBadge(run)}<span className={layoutStyles.ticketSessionItemMain}>{run.title}</span>
                     </button>
                   )))}
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><Clock3 size={16} /><span>System Audit</span></div>
                   <button type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'runtime' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationPane('runtime')}>
-                    <ShieldCheck size={16} /><span className={layoutStyles.ticketSessionItemMain}>系统审计 · Runtime</span><small>{activeInvestigation.runtime_events?.length || 0} events</small>
+                    <span className={layoutStyles.ticketSessionItemMain}>System Events · Runtime</span><small>{activeInvestigation.runtime_events?.length || 0} events</small>
                   </button>
-                  <div className={layoutStyles.ticketSessionReadonly}>{activeInvestigation.tool_receipts?.length || 0} 条工具收据</div>
+                  <div className={layoutStyles.ticketSessionReadonly}>{activeInvestigation.tool_receipts?.length || 0} tool receipts</div>
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
-                  <div className={layoutStyles.ticketSessionGroup}><Wrench size={16} /><span>Workers</span><Typography.Text type="secondary">· {investigationRunsByRole('worker').length}</Typography.Text></div>
+                  <div className={layoutStyles.ticketSessionGroup}><Wrench size={16} /><span>Execution Agents</span><Typography.Text type="secondary">· {investigationRunsByRole('worker').length}</Typography.Text></div>
                   {investigationRunsByRole('worker').map((run) => (
                     <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'run' && activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationRun(run.id)}>
-                      {run.status === 'paused' ? <CirclePause size={15} /> : run.status === 'completed' ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
+                      {runStatusBadge(run)}
                       <span className={layoutStyles.ticketSessionItemMain}>#{run.title.replace(/^Worker · /, '')}</span>
                     </button>
                   ))}
-                  {!investigationRunsByRole('worker').length ? <div className={layoutStyles.ticketSessionReadonly}>由 Planner 制定调查方向并自动分派 Worker</div> : null}
+                  {!investigationRunsByRole('worker').length ? <div className={layoutStyles.ticketSessionReadonly}>Planner defines investigation directions and dispatches Workers.</div> : null}
                 </section>
               </> : null}
             </div>
@@ -1751,14 +1797,14 @@ export default function SlaTicketDetailView(props: Props) {
             <header className={layoutStyles.ticketSessionMainHead}>
               <div className={layoutStyles.ticketSessionHeading}>
                 <Typography.Text strong>{investigationPaneTitle}</Typography.Text>
-                {activeInvestigationRun ? <Button size="small" icon={<MessageCircleQuestion size={15} />} onClick={openSideQuestions}>旁路提问</Button> : null}
-                <Tag>平台默认模型</Tag>
+                {activeInvestigationRun ? <Button size="small" icon={<MessageCircleQuestion size={15} />} onClick={openSideQuestions}>Side Question</Button> : null}
+                <Tag>Platform default model</Tag>
               </div>
               <div className={layoutStyles.ticketSessionHeaderActions}>
                 <div className={layoutStyles.ticketSessionModel}>{aiModelSelector}</div>
-                <span>{investigationSending ? '执行中 · 请等待' : activeInvestigationRun?.status === 'paused' ? '只读' : investigationPane === 'run' ? '可交互' : '只读视图'}</span>
+                <span>{investigationSending ? 'Running · Please wait' : activeInvestigationRun?.status === 'paused' ? 'Read-only' : investigationPane === 'run' ? 'Interactive' : 'Read-only view'}</span>
                 <details className={layoutStyles.ticketSessionOptions}>
-                  <summary>会话详情</summary>
+                  <summary>Session details</summary>
                   <div className={layoutStyles.ticketSessionOptionsBody}>
                   <Button size="small" onClick={() => void loadInvestigations()} loading={investigationLoading}>Reload sessions</Button>
                   {activeInvestigationRun && ['planner', 'worker'].includes(activeInvestigationRun.role) && activeInvestigationRun.status !== 'cancelled' ? (
@@ -1774,6 +1820,11 @@ export default function SlaTicketDetailView(props: Props) {
               </div>
             </header>
             {investigationError ? <Alert type="error" showIcon message={investigationError} /> : null}
+            {activeInvestigationRun?.role === 'planner' ? <nav className={layoutStyles.ticketPlannerNavigation} aria-label="Planner navigation">
+              <Button size="small" type={plannerView === 'plan' ? 'primary' : 'default'} onClick={() => setPlannerView('plan')}>Investigation plan</Button>
+              <Button size="small" type={plannerView === 'history' ? 'primary' : 'default'} onClick={() => setPlannerView('history')}>Conversation</Button>
+              <Button size="small" onClick={() => setActiveTab('exploration_graph')}>Exploration Graph ↗</Button>
+            </nav> : null}
             <div className={layoutStyles.ticketSessionTranscript} aria-live="polite">
               {investigationPane === 'organization' ? (
                 <Card size="small" title="Ticket organization and evidence scope">
@@ -1800,13 +1851,15 @@ export default function SlaTicketDetailView(props: Props) {
                     {activeInvestigation?.tool_receipts?.length ? activeInvestigation.tool_receipts.map((receipt) => <details key={receipt.id} className={layoutStyles.ticketRuntimeReceipt}><summary><span>{receipt.status === 'completed' ? '⌕' : '!'}</span> {receipt.tool_name} <small>{receipt.status}</small></summary>{Object.keys(receipt.arguments || {}).length ? <pre>{JSON.stringify(receipt.arguments, null, 2)}</pre> : null}{receipt.result_preview ? <pre>{receipt.result_preview}</pre> : null}</details>) : <Empty description="No tool receipts have been recorded." />}
                   </Card>
                 </div>
-              ) : investigationLoading ? <Typography.Text type="secondary">Loading investigation session...</Typography.Text> : activeInvestigationRun?.messages.length ? (
+              ) : investigationLoading ? <Typography.Text type="secondary">Loading investigation session...</Typography.Text> : activeInvestigationRun?.role === 'planner' && plannerView === 'plan' && activeInvestigation ? (
+                <TicketPlannerOutline key={activeInvestigation.id} session={activeInvestigation} planner={activeInvestigationRun} onSelectRun={selectInvestigationRun} />
+              ) : activeInvestigationRun?.messages.length ? (
                 activeInvestigationRun.messages.map((msg, index) => (
                   <article key={msg.id || `${msg.role}_${index}`} className={`${layoutStyles.ticketChatMessage} ${msg.role === 'user' ? layoutStyles.ticketChatMessageUser : layoutStyles.ticketChatMessageAssistant}`}>
                     <div className={layoutStyles.ticketChatMessageText}>{msg.content}</div>
                     {msg.trace?.length ? (
                       <details className={layoutStyles.ticketChatTrace}>
-                        <summary>工具调用记录</summary>
+                        <summary>Tool calls</summary>
                         <pre>{JSON.stringify(msg.trace, null, 2)}</pre>
                       </details>
                     ) : null}
@@ -1820,19 +1873,19 @@ export default function SlaTicketDetailView(props: Props) {
                     <time className={layoutStyles.ticketChatMessageTime}>{formatTimestamp(msg.created_at)}</time>
                   </article>
                 ))
-              ) : <Empty description={activeInvestigationRun ? 'No messages in this role yet' : 'Create an investigation session to begin'} />}
+              ) : null}
               {activeInvestigationRun?.role === 'worker' && activeInvestigationRun.objective ? <Alert type="info" showIcon message={`Worker objective: ${activeInvestigationRun.objective}`} /> : null}
             </div>
             {investigationPane === 'run' ? <form className={layoutStyles.ticketSessionComposer} onSubmit={(event) => { event.preventDefault(); if (activeInvestigationRun?.role === 'worker') void sendWorkerFeedback(); else void sendInvestigationMessage(); }}>
               <div className={layoutStyles.ticketSessionInputBox}>
                 <Input.TextArea value={investigationDraft} onChange={(event) => setInvestigationDraft(event.target.value)}
                   onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); if (activeInvestigationRun?.role === 'worker') void sendWorkerFeedback(); else void sendInvestigationMessage(); } }}
-                  placeholder={plannerAwaitingMain ? '请先在 Main Agent 中说明调查目标；Main Agent 会自动交给 Planner。' : activeInvestigationRun?.role === 'worker' ? 'Message this Worker. /rerun explicitly retries this Intent…' : activeInvestigationRun?.role === 'main' ? '说明你希望调查的范围、问题或处置目标…' : '继续当前调查会话…'} maxLength={4000}
+                  placeholder={plannerAwaitingMain ? 'Describe the investigation goal to Main Agent first. It will hand off to Planner automatically.' : activeInvestigationRun?.role === 'worker' ? 'Message this Worker. /rerun explicitly retries this Intent…' : activeInvestigationRun?.role === 'main' ? 'Describe the scope, question or response objective to investigate…' : 'Continue this investigation…'} maxLength={4000}
                   autoSize={{ minRows: 3, maxRows: 6 }} disabled={!activeInvestigationRun || plannerAwaitingMain || investigationSending || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'} />
               </div>
               <div className={layoutStyles.ticketSessionComposerFoot}>
-                <Typography.Text type="secondary">{plannerAwaitingMain ? 'Planner 由 Main Agent 交接后自动启动。' : activeInvestigationRun?.role === 'main' ? 'Main Agent 会确定目标并自动交给 Planner。' : activeInvestigationRun?.role === 'worker' ? 'Feedback belongs to this Intent; its evidence and tool receipts are preserved.' : 'Enter 发送 · Shift + Enter 换行'}</Typography.Text>
-                <Button type="primary" htmlType="submit" loading={investigationSending} disabled={!investigationDraft.trim() || !activeInvestigationRun || plannerAwaitingMain || !aiModelReady || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'} aria-label="发送消息" icon={<Send size={15} />}>发送</Button>
+                <Typography.Text type="secondary">{plannerAwaitingMain ? 'Planner starts automatically after the Main Agent handoff.' : activeInvestigationRun?.role === 'main' ? 'Main Agent defines the goal and hands it off to Planner.' : activeInvestigationRun?.role === 'worker' ? 'Feedback belongs to this Intent; its evidence and tool receipts are preserved.' : 'Enter to send · Shift + Enter for a new line'}</Typography.Text>
+                <Button type="primary" htmlType="submit" loading={investigationSending} disabled={!investigationDraft.trim() || !activeInvestigationRun || plannerAwaitingMain || !aiModelReady || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'} aria-label="Send message" icon={<Send size={15} />}>Send</Button>
               </div>
             </form> : null}
           </section>
@@ -1844,23 +1897,23 @@ export default function SlaTicketDetailView(props: Props) {
                 <small>{sideQuestionParent?.title || ''}</small>
               </div>
               <Space size={2}>
-                <Button type="text" size="small" onClick={() => void loadSideQuestions()} loading={sideQuestionLoading} aria-label="刷新旁路提问">↻</Button>
-                <Button type="text" size="small" onClick={clearSideQuestions} disabled={!sideConversation?.messages.length || sideQuestionLoading} aria-label="清空旁路提问">⌫</Button>
-                <Button type="text" size="small" onClick={() => setSideQuestionOpen(false)} aria-label="关闭旁路提问">×</Button>
+                <Button type="text" size="small" onClick={() => void loadSideQuestions()} loading={sideQuestionLoading} aria-label="Refresh Side Question">↻</Button>
+                <Button type="text" size="small" onClick={clearSideQuestions} disabled={!sideConversation?.messages.length || sideQuestionLoading} aria-label="Clear Side Question history">⌫</Button>
+                <Button type="text" size="small" onClick={() => setSideQuestionOpen(false)} aria-label="Close Side Question">×</Button>
               </Space>
             </header>
             <div className={layoutStyles.ticketSideQuestionMeta}>
               <span>{aiModels.find((model) => model.id === aiModelId)?.model || 'Agent model'}</span>
-              <span>独立讨论 · 不执行工具</span>
+              <span>Independent discussion · No tool execution</span>
             </div>
             <div className={layoutStyles.ticketSideQuestionHistory} aria-live="polite">
               {sideQuestionError ? <Alert type="error" showIcon message={sideQuestionError} /> : null}
-              {!sideConversation?.messages.length && !sideQuestionLoading ? <div className={layoutStyles.ticketSideQuestionEmpty}>随时提问。回答会使用当前 Agent 的已保存上下文，主调查会继续独立运行。</div> : null}
+              {!sideConversation?.messages.length && !sideQuestionLoading ? <div className={layoutStyles.ticketSideQuestionEmpty}>Ask a question using this Agent's saved context. The main investigation continues independently.</div> : null}
               {sideConversation?.messages.map((item) => (
                 <article key={item.id} className={layoutStyles.ticketSideQuestionEntry}>
                   <div className={item.role === 'user' ? layoutStyles.ticketSideQuestionPrompt : item.role === 'system' ? layoutStyles.ticketSideQuestionSystem : layoutStyles.ticketSideQuestionAnswer}>{item.content}</div>
                   <div className={layoutStyles.ticketSideQuestionStatus}>
-                    <Tag>{item.status === 'queued' || item.status === 'running' ? '回答中' : item.status === 'completed' ? '已完成' : item.status === 'cancelled' ? '已停止' : '失败'}</Tag>
+                    <Tag>{item.status === 'queued' || item.status === 'running' ? 'Answering' : item.status === 'completed' ? 'Completed' : item.status === 'cancelled' ? 'Stopped' : 'Failed'}</Tag>
                     <time>{formatTimestamp(item.created_at)}</time>
                   </div>
                 </article>
@@ -1868,18 +1921,15 @@ export default function SlaTicketDetailView(props: Props) {
             </div>
             <form className={layoutStyles.ticketSideQuestionComposer} onSubmit={(event) => { event.preventDefault(); void askSideQuestion(); }}>
               <Input.TextArea value={sideQuestionDraft} onChange={(event) => setSideQuestionDraft(event.target.value)} maxLength={4000} autoSize={{ minRows: 2, maxRows: 5 }}
-                onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); void askSideQuestion(); } }} placeholder="询问当前 Agent 的上下文…" disabled={sideQuestionLoading || sideQuestionRunning || !sideQuestionParent} />
+                onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); void askSideQuestion(); } }} placeholder="Ask about this Agent's context…" disabled={sideQuestionLoading || sideQuestionRunning || !sideQuestionParent} />
               <div className={layoutStyles.ticketSideQuestionFoot}>
-                <Typography.Text type="secondary">独立讨论 · 不执行工具</Typography.Text>
-                {sideQuestionRunning ? <Button size="small" onClick={() => void cancelSideQuestion()} loading={sideQuestionLoading}>■ 停止</Button> : <Button type="primary" size="small" htmlType="submit" disabled={!sideQuestionDraft.trim() || !sideQuestionParent || sideQuestionLoading || !aiModelReady} icon={<Send size={14} />}>发送</Button>}
+                <Typography.Text type="secondary">Independent discussion · No tool execution</Typography.Text>
+                {sideQuestionRunning ? <Button size="small" onClick={() => void cancelSideQuestion()} loading={sideQuestionLoading}>■ Stop</Button> : <Button type="primary" size="small" htmlType="submit" disabled={!sideQuestionDraft.trim() || !sideQuestionParent || sideQuestionLoading || !aiModelReady} icon={<Send size={14} />}>Send</Button>}
               </div>
             </form>
           </aside> : null}
         </section>
       ),
-    },
-    {
-      key: 'exploration_graph', label: 'Exploration Graph', children: <TicketInvestigationGraph session={activeInvestigation} />,
     },
     {
       key: 'overview', label: 'Overview', children: <div className={layoutStyles.ticketRuntimeBoard}>
@@ -1897,76 +1947,71 @@ export default function SlaTicketDetailView(props: Props) {
       </Card>,
     },
     {
-      key: 'findings', label: 'Findings', children: <Card size="small" title="Worker Findings">
-        {investigationRunsByRole('worker').flatMap((run) => run.messages.filter((entry) => entry.role === 'assistant').map((entry) => ({ run, entry }))).length ? <List dataSource={investigationRunsByRole('worker').flatMap((run) => run.messages.filter((entry) => entry.role === 'assistant').map((entry) => ({ run, entry })))} renderItem={({ run, entry }) => <List.Item><List.Item.Meta title={run.title} description={<><div style={{ whiteSpace: 'pre-wrap' }}>{entry.content}</div><Typography.Text type="secondary">{formatTimestamp(entry.created_at)}</Typography.Text></>} /></List.Item>} /> : <Empty description="Worker findings will appear after an Intent completes." />}
-      </Card>,
-    },
-    {
-      key: 'alerts', label: `同资产其他告警${relatedAlertsLoaded ? ` (${relatedAlerts.length})` : ''}`, children: (
-        <Card size="small" title="同资产其他告警" extra={<Button size="small" onClick={() => void loadRelatedAlerts()} loading={relatedAlertsLoading}>刷新</Button>}>
-          <Alert type="info" showIcon message={`当前资产：${assistantAsset || '工单中没有可用的资产标识'}`} style={{ marginBottom: 12 }} />
+      key: 'alerts', label: `Other alerts on this asset${relatedAlertsLoaded ? ` (${relatedAlerts.length})` : ''}`, children: (
+        <Card size="small" title="Other alerts on this asset" extra={<Button size="small" onClick={() => void loadRelatedAlerts()} loading={relatedAlertsLoading}>Refresh</Button>}>
+          <Alert type="info" showIcon message={`Current asset: ${assistantAsset || 'No asset identifier available in this ticket'}`} style={{ marginBottom: 12 }} />
           {relatedAlertsError ? <Alert type="warning" showIcon message={relatedAlertsError} style={{ marginBottom: 12 }} /> : null}
-          {relatedAlertsLoading ? <Typography.Text type="secondary">正在查询现有告警接口...</Typography.Text> : relatedAlerts.length ? (
+          {relatedAlertsLoading ? <Typography.Text type="secondary">Loading related alerts...</Typography.Text> : relatedAlerts.length ? (
             <List dataSource={relatedAlerts} renderItem={(row: any) => (
               <List.Item>
                 <List.Item.Meta title={<Space wrap><Typography.Text strong>{row.alert_id || row._id || 'Alert'}</Typography.Text>{row.severity ? <Tag>{row.severity}</Tag> : null}</Space>}
                   description={<><div>{row.description || row.message || row.title || '-'}</div><Typography.Text type="secondary">{formatTimestamp(row.timestamp || row['@timestamp'])}</Typography.Text></>} />
               </List.Item>
             )} />
-          ) : <Empty description={relatedAlertsLoaded ? '没有找到该资产的其他告警' : '打开此标签后查询该资产的告警'} />}
+          ) : <Empty description={relatedAlertsLoaded ? 'No other alerts found for this asset' : 'Open this tab to query alerts for this asset'} />}
         </Card>
       ),
     },
     {
-      key: 'reasoning', label: '研判理由', children: (
+      key: 'reasoning', label: 'Assessment rationale', children: (
         <div style={{ display: 'grid', gap: 14 }}>
-          <Card size="small" title="AI 研判摘要">
-            {summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="当前工单还没有 AI 研判摘要" />}
+          <Card size="small" title="AI assessment summary">
+            {summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="No AI assessment is available for this ticket" />}
           </Card>
-          {rawSummaryText ? <Card size="small" title="AI 原始响应"><div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div></Card> : null}
+          {rawSummaryText ? <Card size="small" title="Raw AI response"><div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div></Card> : null}
         </div>
       ),
     },
     {
-      key: 'timeline', label: '资产时间线', children: (
-        <Card size="small" title="工单时间线">
+      key: 'timeline', label: 'Asset timeline', children: (
+        <Card size="small" title="Ticket timeline">
           {timelineItems.length ? <List dataSource={timelineItems} renderItem={(item) => (
             <List.Item><Space align="start"><Tag color="blue">{formatTimestamp(item.time)}</Tag><Typography.Text style={{ whiteSpace: 'pre-wrap' }}>{item.text}</Typography.Text></Space></List.Item>
-          )} /> : <Empty description="当前工单没有时间线记录" />}
+          )} /> : <Empty description="No timeline entries for this ticket" />}
         </Card>
       ),
     },
     {
-      key: 'tasks', label: '调查计划', children: (
+      key: 'tasks', label: 'Investigation plan', children: (
         <div style={{ display: 'grid', gap: 14 }}>
-          <Card size="small" title="AI 已完成任务">
-            {aiTasks.length ? <List dataSource={aiTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || item?.task || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="暂无 AI 任务记录" />}
+          <Card size="small" title="Completed AI tasks">
+            {aiTasks.length ? <List dataSource={aiTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || item?.task || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="No AI tasks recorded" />}
           </Card>
-          <Card size="small" title="建议的下一步">
-            {nextTasks.length ? <List dataSource={nextTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="暂无下一步建议" />}
+          <Card size="small" title="Recommended next steps">
+            {nextTasks.length ? <List dataSource={nextTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="No next steps recommended" />}
           </Card>
-          <Card size="small" title="现有 Work Plan" loading={workplanLoading}>
-            {workplanItems.length ? <List dataSource={workplanItems} renderItem={(item) => <List.Item><List.Item.Meta title={item.workflow_name} description={`${item.status} · ${formatTimestamp(item.created_at)}`} /></List.Item>} /> : <Empty description="当前工单没有 Work Plan 执行记录" />}
+          <Card size="small" title="Existing Work Plan" loading={workplanLoading}>
+            {workplanItems.length ? <List dataSource={workplanItems} renderItem={(item) => <List.Item><List.Item.Meta title={item.workflow_name} description={`${item.status} · ${formatTimestamp(item.created_at)}`} /></List.Item>} /> : <Empty description="No Work Plan executions for this ticket" />}
           </Card>
         </div>
       ),
     },
     {
-      key: 'evidence', label: '证据与查询', children: (
+      key: 'evidence', label: 'Evidence and queries', children: (
         <div style={{ display: 'grid', gap: 14 }}>
           <Card size="small" title={`Observable Evidence (${observableEvidenceItems.length})`}>
-            {observableEvidenceItems.length ? <Table rowKey="key" size="small" pagination={false} columns={observableColumns} dataSource={observableEvidenceItems} scroll={{ x: 'max-content' }} /> : <Empty description="当前工单没有 Observable Evidence" />}
+            {observableEvidenceItems.length ? <Table rowKey="key" size="small" pagination={false} columns={observableColumns} dataSource={observableEvidenceItems} scroll={{ x: 'max-content' }} /> : <Empty description="No observable evidence for this ticket" />}
           </Card>
-          <Card size="small" title={`附件 (${attachments.length})`}>
-            {attachments.length ? <Table rowKey="id" size="small" pagination={false} columns={attachmentColumns} dataSource={attachments} scroll={{ x: 'max-content' }} /> : <Empty description="当前工单没有附件" />}
+          <Card size="small" title={`Attachments (${attachments.length})`}>
+            {attachments.length ? <Table rowKey="id" size="small" pagination={false} columns={attachmentColumns} dataSource={attachments} scroll={{ x: 'max-content' }} /> : <Empty description="No attachments for this ticket" />}
           </Card>
         </div>
       ),
     },
     {
-      key: 'approval', label: '处置审批', children: (
-        <Card size="small" title="工单处置动作">
-          <Alert type="info" showIcon message="以下动作使用工单现有状态更新接口；AI 不会自动执行处置。" style={{ marginBottom: 14 }} />
+      key: 'approval', label: 'Response approval', children: (
+        <Card size="small" title="Ticket response actions">
+          <Alert type="info" showIcon message="These actions use the existing ticket status interface. AI does not automatically execute containment." style={{ marginBottom: 14 }} />
           <Space wrap>
             <Button onClick={() => updateDecisionStatus('acknowledged')} disabled={!canAcknowledge}>Acknowledge</Button>
             <Button type="primary" onClick={() => updateDecisionStatus('triaged')} disabled={!canTriaged}>Triaged</Button>
@@ -1974,16 +2019,16 @@ export default function SlaTicketDetailView(props: Props) {
             <Button onClick={() => setResolveOpen(true)} disabled={!canResolved}>Resolved</Button>
           </Space>
           <Descriptions size="small" column={1} style={{ marginTop: 16 }}>
-            <Descriptions.Item label="当前状态">{renderStatusTag(ticket.status)}</Descriptions.Item>
+            <Descriptions.Item label="Current status">{renderStatusTag(ticket.status)}</Descriptions.Item>
             <Descriptions.Item label="Ticket Verdict">{ticket.event_result || '-'}</Descriptions.Item>
           </Descriptions>
         </Card>
       ),
     },
     {
-      key: 'report', label: '调查报告', children: (
-        <Card size="small" title="AI 调查报告">
-          {rawSummaryText ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div> : summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="当前工单还没有 AI 调查报告" />}
+      key: 'report', label: 'Investigation report', children: (
+        <Card size="small" title="AI investigation report">
+          {rawSummaryText ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div> : summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="No AI investigation report is available for this ticket" />}
         </Card>
       ),
     },
@@ -2006,6 +2051,7 @@ export default function SlaTicketDetailView(props: Props) {
           <Button onClick={onRefresh} loading={loading}>Refresh</Button>
           <Button>Search</Button>
           <Button>Settings</Button>
+          <Button onClick={onBackToList}>Back to List</Button>
         </Space>
       </div>
 
@@ -2014,12 +2060,17 @@ export default function SlaTicketDetailView(props: Props) {
           activeKey={activeTab}
           onChange={(key) => {
             setActiveTab(key);
-            if (key === 'ai_assistant' && assistantInnerTab === 'alerts' && !relatedAlertsLoaded) void loadRelatedAlerts();
-            if (key === 'ai_assistant' && assistantInnerTab === 'sessions' && !investigationSessions.length) void loadInvestigations(true);
+            if (key === 'ai_assistant') {
+              setAssistantInnerTab('sessions');
+              if (!investigationSessions.length) void loadInvestigations(true);
+            }
+            if ((key === 'exploration_graph' || key === 'findings') && !investigationSessions.length) void loadInvestigations(true);
           }}
           items={[
             { key: 'incident', label: 'Incident Info' },
             { key: 'ai_assistant', label: 'AI Assistant' },
+            { key: 'exploration_graph', label: 'Exploration Graph' },
+            { key: 'findings', label: 'Findings' },
             { key: 'war_room', label: 'War Room' },
             { key: 'work_plan', label: 'Work Plan (1)' },
             { key: 'evidence', label: `Evidence (${evidenceCount})` },
@@ -2031,43 +2082,20 @@ export default function SlaTicketDetailView(props: Props) {
       <div>
         {activeTab === 'ai_assistant' ? (
           <div className={layoutStyles.ticketAssistantWorkbench}>
-            <div className={layoutStyles.ticketAssistantWorkbenchTitle}>
-              <Space wrap size={8}>
-                <Typography.Text strong>Case Investigation</Typography.Text>
-                <Tag>{assistantAsset || '当前资产'}</Tag>
-                <Typography.Text type="secondary">主告警驱动 · 同资产告警补充研判</Typography.Text>
-              </Space>
-              <Space wrap>
-                <Button href="/settings/ai-assistant">MCP / Skills</Button>
-                <Button onClick={() => {
-                  setAssistantInnerTab('alerts');
-                  if (!relatedAlertsLoaded) void loadRelatedAlerts();
-                }}>同资产其他告警{relatedAlertsLoaded ? `（${relatedAlerts.length}）` : ''}</Button>
-                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>启动 / 继续调查</Button>
-              </Space>
-            </div>
-
-            {assistantInnerTab !== 'sessions' ? <Alert type="info" showIcon className={layoutStyles.ticketAssistantScope} message={(
-              <Space wrap>
-                <Typography.Text strong>当前 Case：{ticket.ticket_number}</Typography.Text>
-                <span>资产：{assistantAsset || '未提供'}</span>
-                <span>事件：{ticket.title || incidentTitle}</span>
-                {renderStatusTag(ticket.status)}
-                {renderSeverityTag(ticket.priority)}
-                <Tag color="green">证据 {evidenceCount}</Tag>
-                <Tag color="blue">Worklog {workLogs.length}</Tag>
-              </Space>
-            )} /> : null}
-
-            <Tabs
-              activeKey={assistantInnerTab}
-              onChange={(key) => {
-                setAssistantInnerTab(key);
-                if (key === 'sessions' && !investigationSessions.length) void loadInvestigations(true);
-                if (key === 'alerts' && !relatedAlertsLoaded) void loadRelatedAlerts();
-              }}
-              items={assistantTabs}
-            />
+            {assistantTabs[0]?.children}
+          </div>
+        ) : activeTab === 'exploration_graph' ? (
+          <div style={{ paddingTop: 8 }}>
+            <TicketInvestigationGraph session={activeInvestigation} />
+          </div>
+        ) : activeTab === 'findings' ? (
+          <div style={{ paddingTop: 8 }}>
+            <Card size="small" title="Evidence-backed Findings">
+              {activeInvestigation?.findings?.length ? <List dataSource={activeInvestigation.findings} renderItem={(finding) => <List.Item><List.Item.Meta title={finding.claim} description={<><div>Worker: {finding.worker_id}</div><div>Evidence receipts: {finding.receipt_ids.join(', ')}</div>{finding.limitations.map((limit, index) => <div key={index}>{limit}</div>)}</>} /></List.Item>} /> : <Empty description="No evidence-backed Findings have been accepted by Planner." />}
+            </Card>
+            <Card size="small" title="Evidence gaps" style={{ marginTop: 12 }}>
+              <List dataSource={investigationRunsByRole('worker').filter((run) => run.result?.outcome && run.result.outcome !== 'answered')} locale={{ emptyText: 'No evidence gaps recorded' }} renderItem={(run) => <List.Item><List.Item.Meta title={run.title} description={<><div>{run.result?.remaining}</div><div>Next: {run.result?.next_operation}</div></>} /></List.Item>} />
+            </Card>
           </div>
         ) : activeTab === 'war_room' ? (
           <WarRoomView

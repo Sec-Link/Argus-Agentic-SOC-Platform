@@ -260,7 +260,7 @@ class TicketInvestigationRun(models.Model):
     ]
     STATUS_CHOICES = [
         ("open", "Open"), ("running", "Running"), ("paused", "Paused"), ("completed", "Completed"),
-        ("failed", "Failed"), ("cancelled", "Cancelled"),
+        ("failed", "Failed"), ("cancelled", "Cancelled"), ("blocked", "Blocked"), ("exhausted", "Exhausted"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -271,6 +271,8 @@ class TicketInvestigationRun(models.Model):
     title = models.CharField(max_length=180)
     objective = models.TextField(blank=True)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="open")
+    result = models.JSONField(default=dict, blank=True)
+    synthesis = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
