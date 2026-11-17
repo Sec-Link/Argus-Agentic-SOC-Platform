@@ -527,6 +527,9 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
                     table: ({ children }) => <div className={styles.tableScroll} role="region" aria-label="Markdown table" tabIndex={0}><table>{children}</table></div>,
                   }}>{item.content}</ReactMarkdown>
                 </div>
+                {item.warnings?.map((warning, warningIndex) => (
+                  <Alert key={warningIndex} type="warning" showIcon message={warning} style={{ marginTop: 8 }} />
+                ))}
                 {item.diagnostic && <FailureDetails diagnostic={item.diagnostic} />}
                 {item.steps?.filter((step) => step.diagnostic).map((step) => (
                   <FailureDetails key={step.id} diagnostic={step.diagnostic!} specialist />

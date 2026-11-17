@@ -612,7 +612,11 @@ def generate_ai_assistant_output(
     cmdb_assets: List[Dict[str, Any]] = []
     similar_cases: List[Dict[str, Any]] = []
 
-    mcp_tools = load_mcp_tools(overrides) if user_prompt else []
+    warnings = []
+    mcp_tools = load_mcp_tools(
+        overrides, on_unavailable=lambda _server_key, event: warnings.append(event),
+        before_server=model_call_guard,
+    ) if user_prompt else []
     if user_prompt:
         mcp_context = {"dynamic_tool_call": {}, "route_decision": {}, "tool_plan": {}}
     else:
@@ -693,6 +697,12 @@ def generate_ai_assistant_output(
         mcp_context=mcp_context,
         user_prompt=user_prompt,
     )
+    if warnings:
+        prompt += (
+            "\n\nSome configured MCP tools are unavailable for this request. "
+            "Use only the available tools and evidence, state any limitations, "
+            "and do not claim results from unavailable tools."
+        )
     enabled_skills = (overrides or {}).get("skills") if isinstance((overrides or {}).get("skills"), list) else []
     skill_middleware = SkillsMiddleware(allowed_skills=normalize_skill_names(enabled_skills)) if enabled_skills else None
     skill_options = {"skill_middleware": skill_middleware} if skill_middleware else {}
@@ -738,4 +748,5 @@ def generate_ai_assistant_output(
         "field_sources": field_sources,
         "raw_response": text if text else None,
         "assistant_raw": text if text else None,
+        **({"warnings": warnings} if warnings else {}),
     }

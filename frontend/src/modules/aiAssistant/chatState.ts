@@ -27,6 +27,23 @@ export interface ChatMessage {
   iteration?: number;
   requestId?: string;
   diagnostic?: PageChatDiagnostic;
+  warnings?: string[];
+}
+
+export function mcpDiscoveryWarning(event: unknown): string | null {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return null;
+  const warning = event as Partial<PageChatEvent>;
+  return warning.type === 'warning' && warning.code === 'mcp_server_unavailable' && warning.source === 'mcp'
+    && typeof warning.message === 'string' && warning.message.trim() && warning.message.length <= 500
+    ? warning.message : null;
+}
+
+export function warningsFromTrace(trace: unknown): string[] {
+  if (!Array.isArray(trace)) return [];
+  return trace.flatMap((event) => {
+    const warning = mcpDiscoveryWarning(event);
+    return warning ? [warning] : [];
+  });
 }
 
 const SERVER_ERROR_CODES = new Set([
@@ -84,6 +101,10 @@ export function applyChatEvent(turn: ChatMessage, event: PageChatEvent): ChatMes
   if (event.request_id) turn = { ...turn, requestId: event.request_id };
   if (event.type === 'done') return finishChatTurn({ ...turn, content: event.response || '' }, 'done');
   if (event.type === 'error') return failChatTurn(turn, diagnosticFromEvent(event));
+  if (event.type === 'warning') {
+    const warning = mcpDiscoveryWarning(event);
+    return warning ? { ...turn, warnings: [...(turn.warnings || []), warning] } : turn;
+  }
   const specialist = !!event.agent && event.agent !== 'coordinator';
   const scope = specialist ? `${event.delegation_id || event.agent}:` : '';
   const agentInfo = { agent: event.agent, agentTitle: event.agent_title, delegationId: event.delegation_id };

@@ -5,7 +5,7 @@ import logging
 from math import ceil
 from queue import Empty, Full, Queue
 import re
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic
 from urllib.parse import unquote_plus, urlsplit
 from uuid import uuid4
@@ -392,6 +392,8 @@ def stream_page_chat(user, data):
     deadline = monotonic() + limits.execution_timeout_seconds
     events = Queue(maxsize=128)
     progress = {"stage": "setup"}
+    warned_mcp_servers = set()
+    mcp_warning_lock = Lock()
 
     def persist(action, *args):
         try:
@@ -429,6 +431,15 @@ def stream_page_chat(user, data):
             except Full:
                 continue
         raise ChatCancelled("Chat stopped")
+
+    def mcp_warning(server_key, event):
+        if cancelled.is_set():
+            raise ChatCancelled("Chat stopped")
+        with mcp_warning_lock:
+            if server_key in warned_mcp_servers:
+                return
+            warned_mcp_servers.add(server_key)
+        emit({**event, "request_id": request_id})
 
     policy = PageToolPolicy(
         user.pk, request_id, cancelled, servers_by_id, event_callback=emit,
@@ -479,6 +490,7 @@ def stream_page_chat(user, data):
                 tool_result_transform=public_event, safe_tool_errors=True,
                 audit_source="page_chat",
                 audit_context=audit_context,
+                mcp_warning_callback=mcp_warning,
             )
             if recorder or model_guard:
                 worker_kwargs["model_call_guard"] = check_actor

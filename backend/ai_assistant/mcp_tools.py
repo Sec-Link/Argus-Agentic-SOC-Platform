@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx2
+from anyio import BrokenResourceError, ClosedResourceError, EndOfStream
 from asgiref.sync import sync_to_async
 from django.db import connections
 from fastmcp import Client
@@ -15,9 +16,36 @@ from fastmcp.client.transports import StreamableHttpTransport
 from langchain.mcp import as_langchain_tool
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, ToolException
+from mcp.shared.exceptions import MCPError
 from mcp.types import Tool
 from .http_tools import _remove_secret
 from .external_tool_policy import check_saved_mcp
+
+
+logger = logging.getLogger(__name__)
+
+
+class MCPDiscoveryError(ValueError):
+    """A server could not supply a usable tool catalog for this turn."""
+
+
+def _discovery_failure(exc):
+    if isinstance(exc, PermissionError):
+        return False
+    if isinstance(exc, BaseExceptionGroup):
+        return all(_discovery_failure(item) for item in exc.exceptions)
+    if isinstance(exc, (httpx2.HTTPError, httpx2.InvalidURL, MCPError, ValueError, OSError,
+                        BrokenResourceError, ClosedResourceError, EndOfStream)):
+        return True
+    # FastMCP wraps transport/session failures; unrelated runtime bugs must escape.
+    if type(exc) is RuntimeError:
+        if exc.__cause__ is not None:
+            return _discovery_failure(exc.__cause__)
+        return str(exc) in {
+            "Server session was closed unexpectedly", "Session task completed unexpectedly",
+            "Session task completed without exception but connection failed",
+        }
+    return False
 
 
 class _SafeMCPDiagnostic(logging.Filter):
@@ -76,24 +104,24 @@ async def _discover(config):
             if cursor is None:
                 return tools
             if cursor in seen:
-                raise ValueError("MCP tool discovery failed: the server returned a repeated pagination cursor.")
+                raise MCPDiscoveryError("MCP tool discovery failed: the server returned a repeated pagination cursor.")
             seen.add(cursor)
-        raise ValueError("MCP tool discovery failed: the catalog exceeded the 20-page limit.")
+        raise MCPDiscoveryError("MCP tool discovery failed: the catalog exceeded the 20-page limit.")
 
 
 def discover_mcp_tools(config) -> list[Tool]:
     server = check_saved_mcp(config)
     try:
         tools = asyncio.run(_discover(config))
-        if server and not config.get("approval_supported"):
-            tools = [tool for tool in tools if server.tool_approvals.get(tool.name) is False]
-        return tools
-    except ValueError as exc:
-        if str(exc).startswith("MCP tool discovery failed:"):
+    except MCPDiscoveryError:
+        raise
+    except Exception as exc:
+        if not _discovery_failure(exc):
             raise
-        raise ValueError("MCP tool discovery failed. Check the configured MCP server.") from None
-    except Exception:
-        raise ValueError("MCP tool discovery failed. Check the configured MCP server.") from None
+        raise MCPDiscoveryError("MCP tool discovery failed. Check the configured MCP server.") from None
+    if server and not config.get("approval_supported"):
+        tools = [tool for tool in tools if server.tool_approvals.get(tool.name) is False]
+    return tools
 
 
 def _include_structured_content(content, artifact):
@@ -164,24 +192,58 @@ def make_mcp_tool(remote: Tool, config: dict[str, Any], *, name: str | None = No
     })
 
 
-def load_mcp_tools(overrides=None) -> list[BaseTool]:
+def load_mcp_tools(overrides=None, *, on_unavailable=None, before_server=None) -> list[BaseTool]:
     # Imported here so the legacy gateway can also reuse this native transport.
     from ai_assistant.mcp_gateway import _candidate_configs, _enabled, _is_mcp_jsonrpc_endpoint, _resolve_config
 
     config = _resolve_config(overrides)
     if not _enabled(config):
         return []
-    tools, names = [], set()
+    tools = []
     configs = [cfg for cfg in _candidate_configs(config)
                if config.get("exact_only") or _is_mcp_jsonrpc_endpoint(cfg)]
     for index, cfg in enumerate(configs):
-        for remote in discover_mcp_tools(cfg):
-            safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", remote.name).strip("_")
-            name = f"mcp__{index}__{safe_name}"
-            if not safe_name or name in names:
-                raise ValueError("MCP tool discovery returned duplicate or invalid tool names.")
-            names.add(name)
-            tools.append(make_mcp_tool(remote, cfg, name=name))
+        if before_server:
+            before_server()
+        server_tools, names = [], set()
+        try:
+            for remote in discover_mcp_tools(cfg):
+                safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", remote.name).strip("_")
+                name = f"mcp__{index}__{safe_name}"
+                if not safe_name or name in names:
+                    raise MCPDiscoveryError("MCP tool discovery returned duplicate or invalid tool names.")
+                names.add(name)
+                try:
+                    server_tools.append(make_mcp_tool(remote, cfg, name=name))
+                except ValueError:
+                    raise MCPDiscoveryError("MCP tool definition could not be loaded.") from None
+        except MCPDiscoveryError:
+            if before_server:
+                before_server()
+            server_key = cfg.get("server_id", f"index:{index}")
+            context = (overrides or {}).get("_usage_context") or {}
+            logger.warning(
+                "MCP discovery failed: code=mcp_discovery_failed server_id=%s request_id=%s actor_id=%s",
+                server_key, context.get("request_id", ""), context.get("actor_id", ""),
+            )
+            if on_unavailable:
+                # Public diagnostics never fall back to a credential-bearing endpoint.
+                title = str(cfg.get("server_title") or "")
+                for item in [cfg, *(cfg.get("servers") or [])]:
+                    token = str(item.get("token") or "").strip()
+                    if token:
+                        title = _remove_secret(title, token)
+                        if token.lower().startswith(("bearer ", "token ")):
+                            title = _remove_secret(title, token.split(None, 1)[1])
+                title = re.sub(r"https?://\S+", "[address omitted]", title, flags=re.I)
+                title = " ".join("".join(c for c in title if c.isprintable()).split())[:80]
+                label = f'"{title}"' if title else f'#{cfg.get("server_id", index + 1)}'
+                on_unavailable(server_key, {
+                    "type": "warning", "code": "mcp_server_unavailable", "source": "mcp",
+                    "message": f"MCP server {label} was unavailable during tool loading. Continuing with the available tools.",
+                })
+            continue
+        tools.extend(server_tools)
     return tools
 
 

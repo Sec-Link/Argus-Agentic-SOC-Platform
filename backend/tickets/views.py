@@ -640,6 +640,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             try:
                 assistant = result.get("assistant") if isinstance(result, dict) else None
                 assistant_raw = result.get("assistant_raw") if isinstance(result, dict) else None
+                warning_lines = [f"AI Warning: {warning['message']}" for warning in result.get("warnings", [])]
                 if assistant:
                     completed = assistant.get("completed_tasks") if isinstance(assistant, dict) else None
                     next_tasks = assistant.get("next_tasks") if isinstance(assistant, dict) else None
@@ -656,6 +657,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                             for t in next_tasks
                         ])
                     log_lines = ["AI Assistant Result"]
+                    log_lines.extend(warning_lines)
                     header = assistant.get("header") if isinstance(assistant, dict) else None
                     if isinstance(header, dict):
                         try:
@@ -690,7 +692,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 elif isinstance(assistant_raw, str) and assistant_raw.strip():
                     TicketWorkLog.objects.create(
                         ticket=ticket,
-                        log_entry=f"AI Raw Response:\n{assistant_raw.strip()}",
+                        log_entry="\n".join([f"AI Raw Response:\n{assistant_raw.strip()}", *warning_lines]),
                         created_by=request.user,
                     )
             except Exception:

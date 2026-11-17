@@ -6,6 +6,7 @@ import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicke
 import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
 import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
 import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
+import { warningsFromTrace } from '../../aiAssistant/chatState';
 import { fetchModelCatalog, type ModelCatalogEntry } from 'services/aiAssistant/models';
 import { buildTicketDetailContext } from '../aiContext';
 import { canContinueTicketChat, ticketChatHistoryForApi, type TicketChatCapabilities, type TicketChatScope } from '../ticketChatHistory';
@@ -423,6 +424,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [aiRawResponse, setAiRawResponse] = useState('');
+  const [aiWarnings, setAiWarnings] = useState<string[]>([]);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiModels, setAiModels] = useState<ModelCatalogEntry[]>([]);
   const [aiModelId, setAiModelId] = useState('');
@@ -572,6 +574,7 @@ export default function SlaTicketDetailView(props: Props) {
   useEffect(() => {
     setAiResult(null);
     setAiRawResponse('');
+    setAiWarnings([]);
     setAiError(null);
     setChatOpen(false);
     setChatMessages([]);
@@ -748,6 +751,7 @@ export default function SlaTicketDetailView(props: Props) {
       }
       const rawResponse = typeof res?.raw_response === 'string' ? res.raw_response : res?.assistant_raw;
       setAiRawResponse(typeof rawResponse === 'string' ? fixMojibake(rawResponse) : '');
+      setAiWarnings(warningsFromTrace(res?.warnings));
       try {
         await onRefreshWorkLogs?.();
       } catch {
@@ -867,8 +871,10 @@ export default function SlaTicketDetailView(props: Props) {
           reply = 'No AI reply';
         }
       }
-      await props.onAddWorkLog(`AI Reply (@ai):\n${reply}`);
+      const warnings = warningsFromTrace(res?.warnings);
+      await props.onAddWorkLog([`AI Reply (@ai):\n${reply}`, ...warnings.map((warning) => `AI Warning: ${warning}`)].join('\n\n'));
       setAiResult(null);
+      setAiWarnings(warnings);
       message.success('AI replied');
     } catch (err: any) {
       const apiError = err?.response?.data?.error || err?.response?.data?.detail;
@@ -1761,6 +1767,9 @@ export default function SlaTicketDetailView(props: Props) {
                   <Typography.Text type="danger">{aiError}</Typography.Text>
                 </>
               ) : null}
+              {aiWarnings.map((warning, index) => (
+                <Alert key={`ai_warning_${index}`} type="warning" showIcon message={warning} style={{ marginTop: 8 }} />
+              ))}
             </Card>
 
               <Card size="small" title="AI Tasks">
@@ -1939,7 +1948,10 @@ export default function SlaTicketDetailView(props: Props) {
                       <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>
                         {msg.content}
                       </div>
-                      {msg.role === 'assistant' && msg.trace?.length ? (
+                      {msg.role === 'assistant' && warningsFromTrace(msg.trace).map((warning, index) => (
+                        <Alert key={`chat_warning_${index}`} type="warning" showIcon message={warning} style={{ marginTop: 8 }} />
+                      ))}
+                      {msg.role === 'assistant' && msg.trace?.some((event) => event?.type !== 'warning') ? (
                         <div style={{ marginTop: 10 }}>
                           <Card
                             size="small"

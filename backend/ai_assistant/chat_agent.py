@@ -116,8 +116,8 @@ def _internal_tools() -> list[BaseTool]:
     return tools
 
 
-def _external_tools(overrides: Optional[Dict[str, Any]] = None) -> list[BaseTool]:
-    return load_mcp_tools(overrides=overrides)
+def _external_tools(overrides: Optional[Dict[str, Any]] = None, *, on_unavailable=None, before_server=None) -> list[BaseTool]:
+    return load_mcp_tools(overrides=overrides, on_unavailable=on_unavailable, before_server=before_server)
 
 
 def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
@@ -272,6 +272,7 @@ def run_chat_agent(
     model_call_guard=None,
     audit_source=None,
     audit_context=None,
+    mcp_warning_callback=None,
 ) -> Dict[str, Any]:
     """Run a chat turn; streaming callbacks must also accept events from tool threads."""
     if not user_input:
@@ -296,6 +297,18 @@ def run_chat_agent(
         "not private internal reasoning."
     )
     trace = _EventTrace(event_callback)
+    mcp_unavailable = False
+
+    def mcp_warning(server_key, event):
+        nonlocal mcp_unavailable
+        mcp_unavailable = True
+        if mcp_warning_callback:
+            # The page callback emits once per turn across all specialists.
+            list.append(trace, event)
+            mcp_warning_callback(server_key, event)
+        else:
+            trace.append(event)
+
     if system_prompt_extra:
         system_prompt += "\n" + system_prompt_extra
 
@@ -316,8 +329,17 @@ def run_chat_agent(
             allowed_skills=allowed_skills, recommended_skills=recommended_skills,
         )
         _check_cancelled(cancel_event)
-        agent_tools.extend(_external_tools(overrides=overrides))
+        agent_tools.extend(_external_tools(
+            overrides=overrides, on_unavailable=mcp_warning,
+            before_server=lambda: _check_cancelled(cancel_event),
+        ))
     _check_cancelled(cancel_event)
+    if mcp_unavailable:
+        system_prompt += (
+            "\nSome configured MCP servers are unavailable for this turn. Their tools have not been loaded. "
+            "Use only the available tools; do not claim to have queried unavailable sources. "
+            "Explain the limitation when the answer depends on those sources."
+        )
     registered_tools = agent_tools + (list(skill_middleware.tools) if skill_middleware else [])
     names = [native_tool.name for native_tool in registered_tools]
     if len(names) != len(set(names)):
