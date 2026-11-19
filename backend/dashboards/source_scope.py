@@ -39,6 +39,11 @@ def dashboard_rules(platform=None, *, enabled_only=False):
         if enabled_only:
             publications = publications.filter(enabled=True, status='synced')
         return qs.filter(pk__in=publications.values('rule_id'))
+    if platform == 'elk':
+        qs = qs.filter(payload__kibana_metadata__published=True)
+        if enabled_only:
+            return qs.filter(payload__kibana_metadata__enabled=True)
+        return qs
     return qs.filter(enabled=True) if enabled_only else qs
 
 

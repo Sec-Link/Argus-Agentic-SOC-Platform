@@ -149,7 +149,7 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False, platfor
         if initialized and cat.asset_types and patterns and (es or platform == 'splunk'):
             if platform == 'splunk':
                 # Host evidence is collected during explicit scans, not on every dashboard visit.
-                complete = all(cat.host_field in s.get('host_values', {}) for s in cat_sources)
+                complete = all(s['docs'] == 0 or cat.host_field in s.get('host_values', {}) for s in cat_sources)
                 stats = {'hosts': {h for s in cat_sources for h in s.get('host_values', {}).get(cat.host_field, [])}} if complete else None
             else:
                 stats = _es_category_stats(es, cat, patterns, since)
@@ -211,6 +211,7 @@ def compute_log_source_coverage(days=DEFAULT_WINDOW_DAYS, passive=False, platfor
         "truncated": resolved['truncated'],
         "es_available": initialized,
         "es_reason": resolved.get("reason"),
+        "warnings": resolved.get("warnings", []),
         "scanned_at": resolved["scanned_at"],
         "scan_age_seconds": resolved["scan_age_seconds"],
         "total_categories": len(results),
@@ -240,6 +241,7 @@ def preview_matchers(matchers, days=7, platform="elk", time_range=None):
             result = scan({**snapshot.targets, "time_range": time_range}, [])
             return {"es_available": True, "time_range": time_range, "window_days": result["window_days"],
                     "truncated": result["truncated"],
+                    "warnings": result.get("warnings", []),
                     "indices": [{"index": s["source_label"], "docs": s["docs"]}
                                 for s in result["sources"] if any(source_matches(s, p) for p in matchers)]}
         resolved = resolve_sources(allow_scan=False, platform=platform)

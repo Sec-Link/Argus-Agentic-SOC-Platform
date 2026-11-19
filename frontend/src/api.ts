@@ -1057,7 +1057,7 @@ export async function previewLogSourceMatchers(matchers: string[], platform?: Mo
   const payload = { matchers, ...(platform === 'splunk' && timeRange ? { time_range: timeRange } : {}) };
   const r = await client.post(logSourcePath('preview/', platform), payload);
   return r.data as { es_available: boolean; window_days?: number; time_range?: SplunkCoverageTimeRange;
-    reason?: string; truncated?: boolean; indices: Array<{ index: string; docs: number }> };
+    reason?: string; warnings?: string[]; truncated?: boolean; indices: Array<{ index: string; docs: number }> };
 }
 
 export async function fetchDiscoveredLogSources(platform?: MonitoringPlatform) {

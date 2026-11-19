@@ -209,7 +209,7 @@ def run_scan(days=DEFAULT_WINDOW_DAYS, actor="", platform="elk", targets=None):
                 result["truncated"] = True
     with transaction.atomic():
         snap = LogSourceScan.objects.create(
-            platform=platform, targets=result.get("targets", {}),
+            platform=platform, targets={**result.get("targets", {}), "warnings": result.get("warnings", [])} if platform == "splunk" else {},
             scanned_at=timezone.now(),
             window_days=days,
             truncated=result.get("truncated", False),
@@ -302,6 +302,7 @@ def resolve_sources(rescan_actor=None, allow_scan=True, platform="elk", targets=
         # Initialization is true once a scan succeeded; `reason` explains the latest failed attempt.
         "es_available": snap is not None,
         "reason": error,
+        "warnings": snap.targets.get("warnings", []) if snap else [],
         "window_days": snap.window_days if snap else DEFAULT_WINDOW_DAYS,
         **({"time_range": snap.targets.get("time_range", "7d") if snap else "7d"} if platform == "splunk" else {}),
         "truncated": discovered["truncated"],

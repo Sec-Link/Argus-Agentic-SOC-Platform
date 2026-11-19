@@ -7,6 +7,7 @@ import time
 from typing import Any
 from django.utils.dateparse import parse_datetime
 from django.utils import timezone
+from django.db import DatabaseError
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -75,6 +76,9 @@ class AlertDashboardView(APIView):
                 platform=platform,
             )
             return Response(data)
+        except DatabaseError:
+            logger.warning('Dashboard base query unavailable')
+            return Response({'error': 'Dashboard data is temporarily unavailable.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:
             logger.exception('Error in dashboard_alerts: %s', exc)
             return Response(

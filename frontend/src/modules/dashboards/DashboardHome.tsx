@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
-import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input, Tabs } from 'antd';
+import { Alert, Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input, Tabs } from 'antd';
 import { ClockCircleOutlined, DragOutlined, ReloadOutlined } from '@ant-design/icons';
 import { fetchDashboard } from 'services/alerts';
 import type { DashboardData, MonitoringPlatform } from 'types';
@@ -35,6 +35,10 @@ const dashboardCacheKey = (platform: MonitoringPlatform, window: TimeWindow) =>
 const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v3';
 const DEFAULT_TIME_WINDOW_CACHE_KEY = 'siem_dashboard_default_time_window_v1';
 const POLL_INTERVAL_MS = 10 * 1000;
+const KPI_METRICS: Record<string, string> = {
+  kpi_last_hour: 'recent_1h_alerts', kpi_total_alerts: 'total', kpi_data_sources: 'data_source_count',
+  kpi_enabled_rules: 'enabled_siem_rule_count', kpi_detections_1h: 'siem_rule_detected_count_1h',
+};
 
 // Read persisted dashboard time preferences defensively across SSR and malformed storage states.
 const readStoredTimeWindow = (key: string): TimeWindow | null => {
@@ -194,12 +198,9 @@ const Dashboard: React.FC = () => {
     const panelKey = opts?.panelKey;
     const showGlobalSpinner = opts?.showGlobalSpinner ?? true;
     const isBackground = !!displayData && !opts?.reset;
-    if (showGlobalSpinner && isBackground) {
-      setRefreshing(true);
-    } else if (showGlobalSpinner) {
-      setLoading(true);
-    }
-    if (panelKey) setActivePanelRefresh(panelKey);
+    setLoading(showGlobalSpinner && !isBackground);
+    setRefreshing(showGlobalSpinner && isBackground);
+    setActivePanelRefresh(panelKey ?? null);
     try {
       const windowToUse = opts?.timeWindow || activeTimeWindowRef.current;
       let res = await fetchDashboard({
@@ -225,7 +226,7 @@ const Dashboard: React.FC = () => {
       }
     } catch (e:any) {
       if (controller.signal.aborted) return;
-      console.error('Dashboard load error', e);
+      console.error('Dashboard load failed', e?.response?.status ?? 'network');
       // light failure backoff: increment failures and skip next few polls if failing repeatedly
       failuresRef.current = (failuresRef.current || 0) + 1;
       const failCount = failuresRef.current;
@@ -240,13 +241,12 @@ const Dashboard: React.FC = () => {
         }, Math.min(60000, 2000 * Math.pow(2, failCount - 5)));
       }
     } finally {
-      if (controller.signal.aborted) return;
-      requestRef.current = null;
-      if (showGlobalSpinner) {
-        if (isBackground) setRefreshing(false);
-        else setLoading(false);
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setLoading(false);
+        setRefreshing(false);
+        setActivePanelRefresh(null);
       }
-      if (panelKey) setActivePanelRefresh(null);
     }
   };
 
@@ -393,6 +393,7 @@ const Dashboard: React.FC = () => {
 
     return () => {
       requestRef.current?.abort();
+      requestRef.current = null;
       if (retryRef.current) clearTimeout(retryRef.current);
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -593,9 +594,10 @@ const Dashboard: React.FC = () => {
 
   const categoryBreakdown = displayData?.category_breakdown;
   const severityDistribution = displayData?.severity_distribution;
-  const renderTrendEmpty = () => (
+  const metricUnavailable = (name: string) => !!displayData?.unavailable_metrics?.includes(name);
+  const renderTrendEmpty = (name: string) => (
     <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <Empty description="No trend data available" />
+      <Empty description={metricUnavailable(name) ? 'Metric unavailable' : 'No trend data available'} />
     </div>
   );
   const panelRefresh = (panelKey: string, ariaLabel = 'Refresh panel') => (
@@ -627,7 +629,7 @@ const Dashboard: React.FC = () => {
       styles={{ body: { minHeight: 78 } }}
     >
       <Statistic
-        value={value}
+        value={!displayData || metricUnavailable(KPI_METRICS[panelKey]) ? '\u2014' : value}
         loading={!displayData && loading}
         valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
       />
@@ -675,7 +677,7 @@ const Dashboard: React.FC = () => {
             ))}
           </div>
           <div className="dashboard-table-empty-body">
-            <Empty description="No data" />
+            <Empty description={metricUnavailable(panelKey) ? 'Metric unavailable' : 'No data'} />
           </div>
         </div>
       )}
@@ -737,7 +739,7 @@ const Dashboard: React.FC = () => {
             />
           ) : (
             <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Empty description="No category data" />
+              <Empty description={metricUnavailable('category_breakdown') ? 'Metric unavailable' : 'No category data'} />
             </div>
           )}
         </Card>
@@ -828,7 +830,7 @@ const Dashboard: React.FC = () => {
                 tooltip={{ showMarkers: false }}
                 axis={{ x: false }}
               />
-            ) : renderTrendEmpty()}
+            ) : renderTrendEmpty('alert_trend')}
           </Card>
         )}
       </Col>
@@ -865,7 +867,7 @@ const Dashboard: React.FC = () => {
             />
           ) : (
             <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Empty description="No severity data" />
+              <Empty description={metricUnavailable('severity_distribution') ? 'Metric unavailable' : 'No severity data'} />
             </div>
           )}
         </Card>
@@ -955,7 +957,7 @@ const Dashboard: React.FC = () => {
                 tooltip={{ showMarkers: false }}
                 axis={{ x: false }}
               />
-            ) : renderTrendEmpty()}
+            ) : renderTrendEmpty('alert_score_trend')}
           </Card>
         )}
       </Col>
@@ -1202,6 +1204,7 @@ const Dashboard: React.FC = () => {
             label: 'Overview',
             children: (
       <div className="dashboard-section-stack">
+      {displayData?.degraded && <Alert type="warning" showIcon message="Some dashboard metrics are temporarily unavailable." />}
       {/* Flatten KPI wrappers so the grid itself owns the spacing and sizing contract. */}
       <div className="dashboard-kpi-grid dashboard-kpi-grid-compact">
         {panelOrder.filter((id) => id.startsWith('kpi_')).map((id) => {

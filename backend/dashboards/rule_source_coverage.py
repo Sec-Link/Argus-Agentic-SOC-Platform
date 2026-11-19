@@ -92,6 +92,9 @@ def compute_rule_coverage(category_results, sources, platform=None):
     rows = dashboard_rules(platform).values(
         "rule_uuid", "name", "enabled", "payload__elastic_index_patterns", "payload__kibana_metadata", "payload__list_meta"
     )
+    if platform == 'elk':
+        enabled_ids = set(dashboard_rules(platform, enabled_only=True).values_list('rule_uuid', flat=True))
+        rows = [{**row, 'enabled': row['rule_uuid'] in enabled_ids} for row in rows]
     if platform == 'splunk':
         from .splunk_sources import target_identity
 

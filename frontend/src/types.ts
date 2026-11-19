@@ -17,6 +17,8 @@ export interface Alert {
 }
 
 export interface DashboardData {
+  degraded?: boolean;
+  unavailable_metrics?: string[];
   severity: Record<string, number>;
   timeline: Record<string, number>;
   total: number;
@@ -117,6 +119,7 @@ export interface DiscoveredLogSource {
 }
 
 export interface LogSourceDiscovery {
+  warnings?: string[];
   initialized: boolean;
   scanned_at: string | null;
   scan_age_seconds: number | null;
@@ -160,6 +163,7 @@ export interface LogSourceRuleCoverage {
 }
 
 export interface LogSourceCoverage {
+  warnings?: string[];
   window_days: number;
   time_range?: SplunkCoverageTimeRange;
   initialized: boolean;

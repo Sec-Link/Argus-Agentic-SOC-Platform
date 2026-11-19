@@ -101,7 +101,7 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure, platform }) => 
             />
             {rules && (
               <Statistic
-                title={<HelpTip id="enabledRules" platform={platform} label="Enabled rules" tip="Enabled detection rules / all rules in the library." />}
+                title={<HelpTip id="enabledRules" platform={platform} label="Enabled rules" tip="Confirmed enabled rules / published rules in the selected platform snapshot." />}
                 value={`${rules.enabled_rules} / ${rules.total_rules}`}
                 formatter={() => <ClickValue onClick={() => setDetailKind('rules_enabled')}>{`${rules.enabled_rules} / ${rules.total_rules}`}</ClickValue>}
                 valueStyle={{ fontSize: 26, fontWeight: 600 }}

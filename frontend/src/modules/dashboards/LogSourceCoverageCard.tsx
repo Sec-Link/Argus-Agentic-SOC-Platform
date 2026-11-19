@@ -209,6 +209,10 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean; platform?: MonitoringP
             <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="No log source categories are available" />
           )}
           {data.truncated && <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="Only the busiest sources are included. Coverage outside this scan is unknown." />}
+          {!!data.warnings?.length && <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+            message={data.warnings.includes('host_statistics_unavailable')
+              ? 'Log statistics are available; some CMDB host coverage is unavailable.'
+              : 'The scan completed with a reviewed Splunk warning.'} />}
           <div className="cov-stats">
             <Statistic
               title={<HelpTip id="logCoverage" label="Log source coverage" tip="Receiving categories / all enabled categories after a successful scan, including empty categories." />}
@@ -225,7 +229,7 @@ const LogSourceCoverageCard: React.FC<{ isStaff: boolean; platform?: MonitoringP
             {rules && (
               <>
                 <Statistic
-                  title={<HelpTip id="enabledRules" platform={platform} label="Enabled rules / total" tip={platform === 'splunk' ? 'Confirmed enabled rules / published Splunk rules.' : 'Enabled detection rules / all rules in the library.'} />}
+                  title={<HelpTip id="enabledRules" platform={platform} label="Enabled rules / total" tip={platform === 'splunk' ? 'Confirmed enabled rules / published Splunk rules.' : 'Confirmed enabled Kibana rules / published Kibana rules in the local snapshot.'} />}
                   value={`${rules.enabled_rules} / ${rules.total_rules}`}
                   formatter={() => <ClickValue onClick={() => setDetailKind('rules_enabled')}>{`${rules.enabled_rules} / ${rules.total_rules}`}</ClickValue>}
                   suffix={rules.enabled_percent == null ? undefined : <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.65 }}>({rules.enabled_percent}%)</span>}

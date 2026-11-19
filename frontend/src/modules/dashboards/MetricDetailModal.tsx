@@ -23,7 +23,7 @@ const fmtTime = (v: string | null) => (v ? dayjs(v).format('MM-DD HH:mm') : '—
 const RULE_META: Record<string, { title: string; source: string; filter: (r: LogSourceRuleItem) => boolean }> = {
   rules_enabled: {
     title: 'Enabled rules',
-    source: 'Rules whose enabled flag is on in the platform rule library (updated when a rule is published to or synced from Kibana).',
+    source: 'Published Kibana rules last confirmed enabled in the local synchronization snapshot. Unpublished drafts and Splunk-only publications are excluded.',
     filter: (r) => r.enabled,
   },
   rules_with_data: {

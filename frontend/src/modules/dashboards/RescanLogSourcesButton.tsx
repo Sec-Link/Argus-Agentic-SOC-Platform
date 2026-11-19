@@ -29,7 +29,8 @@ const RescanLogSourcesButton: React.FC<{
         message.warning(result.reason);
       } else {
         setOpen(false);
-        message.success('Log sources re-scanned');
+        if (result.warnings?.length) message.warning('Log sources re-scanned with warnings.');
+        else message.success('Log sources re-scanned');
       }
     } catch (err: any) {
       const detail = err?.response?.data;

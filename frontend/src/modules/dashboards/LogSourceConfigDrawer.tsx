@@ -216,6 +216,7 @@ const CategoryEditor: React.FC<{
                         </Space>
                       )}
                       {preview.truncated && <Alert type="warning" showIcon message="Only the busiest sources are included." style={{ marginTop: 8 }} />}
+                      {!!preview.warnings?.length && <Alert type="warning" showIcon message="The preview completed with a reviewed Splunk warning." style={{ marginTop: 8 }} />}
                     </div>
                   )}
                 </>
@@ -325,6 +326,10 @@ const SourcesTab: React.FC<{ categories: LogSourceCategory[]; platform: Monitori
       {data?.truncated && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Only the busiest sources are listed." />
       )}
+      {!!data?.warnings?.length && <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+        message={data.warnings.includes('host_statistics_unavailable')
+          ? 'Log statistics are available; some CMDB host coverage is unavailable.'
+          : 'The scan completed with a reviewed Splunk warning.'} />}
       <Space style={{ marginBottom: 12 }} wrap>
         <Segmented
           value={filter}

@@ -25,8 +25,8 @@ const DETAILS: Record<string, Detail> = {
     fix: 'Open the red category cards to see which sources went quiet and when they were last seen.',
   },
   enabledRules: {
-    what: 'How many detection rules are switched on, out of the whole rule library.',
-    how: 'Enabled rules ÷ total rules (non-deleted). Enabled follows the rule state saved in the platform, which is updated when the rule is published to or synced from Kibana.',
+    what: 'How many published Kibana rules were last confirmed enabled.',
+    how: 'Confirmed enabled Kibana publications / non-deleted Kibana publications in the local synchronization snapshot. Drafts and Splunk-only publications are excluded.',
     why: 'Only enabled rules detect anything or count toward ATT&CK coverage. A large library with few enabled rules gives a false sense of security.',
     fix: 'Review disabled rules, enable the ones that match your log sources, and publish them to Kibana.',
   },
@@ -60,7 +60,7 @@ const DETAILS: Record<string, Detail> = {
     fix: 'Add or enable rules for these sources. Click to review them in Coverage settings.',
   },
   attackCoverage: {
-    what: 'How much of the MITRE ATT&CK technique catalog your enabled rules cover.',
+    what: 'How much of the MITRE ATT&CK technique catalog your confirmed enabled Kibana rules cover.',
     how: 'Techniques with at least one enabled rule ÷ all parent techniques in the synced catalog. Sub-techniques count toward their parent. Rule mapping comes from Sigma attack.* tags and Kibana threat fields.',
     why: 'Shows which adversary behaviors you can and cannot currently detect.',
     fix: 'Tag rules with attack.<tactic> then attack.t<id>, enable them, and publish to Kibana.',
