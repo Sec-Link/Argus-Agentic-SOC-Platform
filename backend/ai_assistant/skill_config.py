@@ -2,8 +2,32 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from rest_framework.exceptions import PermissionDenied
+
+from accounts.audit import AuditService, request_ip, request_user_agent
+from accounts.models import AuditLog
+from accounts.services import is_user_readonly
 from ai_assistant.models import SkillConfig
 from ai_assistant.skill_library import list_skills, read_skill
+
+
+def require_skill_permission(request, action):
+    if (not request.user.is_active
+            or request.method not in {"GET", "HEAD", "OPTIONS"} and is_user_readonly(request.user)
+            or not request.user.has_perm(f"ai_assistant.{action}_skillconfig")):
+        raise PermissionDenied("You do not have permission to manage this skill.")
+
+
+def audit_skill_configuration(request, name, action, fields, *, success=True):
+    AuditService.log_event(
+        event_type=AuditLog.EventType.ACTIVITY,
+        status=AuditLog.Status.SUCCESS if success else AuditLog.Status.FAILURE,
+        action_type=AuditLog.ActionType.FEATURE_EXEC,
+        user_email=getattr(request.user, "email", None), ip_address=request_ip(request),
+        user_agent=request_user_agent(request), path=request.path, method=request.method,
+        metadata={"resource": "skill", "name": name, "actor_id": request.user.pk,
+                  "action": action, "changed_fields": sorted(fields)},
+    )
 
 
 def _normalize_skill_name(value: Any) -> str:

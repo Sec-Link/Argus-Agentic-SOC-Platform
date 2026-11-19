@@ -5,8 +5,11 @@ from django.http import JsonResponse
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.services import is_user_readonly
+
 
 COMMON_APP_LABELS = {
+    "ai_assistant",
     "tickets",
     "accounts",
     "integrations",
@@ -31,6 +34,7 @@ class CurrentUserPermissionsAPIView(APIView):
                 "username": user.username,
                 "is_staff": user.is_staff,
                 "is_superuser": user.is_superuser,
+                "is_readonly": is_user_readonly(user),
                 "role": role,
                 "permissions": sorted(perms),
             }

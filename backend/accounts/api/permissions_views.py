@@ -12,6 +12,7 @@ from .permissions_serializers import (
 
 
 COMMON_APP_LABELS = {
+    'ai_assistant',
     'tickets',
     'accounts',
     'integrations',

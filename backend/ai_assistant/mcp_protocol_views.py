@@ -1,15 +1,15 @@
 import json
-import time
 from typing import Any, Dict, List, Tuple
 
 from django.db.models import Q
-from django.http import JsonResponse
-from django.http import StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
+from accounts.services import is_user_readonly
+from ai_assistant.internal_tool_permissions import _check_internal
 from ai_assistant.mcp_views import _extract_hostnames, _extract_iocs, _extract_observables, _flatten_observables, _json_dumps_safe
-#from cmdb.models import Asset
+from cmdb.models import Asset
 from tickets.models import EventTicket, TicketWorkLog
 
 
@@ -17,10 +17,10 @@ def _rpc_ok(rpc_id: Any, result: Dict[str, Any]) -> JsonResponse:
     return JsonResponse({"jsonrpc": "2.0", "id": rpc_id, "result": result})
 
 
-def _rpc_error(rpc_id: Any, code: int, message: str) -> JsonResponse:
+def _rpc_error(rpc_id: Any, code: int, message: str, status: int = 400) -> JsonResponse:
     return JsonResponse(
         {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}},
-        status=400,
+        status=status,
     )
 
 
@@ -305,24 +305,9 @@ def mcp_tools_manifest(request):
     return JsonResponse({"tools": _tool_defs()})
 
 
-def _sse_stream():
-    # Minimal SSE stream for MCP HTTP streaming clients.
-    # Keep the connection valid and provide an initial event.
-    yield "event: ready\n"
-    yield "data: {\"ok\": true, \"server\": \"siem-mcp\"}\n\n"
-    while True:
-        yield ": keep-alive\n\n"
-        time.sleep(15)
-
-
-@api_view(["GET", "POST"])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mcp_rpc(request):
-    if request.method == "GET":
-        response = StreamingHttpResponse(_sse_stream(), content_type="text/event-stream")
-        response["Cache-Control"] = "no-cache"
-        return response
-
     try:
         rpc_id, method, params = _parse_jsonrpc_request(request.body)
     except ValueError as exc:
@@ -343,7 +328,7 @@ def mcp_rpc(request):
             return _rpc_ok(rpc_id, {})
 
         if method in ("notifications/initialized", "initialized"):
-            return _rpc_ok(rpc_id, {})
+            return HttpResponse(status=202)
 
         if method == "tools/list":
             return _rpc_ok(rpc_id, {"tools": _tool_defs()})
@@ -353,6 +338,9 @@ def mcp_rpc(request):
             args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
             if not name:
                 return _rpc_error(rpc_id, -32602, "tools/call requires params.name")
+            if not request.user.is_active or is_user_readonly(request.user):
+                raise PermissionError("Account cannot execute assistant tools.")
+            _check_internal(request.user, name, args)
             payload = _call_tool(name, args)
             return _rpc_ok(
                 rpc_id,
@@ -364,6 +352,8 @@ def mcp_rpc(request):
             )
 
         return _rpc_error(rpc_id, -32601, f"method not found: {method}")
+    except PermissionError:
+        return _rpc_error(rpc_id, -32003, "You do not have permission to execute this tool.", status=403)
     except ValueError as exc:
         return _rpc_error(rpc_id, -32602, str(exc))
     except Exception as exc:
