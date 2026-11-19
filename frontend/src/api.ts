@@ -1,5 +1,5 @@
-import axios, { InternalAxiosRequestConfig } from 'axios';
 import type { MonitoringPlatform, SplunkCoverageTimeRange } from './types';
+import axios, { InternalAxiosRequestConfig } from 'axios';
 
 let accessToken: string | null = null;
 
