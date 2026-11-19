@@ -12,15 +12,14 @@ from django.conf import settings
 from django.utils import timezone
 
 from ai_assistant.models import MCPToolExecution
-from ai_assistant.monitoring import update_mcp_stats
+from ai_assistant.mcp_tools import call_mcp_tool, discover_mcp_tools, mcp_result
+from ai_assistant.monitoring import update_mcp_stats, _detail_permissions
+from .call_details import snapshot, unavailable
 
 logger = logging.getLogger(__name__)
 
 _MONITOR_LOCK = threading.Lock()
 _MONITOR_ROWS: deque[Dict[str, Any]] = deque(maxlen=500)
-_TOOLS_CACHE_LOCK = threading.Lock()
-_TOOLS_CACHE: Dict[str, Dict[str, Any]] = {}
-_TOOLS_CACHE_TTL_SECONDS = 180
 
 
 def _record_monitor(
@@ -32,6 +31,7 @@ def _record_monitor(
     error: str | None = None,
     request_payload: Any | None = None,
     response_payload: Any | None = None,
+    audit_context: Dict[str, Any] | None = None,
 ) -> None:
     end_ts = time.time()
     req_text = ""
@@ -62,6 +62,10 @@ def _record_monitor(
         _MONITOR_ROWS.appendleft(row)
 
     try:
+        context = audit_context or {}
+        attribution = {key: context[key] for key in (
+            "actor_id", "actor_label", "request_id", "conversation_id", "model_profile_id", "model_name", "agent_name",
+        ) if key in context}
         exec_row = MCPToolExecution.objects.create(
             tool_name=str(tool or ""),
             arguments=request_payload or {},
@@ -70,6 +74,11 @@ def _record_monitor(
             error=(error or "")[:2000],
             endpoint=str(request_url or "")[:500],
             source="mcp_gateway",
+            tool_source="mcp_gateway",
+            request_detail=snapshot({"tool": tool, "arguments": request_payload}) if request_payload is not None else unavailable(),
+            response_detail=snapshot(response_payload) if response_payload is not None else unavailable("unavailable"),
+            detail_permissions=_detail_permissions(tool, context),
+            **attribution,
         )
         start_dt = timezone.datetime.fromtimestamp(start_ts, tz=timezone.get_current_timezone())
         end_dt = timezone.datetime.fromtimestamp(end_ts, tz=timezone.get_current_timezone())
@@ -161,10 +170,15 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
     if enabled is None:
         enabled = bool(getattr(settings, "MCP_GATEWAY_ENABLED", False))
 
-    base_url = (mcp.get("base_url") or getattr(settings, "MCP_GATEWAY_BASE_URL", "") or "").strip()
-    token = (mcp.get("token") or getattr(settings, "MCP_GATEWAY_TOKEN", "") or "").strip()
+    exact_only = bool(mcp.get("exact_only"))
+    base_url = (mcp.get("base_url") or ("" if exact_only else getattr(settings, "MCP_GATEWAY_BASE_URL", "")) or "").strip()
+    token = (
+        (mcp.get("token") or "")
+        if exact_only
+        else (mcp.get("token") or getattr(settings, "MCP_GATEWAY_TOKEN", "") or "")
+    ).strip()
     raw_servers = mcp.get("servers")
-    servers: List[Dict[str, str]] = []
+    servers: List[Dict[str, Any]] = []
     if isinstance(raw_servers, list):
         for item in raw_servers:
             if not isinstance(item, dict):
@@ -177,6 +191,8 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
                     "endpoint": endpoint,
                     "title": str(item.get("title") or "").strip(),
                     "token": str(item.get("token") or "").strip(),
+                    **({"id": item["id"], "config_version": item.get("config_version")}
+                       if "id" in item else {}),
                 }
             )
     # Keep base_url as the primary (usually internal) MCP endpoint.
@@ -212,6 +228,9 @@ def _resolve_config(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         "token": token,
         "servers": servers,
         "force_internal": bool(mcp.get("force_internal")),
+        "exact_only": exact_only,
+        **({"actor_id": mcp["actor_id"], "approval_supported": bool(mcp.get("approval_supported"))}
+           if "actor_id" in mcp else {}),
         "timeout_seconds": timeout_seconds,
         "ticket_context_path": str(ticket_context_path),
         "ticket_search_path": str(ticket_search_path),
@@ -246,12 +265,16 @@ def _full_url(path: str, config: Dict[str, Any]) -> str:
 
 
 def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> List[Dict[str, Any]]:
-    seen: set[str] = set()
-    items: List[Dict[str, str]] = []
+    seen: set[str | tuple[str, int]] = set()
+    items: List[Dict[str, Any]] = []
 
     base_url = str(config.get("base_url") or "").strip()
     if base_url:
-        items.append({"endpoint": base_url, "title": ""})
+        primary = {"endpoint": base_url, "title": ""}
+        if config.get("exact_only") and not config.get("force_internal"):
+            primary = next((server for server in config.get("servers") or []
+                            if server.get("endpoint") == base_url), primary)
+        items.append(primary)
 
     if config.get("force_internal"):
         candidates: List[Dict[str, Any]] = []
@@ -279,6 +302,8 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
                     "endpoint": endpoint,
                     "title": str(item.get("title") or "").strip(),
                     "token": str(item.get("token") or "").strip(),
+                    **({"id": item["id"], "config_version": item.get("config_version")}
+                       if "id" in item else {}),
                 }
             )
 
@@ -286,7 +311,7 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
     hint_tokens: List[str] = []
     if tool_hint:
         hint_tokens = [t for t in re.split(r"[^a-z0-9]+", tool_hint.lower()) if len(t) >= 3]
-    weighted: List[tuple[int, int, Dict[str, str]]] = []
+    weighted: List[tuple[int, int, Dict[str, Any]]] = []
     for idx, item in enumerate(items):
         haystack = f"{item.get('title', '')} {item.get('endpoint', '')}".lower()
         score = sum(1 for t in hint_tokens if t in haystack)
@@ -296,22 +321,26 @@ def _candidate_configs(config: Dict[str, Any], tool_hint: str | None = None) -> 
     candidates: List[Dict[str, Any]] = []
     for _, __, item in weighted:
         url = str(item.get("endpoint") or "").strip()
-        key = url.rstrip("/").lower()
+        key = ("server", item["id"]) if "id" in item else (url if config.get("exact_only") else url.rstrip("/").lower())
         if key in seen:
             continue
         seen.add(key)
         cfg = dict(config)
         cfg["base_url"] = url
         cfg["server_title"] = str(item.get("title") or "").strip()
-        if item.get("token"):
+        if "id" in item:
+            cfg.update(server_id=item["id"], config_version=item.get("config_version"))
+        if "token" in item:
             cfg["token"] = str(item.get("token") or "").strip()
         candidates.append(cfg)
     return candidates
 
 
 def _is_mcp_jsonrpc_endpoint(config: Dict[str, Any]) -> bool:
+    if "server_id" in config:
+        return True
     base_url = str(config.get("base_url", "") or "").lower()
-    return "/mcp-connect/" in base_url or base_url.endswith("/mcp") or base_url.endswith("/mcp/")
+    return bool(config.get("exact_only")) or "/mcp-connect/" in base_url or base_url.endswith("/mcp") or base_url.endswith("/mcp/")
 
 
 def _extract_tool_result(data: Any) -> Any:
@@ -335,209 +364,18 @@ def _extract_tool_result(data: Any) -> Any:
     return None
 
 
-def _normalize_tool_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(name or "").lower()).strip("_")
-
-
-def _initialize_mcp_session(config: Dict[str, Any], base_headers: Dict[str, str]) -> Dict[str, str]:
-    request_url = str(config.get("base_url", "")).rstrip("/")
-    headers = dict(base_headers)
-    timeout = _timeout(config)
-    try:
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "Obot MCP Gateway (via nanobot v0.0.0-dev+07f62acb)",
-                    "version": "",
-                },
-            },
-        }
-        init_res = requests.post(
-            request_url,
-            headers=headers,
-            json=init_payload,
-            timeout=timeout,
-        )
-        session_id = (
-            init_res.headers.get("mcp-session-id")
-            or init_res.headers.get("Mcp-Session-Id")
-            or init_res.headers.get("MCP-Session-Id")
-            or ""
-        )
-        if session_id:
-            headers["mcp-session-id"] = session_id
-
-        notif_payload = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-            "params": {},
-        }
-        try:
-            requests.post(
-                request_url,
-                headers=headers,
-                json=notif_payload,
-                timeout=timeout,
-            )
-        except Exception:
-            pass
-    except Exception:
-        pass
-    return headers
-
-
-def _extract_tools_list(data: Any) -> List[str]:
-    result = data.get("result") if isinstance(data, dict) else None
-    if not isinstance(result, dict):
-        return []
-    tools = result.get("tools")
-    if not isinstance(tools, list):
-        return []
-    out: List[str] = []
-    for item in tools:
-        if isinstance(item, dict):
-            name = str(item.get("name") or "").strip()
-            if name:
-                out.append(name)
-    return out
-
-
-def _extract_tools_meta(data: Any) -> List[Dict[str, Any]]:
-    result = data.get("result") if isinstance(data, dict) else None
-    if not isinstance(result, dict):
-        return []
-    tools = result.get("tools")
-    if not isinstance(tools, list):
-        return []
-    out: List[Dict[str, Any]] = []
-    for item in tools:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        schema = item.get("inputSchema") if isinstance(item.get("inputSchema"), dict) else {}
-        out.append({"name": name, "inputSchema": schema})
-    return out
-
-
 def _get_endpoint_tools(config: Dict[str, Any]) -> List[str] | None:
-    if not _is_mcp_jsonrpc_endpoint(config):
-        return None
-    endpoint = str(config.get("base_url") or "").rstrip("/")
-    if not endpoint:
-        return None
-
-    now = time.time()
-    with _TOOLS_CACHE_LOCK:
-        cache_row = _TOOLS_CACHE.get(endpoint)
-        if cache_row and now - float(cache_row.get("ts") or 0) <= _TOOLS_CACHE_TTL_SECONDS:
-            meta = cache_row.get("meta")
-            if isinstance(meta, list):
-                names = [str(x.get("name") or "").strip() for x in meta if isinstance(x, dict)]
-                names = [n for n in names if n]
-                if names:
-                    return names
-
-    request_url = str(config.get("base_url", "")).rstrip("/")
-    headers = _initialize_mcp_session(config, _headers(config))
-    timeout = _timeout(config)
-    method_candidates = ["tools/list", "tools.list", "list_tools"]
-    meta: List[Dict[str, Any]] = []
-    for method_name in method_candidates:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": method_name,
-            "params": {},
-        }
-        res = requests.post(
-            request_url,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-        )
-        if res.status_code >= 400:
-            continue
-        try:
-            data = res.json()
-        except Exception:
-            continue
-        meta = _extract_tools_meta(data)
-        if meta:
-            break
-    if not meta:
-        return None
-    names = [str(x.get("name") or "").strip() for x in meta if isinstance(x, dict)]
-    names = [n for n in names if n]
-    normalized_tools = {_normalize_tool_name(t) for t in names if t}
-    with _TOOLS_CACHE_LOCK:
-        _TOOLS_CACHE[endpoint] = {"ts": now, "tools": normalized_tools, "names": names, "meta": meta}
-    return names
+    metadata = _get_endpoint_tool_meta(config)
+    return [tool["name"] for tool in metadata] if metadata is not None else None
 
 
 def _get_endpoint_tool_meta(config: Dict[str, Any]) -> List[Dict[str, Any]] | None:
     if not _is_mcp_jsonrpc_endpoint(config):
         return None
-    endpoint = str(config.get("base_url") or "").rstrip("/")
-    if not endpoint:
+    try:
+        return _get_exact_endpoint_tool_meta(config)
+    except ValueError:
         return None
-    now = time.time()
-    with _TOOLS_CACHE_LOCK:
-        cache_row = _TOOLS_CACHE.get(endpoint)
-        if cache_row and now - float(cache_row.get("ts") or 0) <= _TOOLS_CACHE_TTL_SECONDS:
-            meta = cache_row.get("meta")
-            if isinstance(meta, list):
-                return [x for x in meta if isinstance(x, dict)]
-    _get_endpoint_tools(config)
-    with _TOOLS_CACHE_LOCK:
-        cache_row = _TOOLS_CACHE.get(endpoint) or {}
-        meta = cache_row.get("meta")
-        if isinstance(meta, list):
-            return [x for x in meta if isinstance(x, dict)]
-    return None
-
-
-def _list_mcp_tools_jsonrpc(config: Dict[str, Any]) -> tuple[List[str], int | None, str]:
-    request_url = str(config.get("base_url", "")).rstrip("/")
-    headers = _initialize_mcp_session(config, _headers(config))
-    timeout = _timeout(config)
-
-    method_candidates = ["tools/list", "tools.list", "list_tools"]
-    last_status: int | None = None
-    last_error = ""
-    for method_name in method_candidates:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": method_name,
-            "params": {},
-        }
-        res = requests.post(
-            request_url,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-        )
-        last_status = res.status_code
-        if res.status_code >= 400:
-            last_error = (res.text or "")[:600]
-            continue
-        try:
-            data = res.json()
-        except Exception:
-            last_error = f"invalid json response: {(res.text or '')[:200]}"
-            continue
-        tools = _extract_tools_list(data)
-        if tools:
-            return tools, res.status_code, ""
-        last_error = f"invalid tools/list result: {str(data)[:300]}"
-    return [], last_status, last_error or "tools/list failed"
 
 
 def _endpoint_supports_tool(config: Dict[str, Any], tool_name: str) -> bool | None:
@@ -550,8 +388,7 @@ def _endpoint_supports_tool(config: Dict[str, Any], tool_name: str) -> bool | No
     tools = _get_endpoint_tools(config)
     if not tools:
         return None
-    req = _normalize_tool_name(tool_name)
-    return any(_normalize_tool_name(t) == req for t in tools)
+    return tool_name in tools
 
 
 def _prioritize_configs_by_tool_support(configs: List[Dict[str, Any]], tool_name: str) -> List[Dict[str, Any]]:
@@ -664,6 +501,7 @@ def invoke_mcp_tool_from_prompt(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="dynamic-tool-router",
             status="failed",
             start_ts=start_ts,
@@ -675,6 +513,7 @@ def invoke_mcp_tool_from_prompt(
     prompt_tokens = set(_tokenize_text(prompt))
     if not prompt_tokens:
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="dynamic-tool-router",
             status="failed",
             start_ts=start_ts,
@@ -690,6 +529,7 @@ def invoke_mcp_tool_from_prompt(
             configs = matched
         else:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="dynamic-tool-router",
                 status="failed",
                 start_ts=start_ts,
@@ -723,6 +563,7 @@ def invoke_mcp_tool_from_prompt(
 
     if not ranked:
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="dynamic-tool-router",
             status="failed",
             start_ts=start_ts,
@@ -760,6 +601,7 @@ def invoke_mcp_tool_from_prompt(
         rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:{tool_name}"
         if tool_payload is not None:
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool=f"dynamic:{tool_name}",
                 status="completed",
                 start_ts=start_ts,
@@ -775,8 +617,10 @@ def invoke_mcp_tool_from_prompt(
                 "result": tool_payload,
             }
         last_error = err or f"tool call failed for {tool_name}"
+        break
 
     _record_monitor(
+        audit_context=(overrides or {}).get("_usage_context"),
         tool="dynamic-tool-router",
         status="failed",
         start_ts=start_ts,
@@ -799,9 +643,9 @@ def get_mcp_tools_catalog(
         configs = _filter_configs_by_target_mcp(configs, target_mcp)
     catalog: List[Dict[str, Any]] = []
     for cfg in configs:
-        if not _is_mcp_jsonrpc_endpoint(cfg):
+        if not config.get("exact_only") and not _is_mcp_jsonrpc_endpoint(cfg):
             continue
-        meta = _get_endpoint_tool_meta(cfg) or []
+        meta = _get_exact_endpoint_tool_meta(cfg) if config.get("exact_only") else (_get_endpoint_tool_meta(cfg) or [])
         tools = []
         for item in meta:
             if not isinstance(item, dict):
@@ -810,7 +654,12 @@ def get_mcp_tools_catalog(
             if not name:
                 continue
             schema = item.get("inputSchema") if isinstance(item.get("inputSchema"), dict) else {}
-            tools.append({"name": name, "inputSchema": schema})
+            tools.append({
+                "name": name,
+                "inputSchema": schema,
+                "description": str(item.get("description") or ""),
+                "annotations": item.get("annotations") if isinstance(item.get("annotations"), dict) else {},
+            })
         catalog.append(
             {
                 "endpoint": str(cfg.get("base_url") or ""),
@@ -826,17 +675,21 @@ def invoke_mcp_tool_explicit(
     arguments: Dict[str, Any],
     target_mcp: str | None = None,
     overrides: Dict[str, Any] | None = None,
+    *,
+    record_execution: bool = True,
 ) -> Dict[str, Any] | None:
     start_ts = time.time()
     config = _resolve_config(overrides)
     if not _enabled(config):
-        _record_monitor(
-            tool=f"dynamic:{tool_name}",
-            status="failed",
-            start_ts=start_ts,
-            request_url="",
-            error="mcp gateway disabled or base_url missing",
-        )
+        if record_execution:
+            _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
+                tool=f"dynamic:{tool_name}",
+                status="failed",
+                start_ts=start_ts,
+                request_url="",
+                error="mcp gateway disabled or base_url missing",
+            )
         return None
 
     configs = _candidate_configs(config, tool_hint=tool_name)
@@ -857,15 +710,17 @@ def invoke_mcp_tool_explicit(
         )
         rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:{tool_name}"
         if tool_payload is not None:
-            _record_monitor(
-                tool=f"dynamic:{tool_name}",
-                status="completed",
-                start_ts=start_ts,
-                request_url=rpc_url,
-                http_status=http_status,
-                request_payload=rpc_req,
-                response_payload=rpc_resp,
-            )
+            if record_execution:
+                _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
+                    tool=f"dynamic:{tool_name}",
+                    status="completed",
+                    start_ts=start_ts,
+                    request_url=rpc_url,
+                    http_status=http_status,
+                    request_payload=rpc_req,
+                    response_payload=rpc_resp,
+                )
             return {
                 "endpoint": str(cfg.get("base_url") or ""),
                 "title": str(cfg.get("server_title") or ""),
@@ -873,26 +728,89 @@ def invoke_mcp_tool_explicit(
                 "result": tool_payload,
             }
         last_error = err or f"tool call failed for {tool_name}"
+        if record_execution:
+            _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
+                tool=f"dynamic:{tool_name}",
+                status="failed",
+                start_ts=start_ts,
+                request_url=rpc_url,
+                http_status=http_status,
+                error=last_error,
+                request_payload=rpc_req,
+                response_payload=rpc_resp,
+            )
+        return None
+
+    if record_execution:
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool=f"dynamic:{tool_name}",
             status="failed",
             start_ts=start_ts,
-            request_url=rpc_url,
-            http_status=http_status,
+            request_url="",
             error=last_error,
-            request_payload=rpc_req,
-            response_payload=rpc_resp,
+            request_payload=arguments,
         )
-
-    _record_monitor(
-        tool=f"dynamic:{tool_name}",
-        status="failed",
-        start_ts=start_ts,
-        request_url="",
-        error=last_error,
-        request_payload=arguments,
-    )
     return None
+
+
+def _get_exact_endpoint_tool_meta(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [{
+        "name": tool.name, "inputSchema": tool.input_schema, "description": tool.description or "",
+        "annotations": tool.annotations.model_dump(by_alias=True, exclude_none=True) if tool.annotations else {},
+    } for tool in discover_mcp_tools(config)]
+
+
+def invoke_mcp_tool_exact(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    target_mcp: str,
+    overrides: Dict[str, Any] | None = None,
+    *,
+    record_execution: bool = True,
+) -> Dict[str, Any] | None:
+    """Invoke the already-approved tool at its configured endpoint exactly once."""
+    start_ts = time.time()
+    config = _resolve_config(overrides)
+    endpoint = str(target_mcp or "")
+    cfg = None
+    # An endpoint-only legacy call cannot disambiguate two saved server identities.
+    if _enabled(config):
+        candidates = [candidate for candidate in _candidate_configs(config) if candidate["base_url"] == endpoint]
+        if len(candidates) == 1:
+            cfg = candidates[0]
+    payload = None
+    try:
+        if cfg is None:
+            raise ValueError("MCP endpoint is not enabled or does not match the configured server")
+        if not isinstance(tool_name, str) or not tool_name.strip() or not isinstance(arguments, dict):
+            raise ValueError("MCP tool name and arguments are required")
+        payload = {"name": tool_name, "arguments": arguments}
+        result = mcp_result(call_mcp_tool(cfg, tool_name, arguments))
+        data = {"result": result}
+        if (
+            not isinstance(result, dict) or result.get("isError")
+            or not (isinstance(result.get("content"), list) or isinstance(result.get("structuredContent"), dict))
+        ):
+            raise ValueError("MCP tool reported an error")
+        if record_execution:
+            _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
+                tool=f"dynamic:{tool_name}", status="completed", start_ts=start_ts,
+                request_url=endpoint, request_payload=payload, response_payload=data,
+            )
+        return {"endpoint": endpoint, "title": cfg["server_title"], "tool": tool_name, "result": result}
+    except Exception:
+        # A timeout can happen after execution; never retry a potentially mutating call.
+        if record_execution:
+            _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
+                tool=f"dynamic:{tool_name}", status="failed", start_ts=start_ts,
+                request_url=endpoint, request_payload=payload,
+                error="MCP call failed; execution status may be unknown. No retry was attempted.",
+            )
+        return None
 
 
 def _call_mcp_tool_jsonrpc(
@@ -900,82 +818,19 @@ def _call_mcp_tool_jsonrpc(
     tool_name: str,
     arguments: Dict[str, Any],
 ) -> tuple[Any, int | None, str, Any, Any]:
-    base_url = str(config.get("base_url", "")).rstrip("/")
-    request_url = base_url
-    base_headers = _initialize_mcp_session(config, _headers(config))
-    timeout = _timeout(config)
-
-    # Use MCP-standard method first; keep only minimal compatibility fallback.
-    method_candidates = ["tools/call", "tools.call"]
-    params_candidates = [
-        {"name": tool_name, "arguments": arguments},
-        {"tool_name": tool_name, "arguments": arguments},
-        {"name": tool_name, "input": arguments},
-        {"tool": tool_name, "input": arguments},
-    ]
-    last_status: int | None = None
-    last_error = ""
-    last_request: Any = None
-    last_response: Any = None
-
-    for method_name in method_candidates:
-        for params in params_candidates:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": int(time.time() * 1000),
-                "method": method_name,
-                "params": params,
-            }
-            last_request = payload
-            res = requests.post(
-                request_url,
-                headers=base_headers,
-                json=payload,
-                timeout=timeout,
-            )
-            last_status = res.status_code
-            if res.status_code >= 400:
-                body = (res.text or "")[:600]
-                last_error = body
-                last_response = {"status_code": res.status_code, "body": body}
-                # Retry alternative method/params shapes only for method/params errors.
-                if (
-                    "method not" in body.lower()
-                    or "not allowed" in body.lower()
-                    or "invalid params" in body.lower()
-                    or "missing" in body.lower()
-                ):
-                    continue
-                return None, res.status_code, body, last_request, last_response
-            try:
-                data = res.json()
-            except Exception:
-                text = (res.text or "")[:300]
-                return None, res.status_code, f"invalid json response: {text}", last_request, {"status_code": res.status_code, "body": text}
-            last_response = data
-            if isinstance(data, dict) and isinstance(data.get("error"), dict):
-                err_obj = data.get("error") or {}
-                err_code = err_obj.get("code")
-                err_msg = str(err_obj.get("message") or "")
-                last_error = f"jsonrpc error {err_code}: {err_msg}".strip()
-                # Keep probing other variants for method/params compatibility issues.
-                lower_msg = err_msg.lower()
-                if (
-                    err_code == -32601
-                    or err_code == -32602
-                    or "method not found" in lower_msg
-                    or "invalid params" in lower_msg
-                    or "tool not found" in lower_msg
-                    or "tool  not found" in lower_msg
-                ):
-                    continue
-                return None, res.status_code, last_error, last_request, last_response
-            tool_result = _extract_tool_result(data)
-            if tool_result is not None:
-                return tool_result, res.status_code, "", last_request, last_response
-            last_error = f"invalid {method_name} result: {str(data)[:300]}"
-
-    return None, last_status, last_error or "all MCP method variants failed", last_request, last_response
+    request = {"name": tool_name, "arguments": arguments}
+    try:
+        result = mcp_result(call_mcp_tool(config, tool_name, arguments))
+        response = {"result": result}
+        if result["isError"]:
+            return None, None, "MCP tool reported an error.", request, response
+        payload = _extract_tool_result(response)
+        if payload is None:
+            return None, None, "MCP tool returned no usable result.", request, response
+        return payload, None, "", request, response
+    except Exception:
+        # A timeout can occur after execution; never retry or expose provider payloads.
+        return None, None, "MCP call failed; execution status may be unknown. No retry was attempted.", request, None
 
 
 def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
@@ -983,6 +838,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="ticket-context",
             status="failed",
             start_ts=start_ts,
@@ -994,7 +850,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
         _candidate_configs(config, tool_hint="ticket_context"),
         "ticket_context",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("ticket_context_path") or "/ticket-context/{ticket_number}")
         path = path.format(ticket_number=quote(str(ticket_number), safe=""))
         url = _full_url(path, cfg)
@@ -1009,6 +865,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                 rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:ticket_context"
                 if isinstance(payload, dict):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="ticket-context",
                         status="completed",
                         start_ts=start_ts,
@@ -1019,6 +876,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                     )
                     return payload
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-context",
                     status="failed",
                     start_ts=start_ts,
@@ -1028,12 +886,13 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.get(url, headers=_headers(cfg), timeout=timeout)
             if res.status_code >= 400:
                 logger.warning("MCP ticket context failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-context",
                     status="failed",
                     start_ts=start_ts,
@@ -1045,6 +904,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
             payload = res.json()
             if isinstance(payload, dict):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-context",
                     status="completed",
                     start_ts=start_ts,
@@ -1053,6 +913,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
                 )
                 return payload
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-context",
                 status="failed",
                 start_ts=start_ts,
@@ -1064,6 +925,7 @@ def fetch_ticket_context(ticket_number: str, overrides: Dict[str, Any] | None = 
         except Exception as exc:
             logger.warning("MCP ticket context request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-context",
                 status="failed",
                 start_ts=start_ts,
@@ -1083,6 +945,7 @@ def fetch_similar_cases(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="ticket-search",
             status="failed",
             start_ts=start_ts,
@@ -1099,7 +962,7 @@ def fetch_similar_cases(
         _candidate_configs(config, tool_hint="ticket_search_similar_cases"),
         "ticket_search_similar_cases",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("ticket_search_path") or "/ticket-search/similar-cases")
         url = _full_url(path, cfg)
         timeout = _timeout(cfg)
@@ -1116,6 +979,7 @@ def fetch_similar_cases(
                         value = tool_payload.get(key)
                         if isinstance(value, list):
                             _record_monitor(
+                                audit_context=(overrides or {}).get("_usage_context"),
                                 tool="ticket-search",
                                 status="completed",
                                 start_ts=start_ts,
@@ -1127,6 +991,7 @@ def fetch_similar_cases(
                             return [d for d in value if isinstance(d, dict)]
                 if isinstance(tool_payload, list):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="ticket-search",
                         status="completed",
                         start_ts=start_ts,
@@ -1137,6 +1002,7 @@ def fetch_similar_cases(
                     )
                     return [d for d in tool_payload if isinstance(d, dict)]
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-search",
                     status="failed",
                     start_ts=start_ts,
@@ -1146,12 +1012,13 @@ def fetch_similar_cases(
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.post(url, headers=_headers(cfg), json=payload, timeout=timeout)
             if res.status_code >= 400:
                 logger.warning("MCP ticket search failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-search",
                     status="failed",
                     start_ts=start_ts,
@@ -1163,6 +1030,7 @@ def fetch_similar_cases(
             data = res.json()
             if isinstance(data, list):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="ticket-search",
                     status="completed",
                     start_ts=start_ts,
@@ -1175,6 +1043,7 @@ def fetch_similar_cases(
                     value = data.get(key)
                     if isinstance(value, list):
                         _record_monitor(
+                            audit_context=(overrides or {}).get("_usage_context"),
                             tool="ticket-search",
                             status="completed",
                             start_ts=start_ts,
@@ -1183,6 +1052,7 @@ def fetch_similar_cases(
                         )
                         return [d for d in value if isinstance(d, dict)]
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-search",
                 status="failed",
                 start_ts=start_ts,
@@ -1194,6 +1064,7 @@ def fetch_similar_cases(
         except Exception as exc:
             logger.warning("MCP ticket search request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="ticket-search",
                 status="failed",
                 start_ts=start_ts,
@@ -1213,6 +1084,7 @@ def fetch_cmdb_assets(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="cmdb-asset-lookup",
             status="failed",
             start_ts=start_ts,
@@ -1229,7 +1101,7 @@ def fetch_cmdb_assets(
         _candidate_configs(config, tool_hint="cmdb_asset_lookup"),
         "cmdb_asset_lookup",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("cmdb_lookup_path") or "/cmdb/asset-lookup")
         url = _full_url(path, cfg)
         timeout = _timeout(cfg)
@@ -1246,6 +1118,7 @@ def fetch_cmdb_assets(
                         value = tool_payload.get(key)
                         if isinstance(value, list):
                             _record_monitor(
+                                audit_context=(overrides or {}).get("_usage_context"),
                                 tool="cmdb-asset-lookup",
                                 status="completed",
                                 start_ts=start_ts,
@@ -1257,6 +1130,7 @@ def fetch_cmdb_assets(
                             return [d for d in value if isinstance(d, dict)]
                 if isinstance(tool_payload, list):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="cmdb-asset-lookup",
                         status="completed",
                         start_ts=start_ts,
@@ -1267,6 +1141,7 @@ def fetch_cmdb_assets(
                     )
                     return [d for d in tool_payload if isinstance(d, dict)]
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="cmdb-asset-lookup",
                     status="failed",
                     start_ts=start_ts,
@@ -1276,12 +1151,13 @@ def fetch_cmdb_assets(
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.post(url, headers=_headers(cfg), json=payload, timeout=timeout)
             if res.status_code >= 400:
                 logger.warning("MCP cmdb lookup failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="cmdb-asset-lookup",
                     status="failed",
                     start_ts=start_ts,
@@ -1293,6 +1169,7 @@ def fetch_cmdb_assets(
             data = res.json()
             if isinstance(data, list):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="cmdb-asset-lookup",
                     status="completed",
                     start_ts=start_ts,
@@ -1305,6 +1182,7 @@ def fetch_cmdb_assets(
                     value = data.get(key)
                     if isinstance(value, list):
                         _record_monitor(
+                            audit_context=(overrides or {}).get("_usage_context"),
                             tool="cmdb-asset-lookup",
                             status="completed",
                             start_ts=start_ts,
@@ -1313,6 +1191,7 @@ def fetch_cmdb_assets(
                         )
                         return [d for d in value if isinstance(d, dict)]
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="cmdb-asset-lookup",
                 status="failed",
                 start_ts=start_ts,
@@ -1324,6 +1203,7 @@ def fetch_cmdb_assets(
         except Exception as exc:
             logger.warning("MCP cmdb lookup request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="cmdb-asset-lookup",
                 status="failed",
                 start_ts=start_ts,
@@ -1344,6 +1224,7 @@ def fetch_observables(
     config = _resolve_config(overrides)
     if not _enabled(config):
         _record_monitor(
+            audit_context=(overrides or {}).get("_usage_context"),
             tool="observables-extract",
             status="failed",
             start_ts=start_ts,
@@ -1364,7 +1245,7 @@ def fetch_observables(
         _candidate_configs(config, tool_hint="observables_extract"),
         "observables_extract",
     )
-    for cfg in configs:
+    for cfg in configs[:1]:
         path = str(cfg.get("observables_extract_path") or "/observables/extract")
         url = _full_url(path, cfg)
         timeout = _timeout(cfg)
@@ -1378,6 +1259,7 @@ def fetch_observables(
                 rpc_url = f"{str(cfg.get('base_url', '')).rstrip('/')}#tools/call:observables_extract"
                 if isinstance(tool_payload, dict):
                     _record_monitor(
+                        audit_context=(overrides or {}).get("_usage_context"),
                         tool="observables-extract",
                         status="completed",
                         start_ts=start_ts,
@@ -1388,6 +1270,7 @@ def fetch_observables(
                     )
                     return tool_payload
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="observables-extract",
                     status="failed",
                     start_ts=start_ts,
@@ -1397,12 +1280,13 @@ def fetch_observables(
                     request_payload=rpc_req,
                     response_payload=rpc_resp,
                 )
-                continue
+                return None
 
             res = requests.post(url, headers=_headers(cfg), json=payload, timeout=timeout)
             if res.status_code >= 400:
                 logger.warning("MCP observables extract failed: %s %s", res.status_code, res.text[:600])
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="observables-extract",
                     status="failed",
                     start_ts=start_ts,
@@ -1414,6 +1298,7 @@ def fetch_observables(
             data = res.json()
             if isinstance(data, dict):
                 _record_monitor(
+                    audit_context=(overrides or {}).get("_usage_context"),
                     tool="observables-extract",
                     status="completed",
                     start_ts=start_ts,
@@ -1422,6 +1307,7 @@ def fetch_observables(
                 )
                 return data
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="observables-extract",
                 status="failed",
                 start_ts=start_ts,
@@ -1433,6 +1319,7 @@ def fetch_observables(
         except Exception as exc:
             logger.warning("MCP observables extract request error: %s", exc)
             _record_monitor(
+                audit_context=(overrides or {}).get("_usage_context"),
                 tool="observables-extract",
                 status="failed",
                 start_ts=start_ts,

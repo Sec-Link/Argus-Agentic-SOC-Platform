@@ -32,6 +32,17 @@ def _is_guest(user) -> bool:
 
 
 def _summarize(request) -> dict:
+    # Audit actions without storing page snapshots, agent prompts or credentials.
+    path = (request.path or "").rstrip("/")
+    if path == "/api/v1/ai-assistant/page-chat" or any(
+        path == prefix or path.startswith(prefix + "/")
+        for prefix in (
+            "/api/v1/ai-assistant/http-tools", "/api/v1/ai-assistant/agents", "/api/v1/ai-assistant/conversations",
+            "/api/v1/ai-assistant/models", "/api/v1/ai-assistant/external-mcp",
+            "/api/v1/ai-assistant/skills",
+        )
+    ):
+        return {}
     if request.method == "GET":
         return {k: v[:200] for k, v in request.GET.items()}
     try:

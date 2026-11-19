@@ -1,0 +1,40 @@
+.workspace {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+}
+
+.page { flex: 1; min-width: 0; }
+
+.dock {
+  position: sticky;
+  top: 0;
+  flex: none;
+  height: 100dvh;
+  min-width: 360px;
+}
+
+.separator {
+  position: sticky;
+  top: 0;
+  flex: 0 0 8px;
+  height: 100dvh;
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--bg-main, #f5faff);
+  outline: none;
+}
+
+.separator::after {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  background: var(--toggle-border, #d9d9d9);
+}
+
+.separator:hover::after, .separator:focus-visible::after, .resizing .separator::after {
+  background: #3d7cff;
+}
+
+.resizing, .resizing * { cursor: col-resize !important; user-select: none !important; }
