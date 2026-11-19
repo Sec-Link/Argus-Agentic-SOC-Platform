@@ -1,3 +1,6 @@
+export type MonitoringPlatform = 'elk' | 'splunk';
+export type SplunkCoverageTimeRange = '24h' | '48h' | '7d' | 'all';
+
 export interface Alert {
   alert_id: string;
   timestamp: string;
@@ -14,6 +17,8 @@ export interface Alert {
 }
 
 export interface DashboardData {
+  degraded?: boolean;
+  unavailable_metrics?: string[];
   severity: Record<string, number>;
   timeline: Record<string, number>;
   total: number;
@@ -88,6 +93,7 @@ export interface LogSourceCategory {
 
 export interface LogSourceCoverageSource {
   source_key: string;
+  source_label?: string;
   docs: number;
   last_seen: string | null;
   origin: 'auto' | 'manual';
@@ -97,6 +103,7 @@ export interface LogSourceCoverageSource {
 
 export interface DiscoveredLogSource {
   source_key: string;
+  source_label?: string;
   index_count: number;
   docs: number;
   last_seen: string | null;
@@ -112,18 +119,21 @@ export interface DiscoveredLogSource {
 }
 
 export interface LogSourceDiscovery {
+  warnings?: string[];
   initialized: boolean;
   scanned_at: string | null;
   scan_age_seconds: number | null;
   es_available: boolean;
   reason: string | null;
   window_days: number;
+  time_range?: SplunkCoverageTimeRange;
   truncated: boolean;
   sources: DiscoveredLogSource[];
 }
 
 export interface LogSourceBrief {
   source_key: string;
+  source_label?: string;
   docs: number;
   last_seen: string | null;
   auto_category: string;
@@ -153,8 +163,11 @@ export interface LogSourceRuleCoverage {
 }
 
 export interface LogSourceCoverage {
+  warnings?: string[];
   window_days: number;
+  time_range?: SplunkCoverageTimeRange;
   initialized: boolean;
+  truncated?: boolean;
   scanned_at: string | null;
   scan_age_seconds: number | null;
   rules: LogSourceRuleCoverage | null;
@@ -182,7 +195,7 @@ export interface LogSourceCoverage {
     expected_assets: number | null;
     observed_assets: number | null;
     asset_coverage_percent: number | null;
-    data_source: 'elasticsearch' | 'alerts' | null;
+    data_source: 'elasticsearch' | 'splunk' | 'alerts' | null;
   }>;
 }
 
@@ -314,6 +327,7 @@ export interface EventFlowGroup {
   total_docs: number;
   sources: Array<{
     source_key: string;
+    source_label?: string;
     docs: number;
     last_seen?: string | null;
     hosts?: number | null;

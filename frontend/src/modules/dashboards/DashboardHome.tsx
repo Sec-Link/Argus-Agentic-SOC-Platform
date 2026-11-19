@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Pie } from '@ant-design/charts';
 import { Column } from '@ant-design/plots';
-import { Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input, Tabs } from 'antd';
+import { Alert, Card, Statistic, Row, Col, Space, Select, Button, Modal, message, Spin, Table, Empty, DatePicker, Typography, Input, Tabs } from 'antd';
 import { ClockCircleOutlined, DragOutlined, ReloadOutlined } from '@ant-design/icons';
 import { fetchDashboard } from 'services/alerts';
-import type { DashboardData } from 'types';
+import type { DashboardData, MonitoringPlatform } from 'types';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import EventFlowChart from './EventFlowChart';
@@ -15,6 +15,7 @@ import CoverageOverviewSection from './CoverageOverviewSection';
 import CoverageTour from './CoverageTour';
 import { useRegisterPageGuide } from 'components/layout/pageGuide';
 import { usePanelOrder } from './usePanelOrder';
+import { dashboardHref, dashboardPlatform } from './navigation';
 
 type TimeRangePreset = '1h' | '24h' | '7d' | 'all' | 'custom';
 type TimeWindow = {
@@ -29,10 +30,15 @@ const DEFAULT_PANEL_ORDER = [
   'kpi_last_hour', 'kpi_total_alerts', 'kpi_data_sources', 'kpi_enabled_rules', 'kpi_detections_1h',
   'coverage', 'category', 'trend', 'severity', 'score', 'ips', 'users', 'sources', 'rules', 'funnel', 'sankey',
 ];
-const CACHE_KEY = 'siem_dashboard_cache_v1';
+const dashboardCacheKey = (platform: MonitoringPlatform, window: TimeWindow) =>
+  `siem_dashboard_cache_v2:${platform}:${window.all_time ? 'all' : `${window.start_time || ''}:${window.end_time || ''}`}`;
 const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v3';
 const DEFAULT_TIME_WINDOW_CACHE_KEY = 'siem_dashboard_default_time_window_v1';
 const POLL_INTERVAL_MS = 10 * 1000;
+const KPI_METRICS: Record<string, string> = {
+  kpi_last_hour: 'recent_1h_alerts', kpi_total_alerts: 'total', kpi_data_sources: 'data_source_count',
+  kpi_enabled_rules: 'enabled_siem_rule_count', kpi_detections_1h: 'siem_rule_detected_count_1h',
+};
 
 // Read persisted dashboard time preferences defensively across SSR and malformed storage states.
 const readStoredTimeWindow = (key: string): TimeWindow | null => {
@@ -62,13 +68,14 @@ const Dashboard: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const urlPlatform = dashboardPlatform(searchParams?.get('platform') ?? null);
   const urlTab: 'overview' | 'coverage' = searchParams?.get('tab') === 'coverage' ? 'coverage' : 'overview';
   const [activeTab, setActiveTabState] = useState<'overview' | 'coverage'>(urlTab);
   useEffect(() => setActiveTabState(urlTab), [urlTab]);
   const setActiveTab = (key: 'overview' | 'coverage') => {
     setActiveTabState(key);
     const base = pathname || '/dashboard';
-    router.push(key === 'coverage' ? `${base}?tab=coverage` : base, { scroll: false });
+    router.push(dashboardHref(base, searchParams?.toString() || '', key, platformRef.current), { scroll: false });
   };
   // Interactive guide: only starts when the user clicks the header "Guide" button.
   const [tourOpen, setTourOpen] = useState(false);
@@ -82,6 +89,10 @@ const Dashboard: React.FC = () => {
     isDefault: layoutIsDefault,
   } = usePanelOrder('siem_dashboard_panel_order_v1', DEFAULT_PANEL_ORDER, (id) => (id.startsWith('kpi_') ? 'kpi' : 'panel'));
   const [data, setData] = useState<DashboardData | null>(null);
+  const [platform, setPlatform] = useState<MonitoringPlatform>(urlPlatform);
+  const platformRef = React.useRef<MonitoringPlatform>(urlPlatform);
+  const requestRef = React.useRef<AbortController | null>(null);
+  const retryRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   // keep last successful data to avoid UI blanking during reloads
   const [displayData, setDisplayData] = useState<DashboardData | null>(null);
   const failuresRef = React.useRef<number>(0);
@@ -179,23 +190,26 @@ const Dashboard: React.FC = () => {
   const chartTextColor = isDarkTheme ? '#dbe6ff' : '#1f2d3d';
   const chartSubtleTextColor = isDarkTheme ? '#e7efff' : '#4b5b70';
 
-  const load = async (opts?: { panelKey?: string; showGlobalSpinner?: boolean; timeWindow?: TimeWindow }) => {
+  const load = async (opts?: { panelKey?: string; showGlobalSpinner?: boolean; timeWindow?: TimeWindow; reset?: boolean }) => {
+    if (retryRef.current) clearTimeout(retryRef.current);
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     const panelKey = opts?.panelKey;
     const showGlobalSpinner = opts?.showGlobalSpinner ?? true;
-    const isBackground = !!displayData;
-    if (showGlobalSpinner && isBackground) {
-      setRefreshing(true);
-    } else if (showGlobalSpinner) {
-      setLoading(true);
-    }
-    if (panelKey) setActivePanelRefresh(panelKey);
+    const isBackground = !!displayData && !opts?.reset;
+    setLoading(showGlobalSpinner && !isBackground);
+    setRefreshing(showGlobalSpinner && isBackground);
+    setActivePanelRefresh(panelKey ?? null);
     try {
       const windowToUse = opts?.timeWindow || activeTimeWindowRef.current;
       let res = await fetchDashboard({
         start_time: windowToUse.start_time,
         end_time: windowToUse.end_time,
         all_time: windowToUse.all_time,
-      });
+        platform: platformRef.current,
+      }, controller.signal);
+      if (controller.signal.aborted) return;
       setData(res);
       // only update the displayData when we successfully fetched something
       if (res) {
@@ -204,14 +218,15 @@ const Dashboard: React.FC = () => {
         try { console.debug('Dashboard load: available keys', Object.keys(res || {})); } catch (e) {}
         // cache for faster next-loads
         try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: res }));
+          localStorage.setItem(dashboardCacheKey(platformRef.current, windowToUse), JSON.stringify({ ts: Date.now(), data: res }));
         } catch (err) {
           // ignore storage errors
         }
         failuresRef.current = 0;
       }
     } catch (e:any) {
-      console.error('Dashboard load error', e);
+      if (controller.signal.aborted) return;
+      console.error('Dashboard load failed', e?.response?.status ?? 'network');
       // light failure backoff: increment failures and skip next few polls if failing repeatedly
       failuresRef.current = (failuresRef.current || 0) + 1;
       const failCount = failuresRef.current;
@@ -221,16 +236,44 @@ const Dashboard: React.FC = () => {
       }
       // if we exceed 5 failures, schedule a delayed retry
       if (failCount > 5) {
-        setTimeout(() => load(), Math.min(60000, 2000 * Math.pow(2, failCount - 5)));
+        retryRef.current = setTimeout(() => {
+          if (!controller.signal.aborted && !requestRef.current) load();
+        }, Math.min(60000, 2000 * Math.pow(2, failCount - 5)));
       }
     } finally {
-      if (showGlobalSpinner) {
-        if (isBackground) setRefreshing(false);
-        else setLoading(false);
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setLoading(false);
+        setRefreshing(false);
+        setActivePanelRefresh(null);
       }
-      if (panelKey) setActivePanelRefresh(null);
     }
   };
+
+  const loadRef = React.useRef(load);
+  loadRef.current = load;
+
+  const applyPlatform = React.useCallback((next: MonitoringPlatform) => {
+    if (platformRef.current === next) return;
+    platformRef.current = next;
+    setPlatform(next);
+    setData(null);
+    setDisplayData(null);
+    setActivePanelRefresh(null);
+    setRefreshing(false);
+    failuresRef.current = 0;
+    void loadRef.current({ reset: true });
+  }, []);
+
+  const changePlatform = (next: MonitoringPlatform) => {
+    applyPlatform(next);
+    router.push(dashboardHref(pathname || '/dashboard', searchParams?.toString() || '', activeTab, next), { scroll: false });
+  };
+
+  useEffect(() => {
+    applyPlatform(urlPlatform);
+    // Browser Back/Forward restores the same source scope as the URL.
+  }, [urlPlatform, applyPlatform]);
 
   // small hook to animate numbers smoothly between updates
   function useAnimatedNumber(target: number, duration = 500) {
@@ -304,7 +347,7 @@ const Dashboard: React.FC = () => {
 
     // on mount only: read cache and perform initial loads and polling
     try {
-      const raw = localStorage.getItem(CACHE_KEY);
+      const raw = localStorage.getItem(dashboardCacheKey(platformRef.current, initialWindowForLoad || activeTimeWindowRef.current));
       if (raw) {
         const parsed = JSON.parse(raw) as { ts: number; data: DashboardData };
         // accept cache younger than 2 minutes
@@ -333,7 +376,7 @@ const Dashboard: React.FC = () => {
 
     // Polling: only poll when the tab is visible to avoid extra work
     const intervalFn = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !requestRef.current) {
         // Preserve custom range in polling payload; do not recalculate to a relative window.
         load({ timeWindow: activeTimeWindowRef.current });
       }
@@ -349,6 +392,9 @@ const Dashboard: React.FC = () => {
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
+      requestRef.current?.abort();
+      requestRef.current = null;
+      if (retryRef.current) clearTimeout(retryRef.current);
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('siem_theme_changed', onThemeChanged as EventListener);
@@ -548,9 +594,10 @@ const Dashboard: React.FC = () => {
 
   const categoryBreakdown = displayData?.category_breakdown;
   const severityDistribution = displayData?.severity_distribution;
-  const renderTrendEmpty = () => (
+  const metricUnavailable = (name: string) => !!displayData?.unavailable_metrics?.includes(name);
+  const renderTrendEmpty = (name: string) => (
     <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <Empty description="No trend data available" />
+      <Empty description={metricUnavailable(name) ? 'Metric unavailable' : 'No trend data available'} />
     </div>
   );
   const panelRefresh = (panelKey: string, ariaLabel = 'Refresh panel') => (
@@ -582,7 +629,7 @@ const Dashboard: React.FC = () => {
       styles={{ body: { minHeight: 78 } }}
     >
       <Statistic
-        value={value}
+        value={!displayData || metricUnavailable(KPI_METRICS[panelKey]) ? '\u2014' : value}
         loading={!displayData && loading}
         valueStyle={{ transition: 'all 0.5s cubic-bezier(.08,.82,.17,1)' }}
       />
@@ -630,7 +677,7 @@ const Dashboard: React.FC = () => {
             ))}
           </div>
           <div className="dashboard-table-empty-body">
-            <Empty description="No data" />
+            <Empty description={metricUnavailable(panelKey) ? 'Metric unavailable' : 'No data'} />
           </div>
         </div>
       )}
@@ -657,7 +704,7 @@ const Dashboard: React.FC = () => {
   const panels: Record<string, React.ReactNode> = {
     coverage: (
       <Col span={24} {...pp('coverage')}>
-        <CoverageOverviewSection onConfigure={() => setActiveTab('coverage')} />
+        <CoverageOverviewSection key={platform} platform={platform} onConfigure={() => setActiveTab('coverage')} />
       </Col>
     ),
     category: (
@@ -692,7 +739,7 @@ const Dashboard: React.FC = () => {
             />
           ) : (
             <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Empty description="No category data" />
+              <Empty description={metricUnavailable('category_breakdown') ? 'Metric unavailable' : 'No category data'} />
             </div>
           )}
         </Card>
@@ -783,7 +830,7 @@ const Dashboard: React.FC = () => {
                 tooltip={{ showMarkers: false }}
                 axis={{ x: false }}
               />
-            ) : renderTrendEmpty()}
+            ) : renderTrendEmpty('alert_trend')}
           </Card>
         )}
       </Col>
@@ -820,7 +867,7 @@ const Dashboard: React.FC = () => {
             />
           ) : (
             <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Empty description="No severity data" />
+              <Empty description={metricUnavailable('severity_distribution') ? 'Metric unavailable' : 'No severity data'} />
             </div>
           )}
         </Card>
@@ -910,7 +957,7 @@ const Dashboard: React.FC = () => {
                 tooltip={{ showMarkers: false }}
                 axis={{ x: false }}
               />
-            ) : renderTrendEmpty()}
+            ) : renderTrendEmpty('alert_score_trend')}
           </Card>
         )}
       </Col>
@@ -982,6 +1029,8 @@ const Dashboard: React.FC = () => {
       <Col span={24} {...pp('funnel')}>
     <div className="dashboard-section-block">
       <EventFlowChart
+        key={platform}
+        platform={platform}
         startTime={timeParams.start_time}
         endTime={timeParams.end_time}
         allTime={timeParams.all_time}
@@ -992,7 +1041,7 @@ const Dashboard: React.FC = () => {
     sankey: (
       <Col span={24} {...pp('sankey')}>
     <div className="dashboard-section-block">
-      <AlertSankeyChart startTime={timeParams.start_time} endTime={timeParams.end_time} />
+      <AlertSankeyChart key={platform} platform={platform} startTime={timeParams.start_time} endTime={timeParams.end_time} />
     </div>
       </Col>
     ),
@@ -1119,11 +1168,11 @@ const Dashboard: React.FC = () => {
 
   return (
   <div className="dashboard-home-shell">
-      <CoverageTour mode={activeTab} open={tourOpen} onClose={() => setTourOpen(false)} />
+      <CoverageTour mode={activeTab} platform={platform} open={tourOpen} onClose={() => setTourOpen(false)} />
       <Tabs
         activeKey={activeTab}
         tabBarExtraContent={
-          <Space size={8} align="center">
+          <Space className="dashboard-overview-controls" size={8} align="center" wrap>
             {activeTab === 'overview' && layoutEditing && !layoutIsDefault ? (
               <Button size="small" onClick={resetLayout}>Reset layout</Button>
             ) : null}
@@ -1139,6 +1188,13 @@ const Dashboard: React.FC = () => {
               </Button>
             ) : null}
             {activeTab === 'overview' ? timePicker : null}
+            <Select<MonitoringPlatform>
+              aria-label="Monitoring platform"
+              value={platform}
+              onChange={changePlatform}
+              style={{ width: 112 }}
+              options={[{ value: 'elk', label: 'ELK' }, { value: 'splunk', label: 'Splunk' }]}
+            />
           </Space>
         }
         onChange={(key) => setActiveTab(key as 'overview' | 'coverage')}
@@ -1148,6 +1204,7 @@ const Dashboard: React.FC = () => {
             label: 'Overview',
             children: (
       <div className="dashboard-section-stack">
+      {displayData?.degraded && <Alert type="warning" showIcon message="Some dashboard metrics are temporarily unavailable." />}
       {/* Flatten KPI wrappers so the grid itself owns the spacing and sizing contract. */}
       <div className="dashboard-kpi-grid dashboard-kpi-grid-compact">
         {panelOrder.filter((id) => id.startsWith('kpi_')).map((id) => {
@@ -1164,7 +1221,7 @@ const Dashboard: React.FC = () => {
       </div>
             ),
           },
-          { key: 'coverage', label: 'Coverage settings', children: <CoverageTab /> },
+          { key: 'coverage', label: 'Coverage settings', children: <CoverageTab key={platform} platform={platform} /> },
         ]}
       />
 

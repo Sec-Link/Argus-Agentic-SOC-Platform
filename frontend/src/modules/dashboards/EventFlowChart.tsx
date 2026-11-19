@@ -2,16 +2,19 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Button, Card, Empty, Spin, Typography } from 'antd';
+import { Button, Card, Col, Empty, Row, Spin, Statistic, Typography } from 'antd';
 import { Cloud, Database, Flame, Globe, KeyRound, Laptop, Layers, Mail, Network, Server, ShieldCheck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { fetchDashboardEventFlow } from 'services/dashboards';
-import type { EventFlow, EventFlowGroup } from 'types';
+import type { EventFlow, EventFlowGroup, MonitoringPlatform } from 'types';
+import { dashboardHref } from './navigation';
+import { coverageWindowLabel } from './coverageTimeRange';
 
 interface Props {
   startTime?: string;
   endTime?: string;
   allTime?: boolean;
+  platform?: MonitoringPlatform;
 }
 
 const MIN_W = 1172; // narrowest layout that fits labels, flows and the right-hand cluster; below it the card scrolls
@@ -70,7 +73,7 @@ const bezier = (x1: number, y1: number, x2: number, y2: number) => {
 
 type Tip = { x: number; y: number; lines: string[] };
 
-const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
+const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime, platform }) => {
   const router = useRouter();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [data, setData] = useState<EventFlow | null>(null);
@@ -81,12 +84,14 @@ const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
+    let active = true;
     setLoading(true);
-    fetchDashboardEventFlow({ start_time: startTime, end_time: endTime, all_time: allTime })
-      .then(setData)
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, [startTime, endTime, allTime]);
+    fetchDashboardEventFlow({ start_time: startTime, end_time: endTime, all_time: allTime, platform })
+      .then(result => { if (active) setData(result); })
+      .catch(() => { if (active) setData(null); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [startTime, endTime, allTime, platform]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined;
@@ -107,7 +112,7 @@ const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
   }, [data]);
 
   const go = (url: string) => router.push(url);
-  const coverageUrl = '/dashboard?tab=coverage';
+  const coverageUrl = dashboardHref('/dashboard', '', 'coverage', platform || 'elk');
 
   const layout = useMemo(() => {
     if (!data || !data.groups.length) return null;
@@ -125,14 +130,14 @@ const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
       const visible = isOpen ? all : all.slice(0, keep);
       visible.forEach((s) => {
         const lines = [
-          s.source_key,
+          s.source_label || s.source_key,
           `${s.docs.toLocaleString()} events (${((s.docs / total) * 100).toFixed(1)}% of total)`,
           s.last_seen ? `Last seen ${dayjs(s.last_seen).format('MM-DD HH:mm')}` : 'No events in the window',
           `Category: ${g.name} (${s.origin === 'manual' ? 'assigned manually' : 'classified automatically'})`,
         ];
         if (s.hosts) lines.push(`~${s.hosts.toLocaleString()} hosts`);
         if (s.indices) lines.push(`${s.indices} index${s.indices === 1 ? '' : 'es'}`);
-        rows.push({ key: `${gi}:${s.source_key}`, label: s.source_key, docs: s.docs, color, tip: lines });
+        rows.push({ key: `${gi}:${s.source_key}`, label: s.source_label || s.source_key, docs: s.docs, color, tip: lines });
       });
       const hidden = isOpen ? [] : all.slice(keep);
       const beyondCap = g.others?.count || 0; // sources the server did not send at all
@@ -176,7 +181,7 @@ const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
   }, [data, expanded]);
 
   const subtitle = data?.initialized
-    ? `Events: last ${data.window_days ?? 7}d from the latest log source scan · Alerts and tickets follow the selected time range`
+    ? `Events: ${coverageWindowLabel(data.window_days ?? 7)} from the latest log source scan · Alerts and tickets follow the selected time range`
     : '';
 
   // Viewport coordinates: the tooltip is portalled to <body>, so the card's scroll container cannot clip it.
@@ -190,6 +195,17 @@ const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
         <Spin />
       </div>
     );
+  } else if (data && platform === 'splunk' && !data.initialized) {
+    body = <>
+      <Row gutter={[24, 16]}>
+        <Col xs={24} sm={8}><Statistic title="Alerts" value={data.alerts} /></Col>
+        <Col xs={24} sm={8}><Statistic title="Open Tickets" value={data.open_tickets} /></Col>
+        <Col xs={24} sm={8}><Statistic title="Incidents" value={data.incidents} /></Col>
+      </Row>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+        Splunk log source scan is not configured; event volume is unavailable.
+      </Typography.Paragraph>
+    </>;
   } else if (!data || !data.initialized || !layout) {
     body = (
       <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No log source scan yet, so event volume is unknown.">
@@ -344,7 +360,7 @@ const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime }) => {
           tabIndex={0}
           onClick={() => go(coverageUrl)}
           onKeyDown={(e) => e.key === 'Enter' && go(coverageUrl)}
-          onMouseMove={showTip([`${data.total_events.toLocaleString()} events`, `Last ${data.window_days ?? 7} days, all classified sources`, 'Click to open Coverage settings'])}
+          onMouseMove={showTip([`${data.total_events.toLocaleString()} events`, `${coverageWindowLabel(data.window_days ?? 7)}, all classified sources`, 'Click to open Coverage settings'])}
           onMouseLeave={hideTip}
         >
           <circle cx={cx} cy={cy} r={R - 18} fill="currentColor" fillOpacity={0.04} />

@@ -3,11 +3,12 @@ import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import { Card, Empty, Spin, Typography } from 'antd';
 import { fetchDashboardSankeyStats } from 'services/dashboards';
-import type { SankeyStats } from 'types';
+import type { MonitoringPlatform, SankeyStats } from 'types';
 
 interface Props {
   startTime?: string;
   endTime?: string;
+  platform?: MonitoringPlatform;
 }
 
 const STAGE_COLORS: Record<string, string> = {
@@ -30,18 +31,20 @@ const getStoredThemeMode = (): 'light' | 'dark' => {
   }
 };
 
-const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime }) => {
+const AlertSankeyChart: React.FC<Props> = ({ startTime, endTime, platform }) => {
   const [stats, setStats] = useState<SankeyStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(getStoredThemeMode);
 
   useEffect(() => {
+    let active = true;
     setLoading(true);
-    fetchDashboardSankeyStats({ start_time: startTime, end_time: endTime })
-      .then((data) => setStats(data))
-      .catch(() => setStats(null))
-      .finally(() => setLoading(false));
-  }, [startTime, endTime]);
+    fetchDashboardSankeyStats({ start_time: startTime, end_time: endTime, platform })
+      .then((data) => { if (active) setStats(data); })
+      .catch(() => { if (active) setStats(null); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [startTime, endTime, platform]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;

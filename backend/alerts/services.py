@@ -1023,16 +1023,28 @@ class AlertService:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         all_time: bool = False,
+        platform: str | None = None,
     ) -> Dict:
         # Default behavior: keep existing fields for backward compatibility.
         # Additionally, compute richer dashboard metrics directly from Postgres so
         # counts are not limited to the latest 100 cached rows.
 
-        alerts, source = AlertService.list_alerts(
-            force_es=force_es,
-            force_mock=force_mock,
-            force_db=force_db,
-        )
+        if platform is not None:
+            from dashboards.source_scope import dashboard_alerts, dashboard_rules
+
+            scoped = dashboard_alerts(platform)
+            if start_time and not all_time:
+                scoped = scoped.filter(timestamp__gte=start_time)
+            if end_time and not all_time:
+                scoped = scoped.filter(timestamp__lte=end_time)
+            alerts = [_serialize_alert_row(row) for row in scoped.order_by('-timestamp')[:100]]
+            source = 'db'
+        else:
+            alerts, source = AlertService.list_alerts(
+                force_es=force_es,
+                force_mock=force_mock,
+                force_db=force_db,
+            )
 
         severity_counts: Dict[str, int] = {}
         timeline: Dict[str, int] = {}
@@ -1040,9 +1052,9 @@ class AlertService:
         daily_trend: Dict[str, int] = {}
         message_topN: Dict[str, int] = {}
 
-        ts_field = None
+        ts_field = 'timestamp'
         try:
-            cfg = _get_global_es_config()
+            cfg = _get_global_es_config() if platform is None else None
             if cfg:
                 ts_field = _detect_timestamp_field(cfg) or 'timestamp'
         except Exception:
@@ -1111,15 +1123,28 @@ class AlertService:
         top_users: List[Dict[str, int | str]] = []
         top_sources: List[Dict[str, int | str]] = []
         top_rules: List[Dict[str, int | str]] = []
+        unavailable_metrics = set()
+
+        def metric(names, query, default=None):
+            names = (names,) if isinstance(names, str) else names
+            try:
+                # A failed optional query must not poison an enclosing request transaction.
+                with transaction.atomic():
+                    return query()
+            except (DatabaseError, ValueError, TypeError, OverflowError) as exc:
+                unavailable_metrics.update(names)
+                logger.warning('Dashboard metrics unavailable: %s (%s)', ','.join(names), type(exc).__name__)
+                return default
 
         try:
-            qs = _alerts_queryset_for_active_index()
+            qs = scoped if platform is not None else _alerts_queryset_for_active_index()
             if range_start:
                 qs = qs.filter(timestamp__gte=range_start)
             if range_end:
                 qs = qs.filter(timestamp__lte=range_end)
             try:
-                repaired = _backfill_missing_alert_timestamps(qs, ts_field)
+                with transaction.atomic():
+                    repaired = _backfill_missing_alert_timestamps(qs, ts_field)
                 if repaired:
                     logger.info('Backfilled %d alert timestamps for dashboard trend aggregation', repaired)
             except Exception:
@@ -1129,9 +1154,12 @@ class AlertService:
             cache_key = None
             cached_summary = None
             if all_time:
-                active_idx = _get_active_index_name() or 'all'
-                cache_key = f"alerts:dashboard:alltime:summary:{active_idx}"
-                cached_summary = cache.get(cache_key)
+                active_idx = (_get_active_index_name() or 'all') if platform != 'splunk' else 'all'
+                cache_key = f"alerts:dashboard:alltime:summary:v3:{platform or 'legacy'}:{active_idx}"
+                try:
+                    cached_summary = cache.get(cache_key)
+                except Exception as exc:
+                    logger.warning('Dashboard summary cache read failed (%s)', type(exc).__name__)
 
             if cached_summary:
                 total_alerts_db = int(cached_summary.get('total_alerts_db') or 0)
@@ -1141,10 +1169,14 @@ class AlertService:
                 detected_rule_count_1h_db = int(cached_summary.get('detected_rule_count_1h_db') or 0)
             else:
                 total_alerts_db = qs.count()
-                last_1h_alerts_db = qs.filter(timestamp__gte=cutoff_1h).count()
-                data_source_count_db = qs.exclude(source_index__isnull=True).exclude(source_index='').values('source_index').distinct().count()
-                enabled_rule_count_db = qs.exclude(rule_id__isnull=True).exclude(rule_id='').values('rule_id').distinct().count()
-                detected_rule_count_1h_db = (
+                last_1h_alerts_db = metric('recent_1h_alerts', lambda: qs.filter(timestamp__gte=cutoff_1h).count())
+                data_source_count_db = metric('data_source_count', lambda: qs.exclude(source_index__isnull=True)
+                                              .exclude(source_index='').values('source_index').distinct().count())
+                enabled_rule_count_db = metric('enabled_siem_rule_count', lambda:
+                    dashboard_rules(platform, enabled_only=True).count() if platform is not None
+                    else qs.exclude(rule_id__isnull=True).exclude(rule_id='').values('rule_id').distinct().count()
+                )
+                detected_rule_count_1h_db = metric('siem_rule_detected_count_1h', lambda:
                     qs.filter(timestamp__gte=cutoff_1h)
                     .exclude(rule_id__isnull=True)
                     .exclude(rule_id='')
@@ -1152,25 +1184,22 @@ class AlertService:
                     .distinct()
                     .count()
                 )
-                if all_time and cache_key:
-                    cache.set(
-                        cache_key,
-                        {
-                            'total_alerts_db': total_alerts_db,
-                            'last_1h_alerts_db': last_1h_alerts_db,
-                            'data_source_count_db': data_source_count_db,
-                            'enabled_rule_count_db': enabled_rule_count_db,
+                if all_time and cache_key and not unavailable_metrics:
+                    try:
+                        cache.set(cache_key, {
+                            'total_alerts_db': total_alerts_db, 'last_1h_alerts_db': last_1h_alerts_db,
+                            'data_source_count_db': data_source_count_db, 'enabled_rule_count_db': enabled_rule_count_db,
                             'detected_rule_count_1h_db': detected_rule_count_1h_db,
-                        },
-                        timeout=60,
-                    )
+                        }, timeout=60)
+                    except Exception as exc:
+                        logger.warning('Dashboard summary cache write failed (%s)', type(exc).__name__)
 
             # category pie
-            for row in (
+            for row in metric('category_breakdown', lambda: list(
                 qs.values('category')
                 .annotate(c=Count('id'))
                 .order_by('-c')[:20]
-            ):
+            ), []):
                 k = row.get('category') or 'unknown'
                 category_counts_db[str(k)] = int(row.get('c') or 0)
 
@@ -1240,11 +1269,11 @@ class AlertService:
             }
 
             # severity distribution (tiered)
-            for row in (
+            for row in metric('severity_distribution', lambda: list(
                 qs.values('severity')
                 .annotate(c=Count('id'))
                 .order_by('-c')
-            ):
+            ), []):
                 tier = _severity_to_tier(row.get('severity'))
                 severity_level_counts_db[tier] = severity_level_counts_db.get(tier, 0) + int(row.get('c') or 0)
 
@@ -1260,14 +1289,14 @@ class AlertService:
             trend_qs = qs
             if cutoff_trend:
                 trend_qs = trend_qs.filter(timestamp__gte=cutoff_trend)
-            for row in (
+            for row in metric('alert_trend', lambda: list(
                 trend_qs
                 .exclude(timestamp__isnull=True)
                 .annotate(h=time_bucket_expr)
                 .values('h')
                 .annotate(c=Count('id'))
                 .order_by('h')
-            ):
+            ), []):
                 h = row.get('h')
                 if h is None:
                     continue
@@ -1280,14 +1309,14 @@ class AlertService:
             per_hour_sev_qs = qs
             if cutoff_trend:
                 per_hour_sev_qs = per_hour_sev_qs.filter(timestamp__gte=cutoff_trend)
-            per_hour_sev_rows = (
+            per_hour_sev_rows = metric(('alert_trend_series', 'alert_score_trend', 'alert_score_trend_series'), lambda: list(
                 per_hour_sev_qs
                 .exclude(timestamp__isnull=True)
                 .annotate(h=time_bucket_expr)
                 .values('h', 'severity')
                 .annotate(c=Count('id'))
                 .order_by('h')
-            )
+            ), [])
 
             counts_by_bucket: Dict[tuple[str, str], int] = {}
             score_by_hour: Dict[str, int] = {}
@@ -1316,31 +1345,31 @@ class AlertService:
                 alert_score_trend_db[hour_key] = int(s)
 
             # top sources (source_index)
-            for row in (
+            for row in metric('top_sources', lambda: list(
                 qs.exclude(source_index__isnull=True)
                 .exclude(source_index='')
                 .values('source_index')
                 .annotate(c=Count('id'))
                 .order_by('-c')[:10]
-            ):
+            ), []):
                 top_sources.append({'name': row.get('source_index') or 'unknown', 'count': int(row.get('c') or 0)})
 
             # top rules (rule_id)
-            for row in (
+            for row in metric('top_rules', lambda: list(
                 qs.exclude(rule_id__isnull=True)
                 .exclude(rule_id='')
                 .values('rule_id')
                 .annotate(c=Count('id'))
                 .order_by('-c')[:10]
-            ):
+            ), []):
                 top_rules.append({'name': row.get('rule_id') or 'unknown', 'count': int(row.get('c') or 0)})
 
             # For top IP/users we do best-effort extraction from JSON.
             # Use a bounded window to avoid full-table scans.
-            recent_payloads = list(
+            recent_payloads = metric(('top_source_ips', 'top_users'), lambda: list(
                 qs.order_by('-timestamp')
                 .values_list('source_data', flat=True)[:5000]
-            )
+            ), [])
             ip_counts: Dict[str, int] = {}
             user_counts: Dict[str, int] = {}
             ip_keys = ['source_ip', 'src_ip', 'client_ip']
@@ -1371,9 +1400,13 @@ class AlertService:
             for name, c in sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
                 top_users.append({'name': name, 'count': int(c)})
         except Exception:
+            if platform is not None:
+                raise
             logger.exception('DB aggregate_dashboard failed; using limited in-memory aggregates')
 
         return {
+            'degraded': bool(unavailable_metrics),
+            'unavailable_metrics': sorted(unavailable_metrics),
             # existing keys
             'severity': severity_counts,
             'timeline': timeline,

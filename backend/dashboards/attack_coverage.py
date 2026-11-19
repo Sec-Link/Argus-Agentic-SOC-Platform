@@ -1,26 +1,81 @@
 """MITRE ATT&CK coverage: techniques covered by enabled rules / all known techniques."""
+import hashlib
+import re
+
+from django.db.models import Exists, OuterRef
+
 from detections.models import (
-    LocalDetectionRule,
     LocalDetectionRuleMitreAttack,
+    LocalDetectionRuleVersion,
     MitreAttackTactic,
     MitreAttackTechnique,
     MitreAttackTechniqueTactic,
+    SplunkRulePublication,
 )
-from detections.sigma import ATTACK_TACTIC_MAP
+from detections.sigma import ATTACK_TACTIC_MAP, extract_rule_meta
+from .source_scope import dashboard_rules
 
 
-def compute_attack_coverage():
+def _splunk_attack_rows(enabled_rule_ids):
+    publication_qs = SplunkRulePublication.objects.filter(
+        rule__rule_uuid__in=enabled_rule_ids, published_version__isnull=False, enabled=True, status='synced',
+        integration__type='splunk_rule_publisher',
+    )
+    publications = list(publication_qs.select_related('rule'))
+    if not publications:
+        return []
+    matching_publication = publication_qs.filter(rule_id=OuterRef('rule_id'), published_version=OuterRef('version'))
+    versions = {
+        (row.rule_id, row.version): row.payload
+        for row in LocalDetectionRuleVersion.objects.filter(
+            rule_id__in={pub.rule_id for pub in publications},
+        ).filter(Exists(matching_publication)).only('rule_id', 'version', 'payload')
+    }
+    technique_tactics = {}
+    for technique, tactic in MitreAttackTechniqueTactic.objects.values_list('technique__technique_id', 'tactic__tactic_id'):
+        technique_tactics.setdefault(technique, set()).add(tactic)
+    current_ids = set()
+    historical = []
+    for pub in publications:
+        source = str(pub.rule.payload.get('yaml') or '')
+        current_hash = hashlib.sha256(source.encode()).hexdigest()
+        if pub.published_source_hash == current_hash or (not pub.published_source_hash and pub.published_version == pub.rule.version):
+            current_ids.add(pub.rule.rule_uuid)
+            continue
+        payload = versions.get((pub.rule_id, pub.published_version)) or {}
+        source = str(payload.get('yaml') or '')
+        if not source or hashlib.sha256(source.encode()).hexdigest() != pub.published_source_hash:
+            continue
+        tags = {tag.lower() for tag in extract_rule_meta(source)['tags']}
+        explicit_tactics = {info['id'] for slug, info in ATTACK_TACTIC_MAP.items()
+                            if f'attack.{slug.replace("-", "_")}' in tags or f'attack.{slug}' in tags}
+        for tag in tags:
+            if not re.fullmatch(r'attack\.t\d{4}(\.\d{3})?', tag):
+                continue
+            technique = tag[7:].upper()
+            tactics = technique_tactics.get(technique) or technique_tactics.get(technique.split('.')[0]) or explicit_tactics
+            for tactic in tactics or {''}:
+                historical.append({'rule_id': pub.rule.rule_uuid, 'tactic_id': tactic,
+                                   'technique_id': technique, 'technique_name': ''})
+    current = LocalDetectionRuleMitreAttack.objects.filter(rule_id__in=current_ids).values(
+        'rule_id', 'tactic_id', 'technique_id', 'technique_name',
+    )
+    return [*current, *historical]
+
+
+def compute_attack_coverage(platform=None):
     enabled_rule_ids = set(
-        LocalDetectionRule.objects.filter(enabled=True, is_deleted=False)
+        dashboard_rules(platform, enabled_only=True)
         .values_list("rule_uuid", flat=True)
     )
     # Parent technique id (T1059.001 -> T1059) so sub-techniques count toward their parent.
     rules_by_technique: dict[str, set] = {}
     mapped_names: dict[str, str] = {}
     mapped_tactics: dict[str, set] = {}
-    for row in LocalDetectionRuleMitreAttack.objects.filter(rule_id__in=enabled_rule_ids).values(
+    mapping_rows = LocalDetectionRuleMitreAttack.objects.filter(rule_id__in=enabled_rule_ids).values(
         "rule_id", "tactic_id", "technique_id", "technique_name"
-    ):
+    ) if platform != 'splunk' else _splunk_attack_rows(enabled_rule_ids)
+    for row in mapping_rows:
         tid = str(row["technique_id"]).upper().split(".")[0]
         rules_by_technique.setdefault(tid, set()).add(row["rule_id"])
         mapped_tactics.setdefault(tid, set()).add(str(row["tactic_id"]).upper())
