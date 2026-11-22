@@ -1,4 +1,5 @@
 import re
+from types import SimpleNamespace
 
 from rest_framework import serializers
 
@@ -37,10 +38,24 @@ class LogSourceCategorySerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         platform = self.context.get("platform", "elk")
+        if platform == 'splunk' and self.instance is None:
+            attrs.setdefault('host_field', 'host')
         name = attrs.get("name", getattr(self.instance, "name", ""))
         matches = LogSourceCategory.objects.filter(platform=platform, name=name)
         if self.instance:
             matches = matches.exclude(pk=self.instance.pk)
         if matches.exists():
             raise serializers.ValidationError({"name": "This platform already has a category with this name."})
+        if platform == 'splunk':
+            from .splunk_sources import MAX_HOST_FIELDS, category_host_fields
+
+            categories = LogSourceCategory.objects.filter(platform=platform, enabled=True)
+            if self.instance:
+                categories = categories.exclude(pk=self.instance.pk)
+            prospective = SimpleNamespace(**{key: attrs.get(key, getattr(self.instance, key, default))
+                for key, default in [('enabled', True), ('asset_types', []), ('host_field', 'host')]})
+            fields = category_host_fields([*categories.only('enabled', 'asset_types', 'host_field'), prospective])
+            if len(fields) > MAX_HOST_FIELDS:
+                raise serializers.ValidationError({'host_field':
+                    'Enabled Splunk categories may use at most five distinct host fields with CMDB asset mappings.'})
         return attrs

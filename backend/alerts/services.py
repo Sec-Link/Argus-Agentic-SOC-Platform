@@ -1155,7 +1155,7 @@ class AlertService:
             cached_summary = None
             if all_time:
                 active_idx = (_get_active_index_name() or 'all') if platform != 'splunk' else 'all'
-                cache_key = f"alerts:dashboard:alltime:summary:v3:{platform or 'legacy'}:{active_idx}"
+                cache_key = f"alerts:dashboard:alltime:summary:v4:{platform or 'legacy'}:{active_idx}"
                 try:
                     cached_summary = cache.get(cache_key)
                 except Exception as exc:

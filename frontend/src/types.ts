@@ -346,4 +346,7 @@ export interface EventFlow {
   alerts: number;
   open_tickets: number;
   incidents: number;
+  unattributed_tickets?: number;
+  unattributed_open_tickets?: number;
+  unattributed_incidents?: number;
 }

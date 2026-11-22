@@ -186,7 +186,7 @@ def run_scan(days=DEFAULT_WINDOW_DAYS, actor="", platform="elk", targets=None):
         from .splunk_sources import scan
 
         try:
-            result = scan(targets, LogSourceCategory.objects.filter(platform=platform))
+            result = scan(targets, LogSourceCategory.objects.filter(platform=platform, enabled=True))
             days = result["window_days"]
         except SplunkError as exc:
             return None, str(exc)

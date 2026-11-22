@@ -61,7 +61,7 @@ def _es_category_stats(es, category, patterns, since):
 
 def _alert_category_stats(patterns, since, platform=None):
     """Fallback: infer activity from alert source_index values matching the category patterns."""
-    alerts = dashboard_alerts(platform, active_index=False)
+    alerts = dashboard_alerts(platform)
     indices = (
         alerts.filter(timestamp__gte=since)
         .exclude(source_index__isnull=True)

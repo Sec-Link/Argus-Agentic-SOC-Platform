@@ -2,8 +2,9 @@ import logging
 import re
 from datetime import datetime, time
 
+from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -40,7 +41,7 @@ from .log_source_coverage import compute_log_source_coverage, preview_matchers
 from .log_source_discovery import resolve_sources
 from .models import LogSourceCategory, LogSourceMapping
 from .serializers import LogSourceCategorySerializer
-from .source_scope import dashboard_alerts, dashboard_platform, dashboard_tickets
+from .source_scope import dashboard_alerts, dashboard_platform, dashboard_tickets, unattributed_tickets
 
 # Maps each MITRE ATT&CK tactic slug to one of the three use-case buckets shown
 # in the Sankey chart's second column.
@@ -62,6 +63,17 @@ TACTIC_TO_USE_CASE = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _unattributed_counts(tickets, *, severe_incidents=False):
+    incidents = Q(event_result='true_positive')
+    if severe_incidents:
+        incidents &= Q(priority__in=['critical', 'high'])
+    return unattributed_tickets(tickets).aggregate(
+        unattributed_tickets=Count('ticket_number'),
+        unattributed_open_tickets=Count('ticket_number', filter=~Q(status__in=['resolved', 'closed'])),
+        unattributed_incidents=Count('ticket_number', filter=incidents),
+    )
 
 
 class DashboardViewSet(viewsets.ViewSet):
@@ -95,6 +107,15 @@ class DashboardViewSet(viewsets.ViewSet):
             dt = timezone.make_aware(dt, timezone.get_current_timezone())
         return dt
 
+    @staticmethod
+    def _tickets_in_window(created_from, created_to):
+        tickets = EventTicket.objects.filter(is_deleted=False)
+        if created_from:
+            tickets = tickets.filter(created_time__gte=created_from)
+        if created_to:
+            tickets = tickets.filter(created_time__lte=created_to)
+        return tickets
+
     @action(detail=False, methods=["get"], url_path="conversion-stats")
     def conversion_stats(self, request):
         """Return dashboard funnel metrics without coupling chart APIs to tickets."""
@@ -108,11 +129,8 @@ class DashboardViewSet(viewsets.ViewSet):
         if created_to:
             alert_qs = alert_qs.filter(timestamp__lte=created_to)
 
-        ticket_qs = dashboard_tickets(EventTicket.objects.filter(is_deleted=False), self.platform)
-        if created_from:
-            ticket_qs = ticket_qs.filter(created_time__gte=created_from)
-        if created_to:
-            ticket_qs = ticket_qs.filter(created_time__lte=created_to)
+        tickets = self._tickets_in_window(created_from, created_to)
+        ticket_qs = dashboard_tickets(tickets, self.platform)
 
         detection_rules_count = (
             alert_qs.exclude(rule_id__isnull=True)
@@ -122,6 +140,7 @@ class DashboardViewSet(viewsets.ViewSet):
             .count()
         )
         return Response({
+            **_unattributed_counts(tickets, severe_incidents=True),
             "alerts": alert_qs.count(),
             "detection_rules": detection_rules_count,
             "tickets": ticket_qs.count(),
@@ -143,25 +162,23 @@ class DashboardViewSet(viewsets.ViewSet):
         created_to = self._parse_dt(params.get("created_to") or params.get("end_time"), end_of_day=True)
 
         alert_qs = dashboard_alerts(self.platform)
-        ticket_qs = dashboard_tickets(EventTicket.objects.filter(is_deleted=False), self.platform)
+        tickets = self._tickets_in_window(created_from, created_to)
+        ticket_qs = dashboard_tickets(tickets, self.platform)
         if created_from:
             alert_qs = alert_qs.filter(timestamp__gte=created_from)
-            ticket_qs = ticket_qs.filter(created_time__gte=created_from)
         if created_to:
             alert_qs = alert_qs.filter(timestamp__lte=created_to)
-            ticket_qs = ticket_qs.filter(created_time__lte=created_to)
 
         open_qs = ticket_qs.exclude(status__in=["resolved", "closed"])
         incidents = ticket_qs.filter(event_result="true_positive").count()  # confirmed true positives
-        return Response(
-            build_event_flow(
-                resolve_sources(platform=self.platform or 'elk'),
-                load_categories(platform=self.platform or 'elk'),
-                alerts=alert_qs.count(),
-                open_tickets=open_qs.count(),
-                incidents=incidents,
-            )
+        data = build_event_flow(
+            resolve_sources(platform=self.platform or 'elk'),
+            load_categories(platform=self.platform or 'elk'),
+            alerts=alert_qs.count(),
+            open_tickets=open_qs.count(),
+            incidents=incidents,
         )
+        return Response({**data, **_unattributed_counts(tickets)})
 
     @action(detail=False, methods=["get"], url_path="funnel-stats")
     def funnel_stats(self, request):
@@ -187,7 +204,8 @@ class DashboardViewSet(viewsets.ViewSet):
                 "rate_from_top": round(count / top * 100, 1) if top else None,
             })
             prev = count
-        return Response({"stages": out})
+        return Response({"stages": out, **{key: data[key] for key in (
+            'unattributed_tickets', 'unattributed_open_tickets', 'unattributed_incidents')}})
 
     @action(detail=False, methods=["get"], url_path="attack-coverage")
     def attack_coverage(self, request):
@@ -283,11 +301,8 @@ class DashboardViewSet(viewsets.ViewSet):
             params = request.query_params
             created_from = self._parse_dt(params.get("created_from") or params.get("start_time"))
             created_to = self._parse_dt(params.get("created_to") or params.get("end_time"), end_of_day=True)
-            ticket_qs = dashboard_tickets(EventTicket.objects.filter(is_deleted=False), self.platform)
-            if created_from:
-                ticket_qs = ticket_qs.filter(created_time__gte=created_from)
-            if created_to:
-                ticket_qs = ticket_qs.filter(created_time__lte=created_to)
+            tickets = self._tickets_in_window(created_from, created_to)
+            ticket_qs = dashboard_tickets(tickets, self.platform)
 
             base_qs = (
                 ticket_qs
@@ -433,7 +448,7 @@ class DashboardViewSet(viewsets.ViewSet):
                 "nodes": list(nodes_by_name.values()),
                 "links": links if live_total > 0 else [],
                 "stages": stages,
-                "summary": {"tickets": live_total},
+                "summary": {"tickets": live_total, "unattributed_tickets": unattributed_tickets(tickets).count()},
             })
         except Exception:
             logger.exception("sankey_stats failed")
@@ -455,6 +470,21 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
 
     def get_serializer_context(self):
         return {**super().get_serializer_context(), 'platform': self.platform}
+
+    def _lock_host_budget(self):
+        if self.platform == 'splunk':
+            # Lock an existing sentinel even when no categories exist; validation and save share the transaction.
+            ContentType.objects.select_for_update().get(app_label='dashboards', model='logsourcecategory')
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        self._lock_host_budget()
+        return super().create(request, *args, **kwargs)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        self._lock_host_budget()
+        return super().update(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         defaults = {'host_field': 'host'} if self.platform == 'splunk' and 'host_field' not in serializer.validated_data else {}

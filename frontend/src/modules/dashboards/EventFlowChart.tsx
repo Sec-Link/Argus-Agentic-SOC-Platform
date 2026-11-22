@@ -73,6 +73,19 @@ const bezier = (x1: number, y1: number, x2: number, y2: number) => {
 
 type Tip = { x: number; y: number; lines: string[] };
 
+const UnattributedTickets: React.FC<{ data: EventFlow }> = ({ data }) => {
+  if (typeof data.unattributed_tickets !== 'number') return null;
+  return <section aria-label="Unattributed tickets across all platforms"
+    style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-color, #d9d9d9)' }}>
+    <Typography.Text type="secondary">Unattributed · All platforms</Typography.Text>
+    <Row gutter={[24, 12]} style={{ marginTop: 8 }}>
+      <Col xs={24} sm={8}><Statistic title="Tickets" value={data.unattributed_tickets} valueStyle={{ fontSize: 20 }} /></Col>
+      <Col xs={24} sm={8}><Statistic title="Open tickets" value={data.unattributed_open_tickets ?? '-'} valueStyle={{ fontSize: 20 }} /></Col>
+      <Col xs={24} sm={8}><Statistic title="Incidents" value={data.unattributed_incidents ?? '-'} valueStyle={{ fontSize: 20 }} /></Col>
+    </Row>
+  </section>;
+};
+
 const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime, platform }) => {
   const router = useRouter();
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -444,6 +457,7 @@ const EventFlowChart: React.FC<Props> = ({ startTime, endTime, allTime, platform
             document.body,
           )}
       </div>
+      {data && platform && <UnattributedTickets data={data} />}
     </Card>
   );
 };

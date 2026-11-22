@@ -3,7 +3,7 @@
 from django.db.models import Q
 from rest_framework.exceptions import ValidationError
 
-from alerts.models import Alert, ESIntegrationConfig
+from alerts.models import Alert
 from detections.models import LocalDetectionRule, SplunkRulePublication
 
 
@@ -14,19 +14,13 @@ def dashboard_platform(params):
     return platform
 
 
-def dashboard_alerts(platform, *, active_index=True):
+def dashboard_alerts(platform):
     qs = Alert.objects.all()
-    if platform is not None:
-        qs = qs.exclude(alert_id__isnull=True).exclude(alert_id='')
     if platform == 'splunk':
         return qs.filter(source_data__connector_type='splunk_search')
     if platform == 'elk':
         # Legacy ES rows have no connector marker, including SQL/JSON null payloads.
         qs = qs.filter(Q(source_data__connector_type__isnull=True) | ~Q(source_data__connector_type='splunk_search'))
-        if active_index:
-            cfg = ESIntegrationConfig.objects.order_by('-enabled', '-id').first()
-            if cfg and cfg.index.strip():
-                qs = qs.filter(source_index=cfg.index.strip())
     return qs
 
 
@@ -52,3 +46,8 @@ def dashboard_tickets(tickets, platform):
         return tickets
     linked_numbers = dashboard_alerts(platform).exclude(ticket_number__isnull=True).exclude(ticket_number='')
     return tickets.filter(ticket_number__in=linked_numbers.values('ticket_number'))
+
+
+def unattributed_tickets(tickets):
+    linked_numbers = Alert.objects.exclude(ticket_number__isnull=True).exclude(ticket_number='')
+    return tickets.exclude(ticket_number__in=linked_numbers.values('ticket_number'))

@@ -31,7 +31,7 @@ const DEFAULT_PANEL_ORDER = [
   'coverage', 'category', 'trend', 'severity', 'score', 'ips', 'users', 'sources', 'rules', 'funnel', 'sankey',
 ];
 const dashboardCacheKey = (platform: MonitoringPlatform, window: TimeWindow) =>
-  `siem_dashboard_cache_v2:${platform}:${window.all_time ? 'all' : `${window.start_time || ''}:${window.end_time || ''}`}`;
+  `siem_dashboard_cache_v3:${platform}:${window.all_time ? 'all' : `${window.start_time || ''}:${window.end_time || ''}`}`;
 const TIME_WINDOW_CACHE_KEY = 'siem_dashboard_time_window_v3';
 const DEFAULT_TIME_WINDOW_CACHE_KEY = 'siem_dashboard_default_time_window_v1';
 const POLL_INTERVAL_MS = 10 * 1000;

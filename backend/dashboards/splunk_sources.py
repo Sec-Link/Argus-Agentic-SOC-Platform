@@ -14,10 +14,15 @@ from integrations.splunk import SplunkError, read_results
 
 MAX_SOURCES = 300
 MAX_HOSTS = 5000
+MAX_HOST_FIELDS = 5
 INDEX_NAME = r"^[A-Za-z0-9_.-]{1,64}$"
 FIELD_NAME = r"^[A-Za-z_][A-Za-z0-9_.]{0,127}$"
 HOST_ALIAS = "argus_coverage_host"
 TIME_RANGES = {"24h": ("-24h", 1), "48h": ("-48h", 2), "7d": ("-7d", 7), "all": ("0", 0)}
+
+
+def category_host_fields(categories):
+    return {c.host_field for c in categories if c.enabled and c.asset_types and c.host_field}
 
 
 class ScanTimeRangeSerializer(serializers.Serializer):
@@ -99,13 +104,17 @@ def _search(config, query, time_range, limit, warnings=None):
 def scan(target, categories):
     integration, indices, time_range = validate_target(target)
     config = validate_splunk_config(integration.config)
-    fields = sorted({c.host_field for c in categories if c.asset_types and c.host_field})
-    if len(fields) > 5 or any(not re.fullmatch(FIELD_NAME, f) for f in fields):
-        raise serializers.ValidationError({"host_field": "Use at most five distinct literal host fields for a Splunk scan."})
+    fields = sorted(category_host_fields(categories))
+    if any(not re.fullmatch(FIELD_NAME, f) for f in fields):
+        raise serializers.ValidationError({"host_field": "Use literal host field names for a Splunk scan."})
+    warnings = set()
+    if len(fields) > MAX_HOST_FIELDS:
+        # Legacy over-budget configurations must not block primary log statistics.
+        fields = []
+        warnings.add('host_statistics_unavailable')
     where = "(" + " OR ".join(f'index="{index}"' for index in indices) + ")"
     query = ("| tstats count AS docs max(_time) AS last_seen dc(host) AS hosts_approx "
              f"WHERE {where} BY index sourcetype | sort 0 - docs | head {MAX_SOURCES + 1}")
-    warnings = set()
     rows = _search(config, query, time_range, MAX_SOURCES + 1, warnings)
     truncated = len(rows) > MAX_SOURCES
     evidence = {}

@@ -1147,12 +1147,13 @@ export async function deleteIntegration(id:string){
 
 export default client
 
-export async function fetchDashboardConversionStats(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+export async function fetchDashboardConversionStats(params?: { start_time?: string; end_time?: string; all_time?: boolean; platform?: MonitoringPlatform }) {
   const qp = new URLSearchParams();
   // Dashboard chart APIs live under the dashboard module, not tickets.
   if (params?.all_time) qp.set('all_time', 'true');
   if (params?.start_time) qp.set('created_from', params.start_time);
   if (params?.end_time) qp.set('created_to', params.end_time);
+  if (params?.platform) qp.set('platform', params.platform);
   const suffix = qp.toString() ? `?${qp.toString()}` : '';
   const r = await client.get(`/dashboards/conversion-stats/${suffix}`);
   return r.data;
