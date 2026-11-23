@@ -27,6 +27,25 @@ def request_user_agent(request) -> str:
     return (request.META.get("HTTP_USER_AGENT", "") or "")[:255]
 
 
+def omit_audit_params(path, params=None):
+    path = (path or "").rstrip("/")
+    if path.startswith("/api/v1/tickets/"):
+        action = path.rsplit("/", 1)[-1]
+        if action in {"ai_assistant", "ai_mention"}:
+            return True
+        if action == "add_worklog" and isinstance(params, dict):
+            # The ticket UI publishes AI replies and observables through the normal work-log endpoint.
+            entry = params.get("log_entry")
+            entries = entry[:50] if isinstance(entry, list) else [entry]
+            return any(isinstance(value, str) and value.startswith(("AI Reply (@ai):", "AI Observables JSON:"))
+                       for value in entries)
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in (
+        "/api/v1/ai-assistant/chat", "/api/v1/ai-assistant/page-chat", "/api/v1/ai-assistant/http-tools",
+        "/api/v1/ai-assistant/agents", "/api/v1/ai-assistant/conversations", "/api/v1/ai-assistant/models",
+        "/api/v1/ai-assistant/external-mcp", "/api/v1/ai-assistant/skills",
+    ))
+
+
 class AuditService:
     @staticmethod
     def log_event(

@@ -9,6 +9,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
+from .audit import omit_audit_params
 from .models import AuditLog, RegistrationRequest, SystemSettings, UserAuthProfile
 from .services import normalize_email
 
@@ -153,6 +154,14 @@ class RegistrationRejectSerializer(serializers.Serializer):
 
 
 class AuditLogListSerializer(serializers.ModelSerializer):
+    details = serializers.SerializerMethodField()
+
+    def get_details(self, obj):
+        details = obj.details
+        if isinstance(details, dict) and "params" in details and omit_audit_params(obj.path, details["params"]):
+            return {**details, "params": {}}
+        return details
+
     class Meta:
         model = AuditLog
         fields = (
