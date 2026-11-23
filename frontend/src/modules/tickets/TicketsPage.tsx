@@ -17,7 +17,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
   const [slaDetailOpen, setSlaDetailOpen] = useState(false);
   const [slaDetail, setSlaDetail] = useState<SlaTicketDetail | null>(null);
   const [slaAttachments, setSlaAttachments] = useState<SlaTicketAttachment[]>([]);
-  const [slaWorkLogs, setSlaWorkLogs] = useState<SlaTicketWorkLog[]>([]);
+  const [timeline, setTimeline] = useState<{ work_logs: SlaTicketWorkLog[]; can_add_worklog: boolean } | null>(null);
   const [slaStatus, setSlaStatus] = useState<string>('');
   const [slaNotes, setSlaNotes] = useState<string>('');
   const [slaQuery, setSlaQuery] = useState<Record<string, string>>({});
@@ -60,7 +60,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
     setSlaDetailOpen(true);
     setSlaDetail(null);
     setSlaAttachments([]);
-    setSlaWorkLogs([]);
+    setTimeline(null);
     setSlaStatus('');
     setSlaNotes('');
     try {
@@ -73,7 +73,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
       setSlaDetail(detail);
       setSlaStatus(detail?.status ?? '');
       setSlaAttachments(Array.isArray(attachmentsResp) ? attachmentsResp : []);
-      setSlaWorkLogs(Array.isArray(timelineResp?.work_logs) ? timelineResp.work_logs : []);
+      setTimeline(timelineResp);
     } catch (err: any) {
       message.error('Failed to load ticket details');
     } finally {
@@ -83,7 +83,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
 
   const refreshSlaWorkLogs = async (ticketNumber: string) => {
     const timelineResp = await fetchSlaTicketTimeline(ticketNumber);
-    setSlaWorkLogs(Array.isArray(timelineResp?.work_logs) ? timelineResp.work_logs : []);
+    setTimeline(timelineResp);
   };
 
   const submitSlaStatus = async (statusOverride?: string) => {
@@ -100,7 +100,7 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
       if (statusOverride) setSlaStatus(nextStatus);
       try {
         const timelineResp = await fetchSlaTicketTimeline(slaDetail.ticket_number);
-        setSlaWorkLogs(Array.isArray(timelineResp?.work_logs) ? timelineResp.work_logs : []);
+        setTimeline(timelineResp);
       } catch {}
       message.success('Status updated');
       loadSla();
@@ -119,12 +119,17 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
     setSlaLoading(true);
     try {
       await addSlaTicketWorklog(slaDetail.ticket_number, { log_entry: text });
-      const timelineResp = await fetchSlaTicketTimeline(slaDetail.ticket_number);
-      setSlaWorkLogs(Array.isArray(timelineResp?.work_logs) ? timelineResp.work_logs : []);
       message.success('Sent');
+      try {
+        await refreshSlaWorkLogs(slaDetail.ticket_number);
+      } catch {
+        message.warning('Work log saved. Refresh to load the updated timeline.');
+      }
     } catch (err: any) {
-      const apiError = err?.response?.data?.error || err?.response?.data?.detail;
-      message.error(apiError ? String(apiError) : 'Failed to send');
+      if (err?.response?.status === 403) {
+        setTimeline(previous => previous && { ...previous, can_add_worklog: false });
+      }
+      throw err;
     } finally {
       setSlaLoading(false);
     }
@@ -176,13 +181,13 @@ const TicketsPage: React.FC<Props> = ({ initialTicketNumber, onNavigate }) => {
             <SlaTicketDetailView
               ticket={slaDetail}
               attachments={slaAttachments}
-              workLogs={slaWorkLogs}
+              workLogs={Array.isArray(timeline?.work_logs) ? timeline.work_logs : []}
               statusValue={slaStatus}
               notesValue={slaNotes}
               onStatusChange={setSlaStatus}
               onNotesChange={setSlaNotes}
               onSubmitStatus={submitSlaStatus}
-              onAddWorkLog={addWorkLog}
+              onAddWorkLog={timeline?.can_add_worklog === true ? addWorkLog : undefined}
               onUploadWorkLogImage={uploadWorkLogImage}
               onRefresh={() => openSlaDetail(slaDetail.ticket_number)}
               onRefreshWorkLogs={() => refreshSlaWorkLogs(slaDetail.ticket_number)}

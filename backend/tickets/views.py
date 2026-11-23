@@ -13,6 +13,7 @@ from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.services import is_user_readonly
 from alerts.models import Alert as AlertModel
 from detections.models import LocalDetectionRule
 from detections.sigma import ATTACK_TACTIC_MAP
@@ -89,6 +90,18 @@ class EventTicketViewSet(viewsets.ModelViewSet):
 
     permission_classes = [IsAuthenticated]
     lookup_field = "ticket_number"
+
+    @staticmethod
+    def _can_add_worklog(user):
+        return user.has_perm("tickets.add_ticketworklog") and not is_user_readonly(user)
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        if self.action in {"timeline", "worklogs", "add_worklog"}:
+            if not request.user.has_perm("tickets.view_eventticket"):
+                raise PermissionDenied("Viewing ticket work logs requires ticket view permission.")
+            if self.action == "add_worklog" and not self._can_add_worklog(request.user):
+                raise PermissionDenied("You do not have permission to add ticket work logs.")
 
     @staticmethod
     def _parse_dt(value, end_of_day=False):
@@ -519,6 +532,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                     },
                 ],
                 "work_logs": serializer.data,
+                "can_add_worklog": self._can_add_worklog(request.user),
             }
         )
 
@@ -773,7 +787,6 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             }
             for row in rows_display
         ]
-        from accounts.services import is_user_readonly
         if reviewing:
             from accounts.audit import AuditService, request_ip, request_user_agent
             from accounts.models import AuditLog

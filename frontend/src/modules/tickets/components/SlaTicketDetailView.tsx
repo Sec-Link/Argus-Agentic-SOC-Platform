@@ -221,8 +221,12 @@ function WarRoomView({
     if (!onAddWorkLog) return;
     const text = (draft || '').trim();
     if (!text) return;
-    setDraft('');
-    await onAddWorkLog(text);
+    try {
+      await onAddWorkLog(text);
+      setDraft('');
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || 'Failed to add work log');
+    }
   };
 
   const onPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -732,7 +736,7 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   const runAiAssistant = async () => {
-    if (!requireAiModel()) return;
+    if (!props.onAddWorkLog || !requireAiModel()) return;
     setAiLoading(true);
     setAiError(null);
     try {
@@ -1735,7 +1739,8 @@ export default function SlaTicketDetailView(props: Props) {
                 ) : null}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
                   <Button>Attach</Button>
-                  <Button type="primary" onClick={sendComment} loading={commentSending} disabled={!commentDraft.trim() || commentSending}>
+                  <Button type="primary" onClick={sendComment} loading={commentSending}
+                    disabled={!commentDraft.trim() || commentSending || (!props.onAddWorkLog && !commentDraft.trimStart().toLowerCase().startsWith('@playbook'))}>
                     Send
                   </Button>
                 </div>
@@ -1754,7 +1759,7 @@ export default function SlaTicketDetailView(props: Props) {
               <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
                 {aiModelSelector}
                 <Typography.Text type="secondary">Used for ticket analysis, chat and @AI. Changes apply to the next request.</Typography.Text>
-                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>
+                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!props.onAddWorkLog || !aiModelReady}>
                   Run AI Assistant
                 </Button>
                 <Button onClick={openChat}>
