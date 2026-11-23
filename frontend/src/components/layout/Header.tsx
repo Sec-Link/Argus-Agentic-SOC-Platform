@@ -79,8 +79,8 @@ export default function Header({
           {username || 'User'}
         </div>
         {isReadonly ? <Tag color="blue">Readonly</Tag> : null}
-        {impersonation ? <Tag color="orange">Impersonating: {impersonation.username}</Tag> : null}
-        {impersonation ? <Button onClick={onClearImpersonation}>Exit impersonation</Button> : null}
+        {impersonation ? <Tag color="orange">Permission preview · {impersonation.username}</Tag> : null}
+        {impersonation ? <Button onClick={onClearImpersonation}>Exit preview</Button> : null}
         <Button type="primary" onClick={onLogout} style={{ background: '#ff4d4f', border: 'none' }}>
           Exit
         </Button>

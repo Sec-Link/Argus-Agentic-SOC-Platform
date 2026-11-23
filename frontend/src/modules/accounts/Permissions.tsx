@@ -314,7 +314,7 @@ const Permissions: React.FC = () => {
     const user = users.find((u) => u.id === selectedUserId)
     if (!user) return
     if (currentUsername && user.username === currentUsername) {
-      message.warning('Cannot impersonate the current account')
+      message.warning('Select another account to preview its permissions')
       return
     }
     try {
@@ -332,9 +332,9 @@ const Permissions: React.FC = () => {
       localStorage.setItem('siem_impersonation', JSON.stringify(payload))
       setViewAs(payload)
       window.dispatchEvent(new Event('siem_impersonation_changed'))
-      message.success(`Impersonating user: ${user.username}`)
+      message.success(`Previewing permissions for ${user.username}`)
     } catch (e: any) {
-      message.error(e?.message || 'Failed to impersonate user')
+      message.error(e?.message || 'Failed to start permission preview')
     }
   }
 
@@ -781,7 +781,7 @@ const Permissions: React.FC = () => {
                                         users.find((u) => u.id === selectedUserId)?.username === currentUsername)
                                     }
                                   >
-                                    Impersonate
+                                    Preview permissions
                                   </Button>
                                   <Popconfirm
                                     title="Delete this user?"
