@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Layout, Card, ConfigProvider, theme as antdTheme } from 'antd';
+import { Layout, Card, ConfigProvider, message, theme as antdTheme } from 'antd';
 import { usePathname, useRouter } from 'next/navigation';
-import { clearAccessToken, getRbacMe } from 'services/accounts';
+import { getRbacMe, isCurrentBrowserSession, logout } from 'services/accounts';
 import { permissionByKey, resolveRouteKey, type RouteKey } from '../../route';
 import HeaderBar from './Header';
 import Sidebar from './Sidebar';
@@ -250,18 +250,15 @@ export default function BasicLayout({
     if (!siderWidthCustomized) setSiderWidth(autoSiderWidth);
   }, [autoSiderWidth, siderWidthCustomized]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     try {
-      localStorage.removeItem('siem_access_token');
-      localStorage.removeItem('siem_username');
-      localStorage.removeItem('siem_impersonation');
-    } catch {}
-    clearAccessToken();
-    setUsername(null);
-    setImpersonation(null);
-    if (onLoggedOut) onLoggedOut();
-    router.push('/');
-    router.refresh();
+      await logout();
+    } catch {
+      if (isCurrentBrowserSession()) message.error('Could not confirm sign-out. Please try again.');
+      return;
+    }
+    onLoggedOut?.();
+    window.location.replace('/');
   };
 
   const handleToggleTheme = () => {

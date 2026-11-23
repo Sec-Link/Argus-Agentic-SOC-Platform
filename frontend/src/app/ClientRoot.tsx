@@ -5,20 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { App } from 'antd';
 import BasicLayout from '../components/layout/BasicLayout';
 import LoginForm from '../modules/accounts/components/LoginForm';
-
-function readStoredToken(): string | null {
-  try {
-    const t = localStorage.getItem('siem_access_token');
-    // Migration safety: old JWT tokens contain dots and won't work with TokenAuth.
-    if (t && t.includes('.')) {
-      localStorage.removeItem('siem_access_token');
-      return null;
-    }
-    return t;
-  } catch {
-    return null;
-  }
-}
+import { isCurrentBrowserSession, readStoredAccessToken } from 'services/accounts';
 
 export default function ClientRoot({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -27,13 +14,26 @@ export default function ClientRoot({ children }: { children: React.ReactNode }) 
   const [loggedIn, setLoggedIn] = useState<boolean>(false);
 
   useEffect(() => {
-    setLoggedIn(!!readStoredToken());
-    setHydrated(true);
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === 'siem_access_token') setLoggedIn(!!readStoredToken());
+    const syncSession = () => {
+      if (!isCurrentBrowserSession()) {
+        setHydrated(false);
+        // Discard every component, pending action and cached page before using the new identity.
+        window.location.reload();
+        return;
+      }
+      setLoggedIn(!!readStoredAccessToken());
+      setHydrated(true);
     };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'siem_access_token' || e.key === null) syncSession();
+    };
+    syncSession();
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener('pageshow', syncSession);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('pageshow', syncSession);
+    };
   }, []);
 
   useEffect(() => {
