@@ -32,6 +32,7 @@ from ai_assistant.skill_config import (
     normalize_skill_names, require_skill_permission,
 )
 from ai_assistant.skill_library import read_skill_content, write_skill_content
+from ai_assistant.skill_evidence import trace_skill_permissions
 
 _MOJIBAKE_CHARS = re.compile(r"[ÃÂâåäæçèéêëìíîïðñòóôöõøùúûüýÿ]")
 
@@ -211,10 +212,12 @@ def ai_chat(request):
         request.user, data, permissions=("tickets.view_eventticket",) if ticket_number else (),
     )
 
+    previous_skills = set()
+
     def model_guard():
         live_actor = current_actor(actor, write=True)
         if ticket_number:
-            require_history_permissions(live_actor, ("tickets.view_eventticket",))
+            require_history_permissions(live_actor, {"tickets.view_eventticket", *previous_skills})
         if profile_guard:
             profile_guard()
     ticket = None
@@ -222,6 +225,11 @@ def ai_chat(request):
         ticket = EventTicket.objects.filter(ticket_number=ticket_number, is_deleted=False).first()
         if not ticket:
             return Response({"error": "ticket not found"}, status=status.HTTP_404_NOT_FOUND)
+        if data.get("messages"):
+            traces = TicketAIChatMessage.objects.filter(ticket=ticket, created_by=actor).exclude(trace=[])
+            for trace in traces.values_list("trace", flat=True).iterator(chunk_size=200):
+                previous_skills.update(trace_skill_permissions(trace))
+            require_history_permissions(actor, previous_skills)
 
     overrides = {
         **model_overrides, "max_iterations": limits.max_iterations,
@@ -230,6 +238,7 @@ def ai_chat(request):
     overrides["_usage_context"] = model_usage_context(
         actor, source="ticket_chat" if ticket else "chat", overrides=overrides, agent_name="assistant",
     )
+    overrides["_usage_context"]["skill_permissions"].update(previous_skills)
 
     recommended_skills = normalize_skill_names(data.get("skills"))
     if not recommended_skills:

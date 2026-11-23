@@ -13,6 +13,7 @@ from rest_framework.exceptions import APIException, NotFound, PermissionDenied
 
 from accounts.services import is_user_readonly
 from .models import MCPToolExecution, PageChatConversation, PageChatTurn
+from .skill_evidence import SKILL_PREFIX, granted_skill_permissions, trace_skill_permissions
 
 
 MAX_CONVERSATIONS = 200
@@ -26,7 +27,7 @@ TERMINAL_RESERVE_BYTES = 4096
 PUBLIC_EVENT_FIELDS = frozenset({
     "type", "iteration", "content", "response", "message", "purpose", "tool", "source",
     "call_id", "execution_id", "arguments", "success", "endpoint", "expires_in", "request",
-    "agent", "agent_title", "delegation_id", "code", "request_id", "stage", "status_code", "count",
+    "agent", "agent_title", "delegation_id", "code", "request_id", "stage", "status_code", "count", "skill_access",
 })
 DELTA_TYPES = {"answer_delta", "analysis_summary_delta"}
 # The protected page routes use these same permissions in frontend/src/route.ts.
@@ -79,11 +80,15 @@ def current_actor(user, *, write=False):
     return actor
 
 
-def has_history_permissions(user, permissions):
-    return all(
-        isinstance(permission, str) and (
-            (user.is_staff or user.is_superuser) if permission == "accounts.staff_access_management" else user.has_perm(permission)
-        ) for permission in permissions
+def has_history_permissions(user, permissions, *, granted_skills=None):
+    if any(not isinstance(value, str) for value in permissions):
+        return False
+    skills = {value for value in permissions if value.startswith(SKILL_PREFIX)}
+    if granted_skills is None:
+        granted_skills = granted_skill_permissions(user, skills)
+    return skills.issubset(granted_skills) and all(
+        (user.is_staff or user.is_superuser) if permission == "accounts.staff_access_management" else user.has_perm(permission)
+        for permission in permissions if not permission.startswith(SKILL_PREFIX)
     )
 
 
@@ -255,6 +260,7 @@ class ConversationRecorder:
         require_history_permissions(actor, required)
 
     def record(self, event):
+        skill_permissions = trace_skill_permissions([event])
         event = clean_public({key: value for key, value in event.items() if key in PUBLIC_EVENT_FIELDS})
         with self._lock:
             if self._finished or self._terminal:
@@ -289,7 +295,7 @@ class ConversationRecorder:
                 required = self._tool_permissions.pop(call, set())
                 # A denied call contains no protected evidence and must not lock its owner out.
                 if event.get("success") is True:
-                    self._required.update(required | event_permissions(event))
+                    self._required.update(required | event_permissions(event) | skill_permissions)
             self._dirty = True
             if kind in {"done", "error"}:
                 self._terminal = "done" if kind == "done" else "error"

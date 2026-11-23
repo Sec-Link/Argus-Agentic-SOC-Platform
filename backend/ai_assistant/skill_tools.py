@@ -8,6 +8,7 @@ from ai_assistant.conversation_history import current_actor
 from ai_assistant.models import SkillConfig
 from ai_assistant.monitoring import record_skill_call
 from ai_assistant.skill_library import list_skills, read_skill, read_skill_metadata
+from ai_assistant.skill_evidence import skill_permission
 from ai_assistant.tool_access import allowed_tools
 
 
@@ -44,10 +45,12 @@ class SkillsMiddleware(AgentMiddleware):
                 if name in enabled
             ) or "No enabled skills found."
 
-        @tool("read_skill")
-        def read_enabled_skill(skill_name: str) -> str:
+        @tool("read_skill", response_format="content_and_artifact")
+        def read_enabled_skill(skill_name: str) -> tuple:
             """Read an enabled SOC skill document by its exact catalog name."""
-            if skill_name not in self.catalog or skill_name not in self._enabled_names():
+            config_id = (self._usable().filter(name=skill_name).values_list("pk", flat=True).first()
+                         if skill_name in self.catalog else None)
+            if config_id is None:
                 raise ToolException("Skill is not enabled or available.")
             try:
                 document = read_skill(skill_name)
@@ -63,7 +66,7 @@ class SkillsMiddleware(AgentMiddleware):
             content = document.content[:12000]
             if len(document.content) > 12000:
                 content += "\n[Skill content truncated at 12000 characters.]"
-            return f"Skill: {skill_name}\n\n{content}"
+            return f"Skill: {skill_name}\n\n{content}", {"skill_access": skill_permission(config_id, skill_name)}
 
         self.tools = [list_enabled_skills, read_enabled_skill] if self.catalog else []
         for skill_tool in self.tools:

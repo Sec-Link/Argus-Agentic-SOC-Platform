@@ -18,6 +18,7 @@ from .conversation_history import (
     current_actor, has_history_permissions, recover_expired, require_history_permissions,
 )
 from .models import PageChatConversation, PageChatTurn
+from .skill_evidence import SKILL_PREFIX, granted_skill_permissions
 
 
 REVIEW_ALL_PERMISSION = "ai_assistant.review_all_pagechatconversation"
@@ -69,7 +70,8 @@ class ConversationSummarySerializer(serializers.ModelSerializer):
         return conversation.title
 
     def _can_read_evidence(self, conversation):
-        return has_history_permissions(self.context["actor"], conversation.required_permissions)
+        return has_history_permissions(self.context["actor"], conversation.required_permissions,
+                                       granted_skills=self.context.get("granted_skills"))
 
     def get_owner(self, conversation):
         return {"id": conversation.owner_id, "username": conversation.owner.get_username()}
@@ -159,7 +161,10 @@ class ConversationViewSet(viewsets.GenericViewSet):
 
     def list(self, request):
         rows = self.paginate_queryset(self.get_queryset())
-        response = self.get_paginated_response(self.get_serializer(rows, many=True).data)
+        skills = {tag for row in rows if row.owner_id == self._history_actor.pk for tag in row.required_permissions
+                  if isinstance(tag, str) and tag.startswith(SKILL_PREFIX)}
+        context = {**self.get_serializer_context(), "granted_skills": granted_skill_permissions(self._history_actor, skills)}
+        response = self.get_paginated_response(self.get_serializer(rows, many=True, context=context).data)
         response.data["can_view_all"] = self._history_actor.has_perm(REVIEW_ALL_PERMISSION)
         return response
 

@@ -36,6 +36,7 @@ from ai_assistant.external_tool_policy import saved_mcp_config
 from ai_assistant.usage_recording import model_usage_context
 from ai_assistant.models import TicketAIChatMessage
 from ai_assistant.skill_config import get_enabled_skill_configs
+from ai_assistant.skill_evidence import trace_skill_permissions
 from ai_assistant.serializers import AIAssistantRequestSerializer
 
 
@@ -83,6 +84,28 @@ def _build_mitre_tags_map(ticket_numbers: list[str]) -> dict[str, list[str]]:
         if attack_tags:
             result[tn] = sorted(attack_tags)
     return result
+
+
+def _ticket_trace_permissions(trace):
+    if not isinstance(trace, list):
+        return set()
+    events = [event for event in trace if isinstance(event, dict) and isinstance(event.get("tool"), str)]
+    required = trace_skill_permissions(events)
+    failed = {
+        (event["tool"], event["execution_id"]) for event in events
+        if event.get("type") == "tool_result" and event.get("success") is False
+        and isinstance(event.get("execution_id"), str)
+    }
+    for event in events:
+        if event.get("type") == "tool_result" and event.get("success") is False:
+            continue
+        # Retain the protection on old attempts for which no outcome was recorded.
+        execution_id = event.get("execution_id")
+        if (event.get("type") == "tool_call" and isinstance(execution_id, str)
+                and (event["tool"], execution_id) in failed):
+            continue
+        required.update(event_permissions({"tool": event["tool"]}))
+    return required
 
 
 class EventTicketViewSet(viewsets.ModelViewSet):
@@ -754,15 +777,10 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             rows = rows.filter(created_by=actor)
             # A later answer may repeat earlier tool output, including evidence
             # outside this page. Check this owner's whole ticket history first.
-            if not all(actor.has_perm(permission) for permission in ("cmdb.view_asset", "ai_assistant.view_knowledgebaseitem")):
-                for trace in rows.order_by().values_list("trace", flat=True).iterator(chunk_size=200):
-                    if not isinstance(trace, list):
-                        continue
-                    required = set()
-                    for event in trace:
-                        if isinstance(event, dict) and isinstance(event.get("tool"), str):
-                            required.update(event_permissions({"tool": event["tool"]}))
-                    require_history_permissions(actor, required)
+            required = set()
+            for trace in rows.exclude(trace=[]).order_by().values_list("trace", flat=True).iterator(chunk_size=200):
+                required.update(_ticket_trace_permissions(trace))
+            require_history_permissions(actor, required)
         elif owner_id is not None:
             rows = rows.filter(created_by_id=owner_id)
         if before_dt:

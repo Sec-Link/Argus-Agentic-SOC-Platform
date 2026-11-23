@@ -15,6 +15,7 @@ from ai_assistant.knowledge_base import ensure_index, format_search_results, get
 from ai_assistant.mcp_tools import load_mcp_tools
 from ai_assistant.model_client import chat_response, message_text, open_chat_model
 from ai_assistant.skill_tools import SkillsMiddleware
+from ai_assistant.skill_evidence import UNKNOWN_SKILL
 from ai_assistant.monitoring import finish_mcp_execution, start_mcp_execution, update_mcp_stats
 
 class ChatCancelled(RuntimeError):
@@ -231,6 +232,11 @@ class _ChatCompatibility(AgentMiddleware):
                 detail = str(exc) if not self.safe_tool_errors or guard_denial else "Check tool configuration or permissions."
                 result = ToolMessage(content=f"Tool execution failed: {detail}", tool_call_id=call["id"], name=name, status="error")
             success = result.status != "error"
+            skill_metadata = {}
+            if success and source == "internal" and actual_name == "read_skill":
+                marker = (result.artifact or {}).get("skill_access") or UNKNOWN_SKILL
+                skill_metadata["skill_access"] = marker
+                self.audit_context.setdefault("skill_permissions", set()).add(marker)
             content = str(result.content)
             if isinstance(result.content, (list, dict)):
                 response_payload = result.content
@@ -239,12 +245,14 @@ class _ChatCompatibility(AgentMiddleware):
                     response_payload = json.loads(content)
                 except (TypeError, ValueError):
                     response_payload = {"content": content}
-            finish_mcp_execution(exec_id, success, error="" if success else content, response_payload=response_payload)
+            evidence = self.audit_context.get("skill_permissions")
+            finish_mcp_execution(exec_id, success, error="" if success else content, response_payload=response_payload,
+                                 **({"skill_permissions": evidence.copy()} if evidence else {}))
             update_mcp_stats(actual_name, success)
             self.trace.append({
                 "type": "tool_result", "iteration": self.iteration, "tool": actual_name,
                 "success": success, "content": content, "execution_id": exec_id,
-                "call_id": call["id"], "source": source,
+                "call_id": call["id"], "source": source, **skill_metadata,
             })
             return result
         finally:
