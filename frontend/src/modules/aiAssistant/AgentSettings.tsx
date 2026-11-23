@@ -6,6 +6,9 @@ import {
 } from 'services/aiAssistant';
 import { parseAgentLimit } from './agentLimits';
 
+import UseRolesField, { allowedRoleNames, changedRoleFields, type ConfigActions } from './UseRolesField';
+import type { ToolAccessRole } from '../../api';
+
 type AgentFormValues = Omit<AssistantAgentFields, 'max_iterations' | 'max_delegations'> & {
   max_iterations: string;
   max_delegations: string;
@@ -28,7 +31,9 @@ function errorMessage(error: any, fallback: string): string {
   return fallback;
 }
 
-export default function AgentSettings({ readonly = false }: { readonly?: boolean }) {
+export default function AgentSettings({ readonly, actions, roles, canManageAccess }: {
+  readonly: boolean; actions: ConfigActions; roles: ToolAccessRole[]; canManageAccess: boolean;
+}) {
   const [message, contextHolder] = antdMessage.useMessage();
   const [form] = Form.useForm<AgentFormValues>();
   const [rows, setRows] = useState<AssistantAgentConfig[]>([]);
@@ -64,6 +69,7 @@ export default function AgentSettings({ readonly = false }: { readonly?: boolean
   }, [loadAgents]);
 
   const editAgent = (row?: AssistantAgentConfig) => {
+    if (readonly || !(row ? actions.change : actions.add)) return;
     setEditing(row || null);
     setSaveError('');
     form.resetFields();
@@ -73,10 +79,12 @@ export default function AgentSettings({ readonly = false }: { readonly?: boolean
   const closeModal = () => { setOpen(false); form.resetFields(); setSaveError(''); };
 
   const saveAgent = async (values: AgentFormValues) => {
+    if (readonly || saving || !(editing ? actions.change : actions.add)) return;
     setSaving(true);
     setSaveError('');
     try {
-      const payload = { ...values, max_iterations: parseAgentLimit(values.max_iterations), max_delegations: parseAgentLimit(values.max_delegations) };
+      const { use_group_ids, ...fields } = values;
+      const payload = { ...fields, ...changedRoleFields(canManageAccess, use_group_ids, editing?.use_group_ids), max_iterations: parseAgentLimit(values.max_iterations), max_delegations: parseAgentLimit(values.max_delegations) };
       if (editing) await updateAiAssistantAgent(editing.name, payload);
       else await createAiAssistantAgent(payload);
       message.success(editing ? 'Agent updated' : 'Agent created');
@@ -87,12 +95,14 @@ export default function AgentSettings({ readonly = false }: { readonly?: boolean
   };
 
   const toggleAgent = async (row: AssistantAgentConfig, enabled: boolean) => {
+    if (readonly || !actions.change || busyName) return;
     setBusyName(row.name);
     try { await updateAiAssistantAgent(row.name, { enabled }); await loadAgents(); }
     catch (error) { message.error(errorMessage(error, 'Failed to update the agent.')); }
     finally { setBusyName(''); }
   };
   const deleteAgent = async (row: AssistantAgentConfig) => {
+    if (readonly || !actions.remove || busyName) return;
     setBusyName(row.name);
     try {
       await deleteAiAssistantAgent(row.name);
@@ -107,7 +117,7 @@ export default function AgentSettings({ readonly = false }: { readonly?: boolean
     {contextHolder}
     <Card title="Agents" extra={<Space wrap>
       <Button onClick={() => void loadAgents()} loading={loading}>Refresh</Button>
-      {!readonly && <Button type="primary" onClick={() => editAgent()}>Add agent</Button>}
+      {!readonly && actions.add && <Button type="primary" onClick={() => editAgent()}>Add agent</Button>}
     </Space>}>
       <Alert type="info" showIcon style={{ marginBottom: 16 }} message="Coordinator assigns tasks and combines results"
         description="The built-in coordinator automatically selects enabled specialists. Mention @name in chat to limit delegation to those agents (up to 3 distinct agents per message). All agents use your AI Assistant model settings and existing tool permissions and approvals." />
@@ -120,10 +130,11 @@ export default function AgentSettings({ readonly = false }: { readonly?: boolean
         columns={[
           { title: 'Agent', width: 200, render: (_, row) => <><Typography.Text strong>{row.title}</Typography.Text><div><Tag>@{row.name}</Tag></div></> },
           { title: 'Role', dataIndex: 'role', render: (role) => <Typography.Text style={{ whiteSpace: 'pre-wrap' }}>{role}</Typography.Text> },
+          { title: 'Allowed roles', render: (_, row) => allowedRoleNames(row, roles) },
           { title: 'Model rounds per task', width: 120, render: (_, row) => row.max_iterations ?? 3 },
           { title: 'Delegations per message', width: 120, render: (_, row) => row.max_delegations ?? 3 },
-          { title: 'Enabled', width: 80, render: (_, row) => <Switch size="small" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={readonly || !!busyName} loading={busyName === row.name} onChange={(enabled) => void toggleAgent(row, enabled)} /> },
-          { title: 'Actions', width: 130, render: (_, row) => <Space><Button size="small" disabled={readonly || !!busyName} onClick={() => editAgent(row)}>Edit</Button><Popconfirm title={`Delete ${row.title}?`} description="This agent will no longer be available for new tasks." onConfirm={() => deleteAgent(row)} okText="Delete" okButtonProps={{ danger: true }}><Button size="small" danger disabled={readonly || !!busyName}>Delete</Button></Popconfirm></Space> },
+          { title: 'Enabled', width: 80, render: (_, row) => <Switch size="small" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={readonly || !actions.change || !!busyName} loading={busyName === row.name} onChange={(enabled) => void toggleAgent(row, enabled)} /> },
+          { title: 'Actions', width: 130, render: (_, row) => <Space><Button size="small" disabled={readonly || !actions.change || !!busyName} onClick={() => editAgent(row)}>Edit</Button><Popconfirm title={`Delete ${row.title}?`} description="This agent will no longer be available for new tasks." onConfirm={() => deleteAgent(row)} okText="Delete" okButtonProps={{ danger: true }}><Button size="small" danger disabled={readonly || !actions.remove || !!busyName}>Delete</Button></Popconfirm></Space> },
         ]}
       />
     </Card>
@@ -140,6 +151,7 @@ export default function AgentSettings({ readonly = false }: { readonly?: boolean
           </Form.Item></Col>
           <Col xs={24} sm={6}><Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item></Col>
         </Row>
+        {canManageAccess && <UseRolesField roles={roles} resource="agent" />}
         <Form.Item name="title" label="Display name" rules={[{ required: true, whitespace: true }]}><Input maxLength={120} placeholder="Alert analyst" /></Form.Item>
         <Form.Item name="role" label="Role and when to delegate" rules={[{ required: true, whitespace: true }]} extra="The coordinator uses this description to choose the right specialist.">
           <Input.TextArea rows={3} maxLength={500} showCount placeholder="Describe this agent's expertise and the tasks it should handle." />

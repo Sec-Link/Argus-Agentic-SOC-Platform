@@ -635,7 +635,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             overrides = {
                 **model_overrides,
                 "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
-                "skills": data.get("skills") or get_enabled_skill_configs(),
+                "skills": get_enabled_skill_configs(request.user, data.get("skills") or None),
             }
             overrides["_usage_context"] = model_usage_context(
                 request.user, source="ticket_analysis", overrides=overrides, agent_name="assistant",
@@ -647,7 +647,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
-                **({"model_call_guard": model_guard} if model_guard else {}),
+                user=request.user, model_call_guard=model_guard,
             )
             if model_guard:
                 model_guard()
@@ -880,7 +880,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             overrides = {
                 **model_overrides,
                 "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
-                "skills": data.get("skills") or get_enabled_skill_configs(),
+                "skills": get_enabled_skill_configs(request.user, data.get("skills") or None),
             }
             overrides["_usage_context"] = model_usage_context(
                 request.user, source="ticket_mention", overrides=overrides, agent_name="assistant",
@@ -892,7 +892,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
-                **({"model_call_guard": model_guard} if model_guard else {}),
+                user=request.user, model_call_guard=model_guard,
             )
             if model_guard:
                 model_guard()

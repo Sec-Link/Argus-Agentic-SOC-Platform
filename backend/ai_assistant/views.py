@@ -233,7 +233,7 @@ def ai_chat(request):
 
     recommended_skills = normalize_skill_names(data.get("skills"))
     if not recommended_skills:
-        recommended_skills = get_enabled_skill_names()
+        recommended_skills = get_enabled_skill_names(actor)
 
     if ticket:
         if model_guard:
@@ -269,6 +269,7 @@ def ai_chat(request):
             history_messages=data.get("messages") or [],
             overrides=overrides,
             recommended_skills=recommended_skills,
+            user=actor,
             **({"model_call_guard": model_guard, "tool_guard": lambda **_kwargs: model_guard()}
                if model_guard else {}),
         )
@@ -400,11 +401,11 @@ def skill_catalog(request):
 def skill_configs(request):
     require_skill_permission(request, "view" if request.method == "GET" else "add")
     if request.method == "GET":
-        rows = SkillConfig.objects.all().order_by("name")
+        rows = SkillConfig.objects.prefetch_related("use_groups").order_by("name")
         serializer = SkillConfigSerializer(rows, many=True)
         return Response(serializer.data)
 
-    serializer = SkillConfigSerializer(data=request.data)
+    serializer = SkillConfigSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
     with transaction.atomic():
         row = serializer.save()
@@ -414,9 +415,11 @@ def skill_configs(request):
 
 @api_view(["GET", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def skill_config_detail(request, name: str):
     require_skill_permission(request, {"GET": "view", "PUT": "change", "DELETE": "delete"}[request.method])
-    row = SkillConfig.objects.filter(name=name).first()
+    rows = SkillConfig.objects.filter(name=name)
+    row = (rows if request.method == "GET" else rows.select_for_update()).first()
     if not row:
         return Response({"error": "skill not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -424,16 +427,14 @@ def skill_config_detail(request, name: str):
         return Response(SkillConfigSerializer(row).data)
 
     if request.method == "DELETE":
-        with transaction.atomic():
-            row.delete()
-            audit_skill_configuration(request, name, "delete", [])
+        row.delete()
+        audit_skill_configuration(request, name, "delete", [])
         return Response({"message": "deleted"})
 
-    serializer = SkillConfigSerializer(row, data=request.data, partial=True)
+    serializer = SkillConfigSerializer(row, data=request.data, partial=True, context={"request": request})
     serializer.is_valid(raise_exception=True)
-    with transaction.atomic():
-        serializer.save()
-        audit_skill_configuration(request, name, "update", serializer.validated_data)
+    serializer.save()
+    audit_skill_configuration(request, name, "update", serializer.validated_data)
     return Response(serializer.data)
 
 

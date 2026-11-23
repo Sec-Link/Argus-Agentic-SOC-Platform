@@ -9,6 +9,7 @@ from accounts.models import AuditLog
 from accounts.services import is_user_readonly
 from ai_assistant.models import SkillConfig
 from ai_assistant.skill_library import list_skills, read_skill
+from ai_assistant.tool_access import allowed_tools
 
 
 def require_skill_permission(request, action):
@@ -19,6 +20,7 @@ def require_skill_permission(request, action):
 
 
 def audit_skill_configuration(request, name, action, fields, *, success=True):
+    access = {"use_group_ids": sorted(group.pk for group in fields["use_groups"])} if "use_groups" in fields else {}
     AuditService.log_event(
         event_type=AuditLog.EventType.ACTIVITY,
         status=AuditLog.Status.SUCCESS if success else AuditLog.Status.FAILURE,
@@ -26,7 +28,7 @@ def audit_skill_configuration(request, name, action, fields, *, success=True):
         user_email=getattr(request.user, "email", None), ip_address=request_ip(request),
         user_agent=request_user_agent(request), path=request.path, method=request.method,
         metadata={"resource": "skill", "name": name, "actor_id": request.user.pk,
-                  "action": action, "changed_fields": sorted(fields)},
+                  "action": action, "changed_fields": sorted(fields), **access},
     )
 
 
@@ -42,6 +44,8 @@ def normalize_skill_names(value: Any) -> List[str]:
         if isinstance(item, str):
             name = _normalize_skill_name(item)
         elif isinstance(item, dict):
+            if item.get("enabled") is False:
+                continue
             name = _normalize_skill_name(item.get("name") or item.get("route") or item.get("skill_name"))
         else:
             name = ""
@@ -97,8 +101,10 @@ def list_skill_configs() -> List[Dict[str, Any]]:
     return [serialize_skill_config(r) for r in rows]
 
 
-def get_enabled_skill_configs() -> List[Dict[str, Any]]:
-    rows = SkillConfig.objects.filter(enabled=True).order_by("name")
+def get_enabled_skill_configs(user, requested=None) -> List[Dict[str, Any]]:
+    rows = allowed_tools(SkillConfig.objects.all(), user).order_by("name")
+    if requested is not None:
+        rows = rows.filter(name__in=normalize_skill_names(requested))
     payload: List[Dict[str, Any]] = []
     for r in rows:
         payload.append(
@@ -112,6 +118,5 @@ def get_enabled_skill_configs() -> List[Dict[str, Any]]:
     return payload
 
 
-def get_enabled_skill_names() -> List[str]:
-    rows = SkillConfig.objects.filter(enabled=True).order_by("name")
-    return [r.name for r in rows]
+def get_enabled_skill_names(user) -> List[str]:
+    return list(allowed_tools(SkillConfig.objects.all(), user).order_by("name").values_list("name", flat=True))

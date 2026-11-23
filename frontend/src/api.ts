@@ -869,6 +869,7 @@ export interface HttpToolFields {
 export interface HttpToolConfig extends HttpToolFields {
   id: number;
   use_group_ids: number[];
+  use_roles?: ToolAccessRole[];
   has_auth_secret: boolean;
   created_at: string;
   updated_at: string;
@@ -904,6 +905,7 @@ export interface AssistantAgentCatalogEntry {
 }
 
 export interface AssistantAgentFields extends AssistantAgentCatalogEntry {
+  use_group_ids?: number[];
   instructions: string;
   enabled: boolean;
   max_iterations: number;
@@ -912,6 +914,7 @@ export interface AssistantAgentFields extends AssistantAgentCatalogEntry {
 
 export interface AssistantAgentConfig extends AssistantAgentFields {
   id: number;
+  use_roles?: ToolAccessRole[];
   created_at: string;
   updated_at: string;
 }
@@ -1013,6 +1016,7 @@ export async function listAiAssistantSkillConfigs() {
 
 export async function createAiAssistantSkillConfig(payload: {
   name: string;
+  use_group_ids?: number[];
   version?: string;
   route?: string;
   enabled?: boolean;
@@ -1023,6 +1027,7 @@ export async function createAiAssistantSkillConfig(payload: {
 }
 
 export async function updateAiAssistantSkillConfig(name: string, payload: Partial<{
+  use_group_ids: number[];
   version: string;
   route: string;
   enabled: boolean;

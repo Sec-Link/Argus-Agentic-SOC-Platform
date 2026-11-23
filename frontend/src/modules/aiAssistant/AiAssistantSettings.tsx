@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, message as antdMessage } from 'antd';
-import { getIsReadonly } from '../../lib/auth';
 import { getRbacMe } from 'services/accounts';
+import UseRolesField, { allowedRoleNames, changedRoleFields } from './UseRolesField';
 import HttpToolsSettings from './HttpToolsSettings';
 import AgentSettings from './AgentSettings';
 import ExecutionSettings from './ExecutionSettings';
@@ -45,22 +45,28 @@ export default function AiAssistantSettings() {
   const [skillContentError, setSkillContentError] = useState('');
   const [skillSaving, setSkillSaving] = useState(false);
   const skillLoadSequence = useRef(0);
-  const [skillPermissions, setSkillPermissions] = useState<string[] | null>(null);
+  const [permissions, setPermissions] = useState<string[] | null>(null);
   const [skillsError, setSkillsError] = useState('');
   const [skillContentPreview, setSkillContentPreview] = useState('');
   const [internalMcpTools, setInternalMcpTools] = useState<any[]>([]);
-  const [isReadonly, setIsReadonly] = useState(false);
+  const [isReadonly, setIsReadonly] = useState(true);
   const [toolAccessRoles, setToolAccessRoles] = useState<ToolAccessRole[]>([]);
-  const [canManageHttpAccess, setCanManageHttpAccess] = useState(false);
-  const [canManageMcpAccess, setCanManageMcpAccess] = useState(false);
-  const [canDisableApproval, setCanDisableApproval] = useState(false);
+  const [superuser, setSuperuser] = useState(false);
   const [toolAccessError, setToolAccessError] = useState('');
   const [toolAccessReady, setToolAccessReady] = useState(false);
-  useEffect(() => { setIsReadonly(getIsReadonly()); }, []);
-  const canViewSkills = !!skillPermissions?.includes('view');
-  const canAddSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('add');
-  const canChangeSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('change');
-  const canDeleteSkills = canViewSkills && !isReadonly && !!skillPermissions?.includes('delete');
+  const accessSequence = useRef(0);
+  const has = (action: string, model: string) => permissions !== null &&
+    (superuser || permissions.includes(`ai_assistant.${action}_${model}`));
+  const actions = (model: string) => ({
+    add: !isReadonly && has('add', model), change: !isReadonly && has('change', model),
+    remove: !isReadonly && has('delete', model),
+  });
+  const canSetRoles = (model: string) => toolAccessReady && !isReadonly && has('manage_access', model);
+  const canManageHttpAccess = canSetRoles('httptoolconfig');
+  const canManageMcpAccess = canSetRoles('externalmcpserver');
+  const canDisableApproval = superuser && !isReadonly;
+  const canViewSkills = has('view', 'skillconfig');
+  const { add: canAddSkills, change: canChangeSkills, remove: canDeleteSkills } = actions('skillconfig');
   const skillConfigMap = useMemo(() => {
     const map = new Map<string, any>();
     for (const row of skillConfigs) {
@@ -83,27 +89,37 @@ export default function AiAssistantSettings() {
   };
 
   const loadToolAccess = async () => {
+    const sequence = ++accessSequence.current;
+    setIsReadonly(true);
     setToolAccessReady(false);
     setToolAccessError('');
-    setCanManageHttpAccess(false);
-    setCanManageMcpAccess(false);
-    setCanDisableApproval(false);
+    setPermissions(null);
+    setSuperuser(false);
+    let permissionsLoaded = false;
     try {
       const me = await getRbacMe();
-      const permissions: string[] = Array.isArray(me?.permissions) ? me.permissions : [];
-      setSkillPermissions(['view', 'add', 'change', 'delete'].filter((action) =>
-        !!me?.is_superuser || permissions.includes(`ai_assistant.${action}_skillconfig`)));
-      const httpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_httptoolconfig');
-      const mcpAccess = !!me?.is_superuser || permissions.includes('ai_assistant.manage_access_externalmcpserver');
-      const roles = httpAccess || mcpAccess ? await listAiAssistantToolAccessRoles() : [];
+      if (sequence !== accessSequence.current) return;
+      if (typeof me?.is_readonly !== 'boolean' || !Array.isArray(me.permissions)) throw new Error('Incomplete permissions');
+      const grants: string[] = me.permissions;
+      setIsReadonly(me.is_readonly);
+      setSuperuser(!!me?.is_superuser);
+      setPermissions(grants);
+      permissionsLoaded = true;
+      const managesRoles = me.is_superuser || ['agentconfig', 'skillconfig', 'httptoolconfig', 'externalmcpserver'].some((model) =>
+        grants.includes(`ai_assistant.view_${model}`) && grants.includes(`ai_assistant.manage_access_${model}`) &&
+        (grants.includes(`ai_assistant.add_${model}`) || grants.includes(`ai_assistant.change_${model}`))
+      );
+      const roles = !me.is_readonly && managesRoles ? await listAiAssistantToolAccessRoles() : [];
+      if (sequence !== accessSequence.current) return;
+      if (!Array.isArray(roles)) throw new Error('Invalid role directory');
       setToolAccessRoles(roles);
-      setCanManageHttpAccess(httpAccess);
-      setCanManageMcpAccess(mcpAccess);
-      setCanDisableApproval(!!me?.is_superuser);
       setToolAccessReady(true);
     } catch {
-      setSkillPermissions((current) => current ?? []);
-      setToolAccessError('Could not load tool access permissions. Role editing and automatic approval are unavailable.');
+      if (sequence !== accessSequence.current) return;
+      setToolAccessRoles([]);
+      setToolAccessError(permissionsLoaded
+        ? 'Could not load the role directory. Existing role assignments are preserved.'
+        : 'Could not load your AI Assistant permissions.');
     }
   };
 
@@ -170,7 +186,7 @@ export default function AiAssistantSettings() {
       token: '',
       clear_token: false,
       enabled: row?.enabled !== false,
-      use_group_ids: row?.use_group_ids || [],
+      use_group_ids: row ? row.use_group_ids : [],
     });
     setMcpModalOpen(true);
   };
@@ -186,7 +202,7 @@ export default function AiAssistantSettings() {
           ...(values.token ? { token: values.token } : {}),
           ...(values.clear_token ? { clear_token: true } : {}),
           enabled: values.enabled !== false,
-          ...(canManageMcpAccess ? { use_group_ids: values.use_group_ids || [] } : {}),
+          ...changedRoleFields(canManageMcpAccess, values.use_group_ids, mcpEditRow?.use_group_ids),
         });
         message.success('MCP updated');
       } else {
@@ -196,7 +212,7 @@ export default function AiAssistantSettings() {
           endpoint: values.endpoint,
           token: values.token || '',
           enabled: values.enabled !== false,
-          ...(canManageMcpAccess ? { use_group_ids: values.use_group_ids || [] } : {}),
+          ...changedRoleFields(canManageMcpAccess, values.use_group_ids, mcpEditRow?.use_group_ids),
         });
         message.success('MCP created');
       }
@@ -239,6 +255,7 @@ export default function AiAssistantSettings() {
     skillEditForm.setFieldsValue({
       name: row?.name || '',
       version: row?.version || 'v1',
+      use_group_ids: row ? row.use_group_ids : [],
       route: row?.route || row?.name || '',
       enabled: row?.enabled !== false,
       description: row?.description || '',
@@ -272,6 +289,7 @@ export default function AiAssistantSettings() {
     try {
       if (skillEditRow?.name) {
         await updateAiAssistantSkillConfig(skillEditRow.name, {
+          ...changedRoleFields(canSetRoles('skillconfig'), values.use_group_ids, skillEditRow?.use_group_ids),
           version: values.version || 'v1',
           route: values.route || values.name,
           enabled: values.enabled !== false,
@@ -287,6 +305,7 @@ export default function AiAssistantSettings() {
       } else {
         const created = await createAiAssistantSkillConfig({
           name: values.name,
+          ...changedRoleFields(canSetRoles('skillconfig'), values.use_group_ids, skillEditRow?.use_group_ids),
           version: values.version || 'v1',
           route: values.route || values.name,
           enabled: values.enabled !== false,
@@ -537,12 +556,12 @@ export default function AiAssistantSettings() {
           {
             key: 'agents',
             label: 'Agents',
-            children: <AgentSettings readonly={isReadonly} />,
+            children: <AgentSettings readonly={isReadonly} roles={toolAccessRoles} actions={actions('agentconfig')} canManageAccess={canSetRoles('agentconfig')} />,
           },
           {
             key: 'http-tools',
             label: 'Tools',
-            children: <HttpToolsSettings readonly={isReadonly || !toolAccessReady} roles={toolAccessRoles} canManageAccess={canManageHttpAccess} canDisableApproval={canDisableApproval} />,
+            children: <HttpToolsSettings actions={actions('httptoolconfig')} readonly={isReadonly || !toolAccessReady} roles={toolAccessRoles} canManageAccess={canManageHttpAccess} canDisableApproval={canDisableApproval} />,
           },
           {
             key: 'tool-monitor',
@@ -581,7 +600,7 @@ export default function AiAssistantSettings() {
                       { title: 'Name', dataIndex: 'name', key: 'name' },
                       { title: 'Title', dataIndex: 'title', key: 'title', render: (v: string) => v || '-' },
                       { title: 'Endpoint', dataIndex: 'endpoint', key: 'endpoint', ellipsis: true },
-                      { title: 'Allowed roles', key: 'use_group_ids', render: (_: any, row: any) => row.use_group_ids?.length ? row.use_group_ids.map((id: number) => <Tag key={id}>{toolAccessRoles.find((role) => role.id === id)?.name || `Role #${id}`}</Tag>) : 'Superusers only' },
+                      { title: 'Allowed roles', key: 'use_group_ids', render: (_: any, row: any) => allowedRoleNames(row, toolAccessRoles) },
                       {
                         title: 'Enabled',
                         key: 'enabled',
@@ -638,7 +657,7 @@ export default function AiAssistantSettings() {
           {
             key: 'skills',
             label: 'Skills Management',
-            children: !canViewSkills ? <Alert type="info" showIcon message={skillPermissions === null ? 'Loading skill permissions…' : 'You do not have permission to view skill configurations.'} /> : (
+            children: !canViewSkills ? <Alert type="info" showIcon message={permissions === null ? 'Loading skill permissions…' : 'You do not have permission to view skill configurations.'} /> : (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 {skillsError && <Alert type="error" showIcon message={skillsError} />}
                 <Card
@@ -660,6 +679,7 @@ export default function AiAssistantSettings() {
                     columns={[
                       { title: 'Name', dataIndex: 'name', key: 'name' },
                       { title: 'Version', dataIndex: 'version', key: 'version', width: 120 },
+                      { title: 'Allowed roles', key: 'use_group_ids', render: (_: any, row: any) => allowedRoleNames(row, toolAccessRoles) },
                       { title: 'Route', dataIndex: 'route', key: 'route', ellipsis: true },
                       {
                         title: 'Enabled',
@@ -784,6 +804,7 @@ export default function AiAssistantSettings() {
           >
             <Input disabled={!!skillEditRow} placeholder="skill-name" />
           </Form.Item>
+          {canSetRoles('skillconfig') && <UseRolesField roles={toolAccessRoles} resource="skill" />}
           <Form.Item label="Version" name="version">
             <Input placeholder="v1" />
           </Form.Item>

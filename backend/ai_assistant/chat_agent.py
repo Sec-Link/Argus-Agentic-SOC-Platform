@@ -260,6 +260,8 @@ def run_chat_agent(
     overrides: Optional[Dict[str, Any]] = None,
     recommended_skills: Optional[List[str]] = None,
     *,
+    user=None,
+    loaded_skills=None,
     event_callback=None,
     cancel_event=None,
     system_prompt_extra="",
@@ -326,7 +328,7 @@ def run_chat_agent(
     if include_default_tools:
         agent_tools = [*_internal_tools(), *agent_tools]
         skill_middleware = SkillsMiddleware(
-            allowed_skills=allowed_skills, recommended_skills=recommended_skills,
+            allowed_skills=allowed_skills, recommended_skills=recommended_skills, user=user, loaded_skills=loaded_skills,
         )
         _check_cancelled(cancel_event)
         agent_tools.extend(_external_tools(
