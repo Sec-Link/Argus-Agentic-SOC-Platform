@@ -1,4 +1,5 @@
-"""Discover log sources from the connected Elasticsearch and resolve their effective category."""
+"""Discover platform-scoped log sources and resolve their effective category."""
+import fnmatch
 import logging
 from datetime import timedelta
 
@@ -21,6 +22,11 @@ INIT_LOCK_SECONDS = 120
 DEFAULT_WINDOW_DAYS = 7
 MAX_INDEX_BUCKETS = 2000
 MAX_SOURCES = 300
+
+
+def source_matches(source, pattern):
+    values = (source.get("index"), source.get("source_label", source["source_key"]))
+    return any(value and fnmatch.fnmatchcase(value, pattern) for value in values)
 
 
 def _es_client():
@@ -169,36 +175,60 @@ def _scan_es(days=DEFAULT_WINDOW_DAYS):
     return result
 
 
-def load_snapshot():
-    return LogSourceScan.objects.first()
+def load_snapshot(platform="elk"):
+    return LogSourceScan.objects.filter(platform=platform).first()
 
 
-def run_scan(days=DEFAULT_WINDOW_DAYS, actor=""):
-    """Scan ES and persist the result. A failed scan never overwrites the previous good snapshot."""
-    result = _scan_es(days)
+def run_scan(days=DEFAULT_WINDOW_DAYS, actor="", platform="elk", targets=None):
+    """Persist a scan without replacing the previous good snapshot on failure."""
+    if platform == "splunk":
+        from integrations.splunk import SplunkError
+        from .splunk_sources import scan
+
+        try:
+            result = scan(targets, LogSourceCategory.objects.filter(platform=platform, enabled=True))
+            days = result["window_days"]
+        except SplunkError as exc:
+            return None, str(exc)
+    else:
+        result = _scan_es(days)
     if not result["es_available"]:
         return None, result.get("reason")
+    if platform == "splunk" and not result.get("truncated"):
+        previous = load_snapshot(platform)
+        # Preserve known but now silent sources, only within the exact scanned origin/index scope.
+        if previous and previous.targets.get("integration_id") == result["targets"]["integration_id"]:
+            keys = {s["source_key"] for s in result["sources"]}
+            for source in previous.payload:
+                if (source["source_key"] not in keys and source.get("target_id") == result["target_id"]
+                        and source.get("index") in result["targets"]["indices"]):
+                    result["sources"].append({**source, "docs": 0, "last_seen": None, "hosts_approx": 0,
+                                              "host_values": {f: [] for f in result["host_fields"]}})
+            if len(result["sources"]) > MAX_SOURCES:
+                result["sources"] = result["sources"][:MAX_SOURCES]
+                result["truncated"] = True
     with transaction.atomic():
         snap = LogSourceScan.objects.create(
+            platform=platform, targets={**result.get("targets", {}), "warnings": result.get("warnings", [])} if platform == "splunk" else {},
             scanned_at=timezone.now(),
             window_days=days,
             truncated=result.get("truncated", False),
             payload=result["sources"],
             scanned_by=actor,
         )
-        LogSourceScan.objects.exclude(pk=snap.pk).delete()
+        LogSourceScan.objects.filter(platform=platform).exclude(pk=snap.pk).delete()
     return snap, None
 
 
-def ensure_snapshot(allow_scan=True):
+def ensure_snapshot(allow_scan=True, platform="elk"):
     """Return (snapshot, error). Scans automatically only when none exists yet (first initialization).
 
     `allow_scan=False` never touches ES: with no stored scan it returns (None, reason).
     """
-    snap = load_snapshot()
+    snap = load_snapshot(platform)
     if snap is not None:
         return snap, None
-    if not allow_scan:
+    if not allow_scan or platform == "splunk":
         return None, "No log source scan has been run yet."
     es, _cfg = _es_client()
     if not es:
@@ -212,39 +242,44 @@ def ensure_snapshot(allow_scan=True):
         cache.delete(INIT_LOCK_KEY)
 
 
-def resolve_sources(rescan_actor=None, allow_scan=True):
+def resolve_sources(rescan_actor=None, allow_scan=True, platform="elk", targets=None, include_host_values=False):
     """Snapshot + auto classification + manual mappings, with the effective category per source.
 
     Reads the stored scan; a scan only runs when `rescan_actor` is given (explicit re-scan) or when
     no snapshot exists yet (first initialization). `allow_scan=False` disables both.
     """
     if rescan_actor is not None and allow_scan:
-        snap, error = run_scan(actor=rescan_actor)
+        snap, error = run_scan(actor=rescan_actor, platform=platform, targets=targets)
         if snap is None:
-            snap = load_snapshot()  # keep showing the previous good scan
+            snap = load_snapshot(platform)  # keep showing the previous good scan
     else:
-        snap, error = ensure_snapshot(allow_scan=allow_scan)
+        snap, error = ensure_snapshot(allow_scan=allow_scan, platform=platform)
     discovered = {
         "sources": snap.payload if snap else [],
         "truncated": snap.truncated if snap else False,
     }
     now = timezone.now()
-    categories = list(LogSourceCategory.objects.all())
+    categories = list(LogSourceCategory.objects.filter(platform=platform))
     by_name = {c.name.lower(): c for c in categories}
-    mappings = {m.source_key: m for m in LogSourceMapping.objects.all()}
+    mappings = {m.source_key: m for m in LogSourceMapping.objects.filter(platform=platform)}
 
     sources = []
     seen_keys = set()
     for s in discovered["sources"]:
         seen_keys.add(s["source_key"])
         auto = classify_source(
-            s["source_key"],
+            s.get("source_label", s["source_key"]),
             modules=s["hints"]["modules"],
             datasets=s["hints"]["datasets"],
             categories=s["hints"]["categories"],
         )
         auto_cat = by_name.get(auto["category"].lower()) if auto["category"] != UNCLASSIFIED else None
-        sources.append(_resolved_row(s, auto, auto_cat, mappings.get(s["source_key"])))
+        row = _resolved_row(s, auto, auto_cat, mappings.get(s["source_key"]))
+        if platform == "splunk" and row["manual"] is None:
+            matched = next((c for c in categories if c.enabled and any(source_matches(s, p) for p in c.matchers)), None)
+            if matched:
+                row["effective_category_id"] = matched.pk
+        sources.append(row)
 
     # Manual mappings whose source vanished from ES still count (and stay visible so they can be reset).
     for key, m in mappings.items():
@@ -254,20 +289,28 @@ def resolve_sources(rescan_actor=None, allow_scan=True):
             "source_key": key, "index_count": 0, "docs": 0, "last_seen": None, "hosts_approx": 0,
             "hints": {"modules": [], "datasets": [], "categories": []},
         }
-        auto = {"category": UNCLASSIFIED, "confidence": "none", "reason": "source not found in ES"}
+        if platform == "splunk":
+            stub["source_label"] = m.note or key
+        auto = {"category": UNCLASSIFIED, "confidence": "none", "reason": "source not found in latest scan"}
         sources.append(_resolved_row(stub, auto, None, m))
 
+    if not include_host_values:
+        for source in sources:
+            source.pop("host_values", None)
     return {
         "initialized": snap is not None,
         # Initialization is true once a scan succeeded; `reason` explains the latest failed attempt.
         "es_available": snap is not None,
         "reason": error,
+        "warnings": snap.targets.get("warnings", []) if snap else [],
         "window_days": snap.window_days if snap else DEFAULT_WINDOW_DAYS,
+        **({"time_range": snap.targets.get("time_range", "7d") if snap else "7d"} if platform == "splunk" else {}),
         "truncated": discovered["truncated"],
         "scanned_at": snap.scanned_at.isoformat() if snap else None,
         "scanned_by": snap.scanned_by if snap else None,
         "scan_age_seconds": int((now - snap.scanned_at).total_seconds()) if snap else None,
         "sources": sources,
+        "targets": snap.targets if snap else {},
     }
 
 
@@ -284,6 +327,9 @@ def _resolved_row(s, auto, auto_cat, mapping):
         "auto_reason": auto["reason"],
         "manual": None,
     }
+    for field in ("source_label", "index", "sourcetype", "target_id", "host_values"):
+        if field in s:
+            row[field] = s[field]
     if mapping:
         row["manual"] = {"category_id": mapping.category_id, "ignored": mapping.ignored}
         row["ignored"] = mapping.ignored

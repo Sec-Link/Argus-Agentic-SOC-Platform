@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Button, Card, Col, Empty, Progress, Row, Spin, Statistic, Typography } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { fetchDashboardAttackCoverage, fetchDashboardLogSourceCoverage } from 'services/dashboards';
-import type { AttackCoverage, LogSourceCoverage } from 'types';
+import type { AttackCoverage, LogSourceCoverage, MonitoringPlatform } from 'types';
 import { useRouter } from 'next/navigation';
 import ScanAge from './ScanAge';
 import ClickValue from './ClickValue';
@@ -13,9 +13,10 @@ import { coverageColor, Matrix } from './AttackCoverageCard';
 
 interface Props {
   onConfigure: () => void;
+  platform: MonitoringPlatform;
 }
 
-const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
+const CoverageOverviewSection: React.FC<Props> = ({ onConfigure, platform }) => {
   const [logs, setLogs] = useState<LogSourceCoverage | null>(null);
   const [attack, setAttack] = useState<AttackCoverage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,20 +28,20 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
     setLoading(true);
     setFailed(false);
     // Each half degrades on its own so one failing endpoint does not hide the other.
-    Promise.allSettled([fetchDashboardLogSourceCoverage(), fetchDashboardAttackCoverage()])
+    Promise.allSettled([fetchDashboardLogSourceCoverage(7, platform), fetchDashboardAttackCoverage(platform)])
       .then(([l, a]) => {
         setLogs(l.status === 'fulfilled' ? l.value : null);
         setAttack(a.status === 'fulfilled' ? a.value : null);
         setFailed(l.status === 'rejected' && a.status === 'rejected');
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [platform]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const configured = Boolean(logs?.initialized && logs.categories.some((c) => c.source_count > 0));
+  const configured = Boolean(logs?.initialized);
   const unmonitored = logs
     ? logs.categories.reduce((n, c) => n + c.sources.filter((s) => s.docs > 0 && !s.enabled_rules).length, 0)
     : 0;
@@ -100,7 +101,7 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
             />
             {rules && (
               <Statistic
-                title={<HelpTip id="enabledRules" label="Enabled rules" tip="Enabled detection rules / all rules in the library." />}
+                title={<HelpTip id="enabledRules" platform={platform} label="Enabled rules" tip="Confirmed enabled rules / published rules in the selected platform snapshot." />}
                 value={`${rules.enabled_rules} / ${rules.total_rules}`}
                 formatter={() => <ClickValue onClick={() => setDetailKind('rules_enabled')}>{`${rules.enabled_rules} / ${rules.total_rules}`}</ClickValue>}
                 valueStyle={{ fontSize: 26, fontWeight: 600 }}
@@ -178,7 +179,7 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
             <>
               <div className="cov-stats">
                 <Statistic
-                  title={<HelpTip id="attackCoverage" label="Coverage" tip="Share of ATT&CK techniques covered by at least one enabled rule." />}
+                  title={<HelpTip id="attackCoverage" platform={platform} label="Coverage" tip="Share of ATT&CK techniques covered by at least one enabled rule." />}
                   value={attack.coverage_percent == null ? '—' : `${attack.coverage_percent}%`}
                   valueStyle={{
                     color: attack.coverage_percent == null ? undefined : coverageColor(attack.coverage_percent),
@@ -213,7 +214,7 @@ const CoverageOverviewSection: React.FC<Props> = ({ onConfigure }) => {
       style={{ marginTop: 16 }}
     >
       {body}
-      {logs && <MetricDetailModal kind={detailKind} data={logs} onClose={() => setDetailKind(null)} />}
+      {logs && <MetricDetailModal kind={detailKind} platform={platform} data={logs} onClose={() => setDetailKind(null)} />}
     </Card>
   );
 };

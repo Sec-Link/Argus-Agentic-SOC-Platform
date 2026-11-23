@@ -1,13 +1,13 @@
 import HelpTip from './HelpTip';
 import ClickValue from './ClickValue';
 import AttackTechniquesModal from './AttackTechniquesModal';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Empty, Progress, Spin, Statistic, Tooltip, Typography } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
 import { detectionLinkForTactic, detectionLinkForTechnique, openDetectionsWithSearch } from './detectionLinks';
 import { fetchDashboardAttackCoverage } from 'services/dashboards';
-import type { AttackCoverage } from 'types';
+import type { AttackCoverage, MonitoringPlatform } from 'types';
 import AttackCatalogSyncModal from './AttackCatalogSyncModal';
 
 export const coverageColor = (percent: number) => (percent >= 60 ? '#52c41a' : percent >= 30 ? '#faad14' : '#f5222d');
@@ -79,23 +79,26 @@ export const Matrix: React.FC<{
   </div>
 );
 
-const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
+const AttackCoverageCard: React.FC<{ isStaff: boolean; platform?: MonitoringPlatform }> = ({ isStaff, platform = 'elk' }) => {
   const [data, setData] = useState<AttackCoverage | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [syncOpen, setSyncOpen] = useState(false);
   const [techniquesOpen, setTechniquesOpen] = useState(false);
   const router = useRouter();
+  const requestRef = useRef(0);
 
   const load = useCallback(() => {
+    const requestId = ++requestRef.current;
     setLoading(true);
-    fetchDashboardAttackCoverage()
-      .then((res) => setData(res))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, []);
+    fetchDashboardAttackCoverage(platform)
+      .then((res) => { if (requestId === requestRef.current) setData(res); })
+      .catch(() => { if (requestId === requestRef.current) setData(null); })
+      .finally(() => { if (requestId === requestRef.current) setLoading(false); });
+  }, [platform]);
 
   useEffect(() => {
     load();
+    return () => { requestRef.current += 1; };
   }, [load]);
 
   const percent = data?.coverage_percent;
@@ -146,12 +149,14 @@ const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
               showIcon
               style={{ marginBottom: 16 }}
               message="No ATT&CK techniques found on enabled rules"
-              description="Rules need Sigma attack.* tags (for example attack.t1059.001) or a Kibana threat mapping to count toward coverage."
+              description={platform === 'splunk'
+                ? 'Published Splunk rule versions have no mapped ATT&CK techniques.'
+                : 'Rules need Sigma attack.* tags (for example attack.t1059.001) or a Kibana threat mapping to count toward coverage.'}
             />
           )}
           <div className="cov-stats">
             <Statistic
-              title={<HelpTip id="attackCoverage" label="Coverage" tip="Share of ATT&CK techniques covered by at least one enabled rule. Sub-techniques count toward their parent technique." />}
+              title={<HelpTip id="attackCoverage" platform={platform} label="Coverage" tip="Share of ATT&CK techniques covered by at least one enabled rule. Sub-techniques count toward their parent technique." />}
               value={percent == null ? '—' : `${percent}%`}
               valueStyle={{ color: percent == null ? undefined : coverageColor(percent), fontSize: 26, fontWeight: 600 }}
             />
@@ -161,7 +166,7 @@ const AttackCoverageCard: React.FC<{ isStaff: boolean }> = ({ isStaff }) => {
               formatter={(v) => <ClickValue onClick={() => setTechniquesOpen(true)}>{v}</ClickValue>}
               valueStyle={{ fontSize: 26, fontWeight: 600 }}
             />
-            <Statistic title={<HelpTip id="enabledRules" label="Enabled rules" tip="Enabled detection rules considered for coverage." />} value={data.enabled_rules} valueStyle={{ fontSize: 26, fontWeight: 600 }} formatter={(v) => <ClickValue onClick={() => openDetectionsWithSearch(router.push, '')}>{v}</ClickValue>} />
+            <Statistic title={<HelpTip id="enabledRules" platform={platform} label="Enabled rules" tip="Enabled detection rules considered for coverage." />} value={data.enabled_rules} valueStyle={{ fontSize: 26, fontWeight: 600 }} formatter={(v) => <ClickValue onClick={() => openDetectionsWithSearch(router.push, '')}>{v}</ClickValue>} />
           </div>
 
           <Typography.Text strong>

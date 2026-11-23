@@ -1,3 +1,4 @@
+import type { MonitoringPlatform, SplunkCoverageTimeRange } from './types';
 import axios, { InternalAxiosRequestConfig } from 'axios';
 import { readPageChatStream, pageChatHttpError, PageChatStreamError, type PageChatEvent } from './services/aiAssistant/stream';
 
@@ -287,13 +288,14 @@ export async function fetchAlerts(
   return res.data;
 }
 
-export async function fetchDashboard(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+export async function fetchDashboard(params?: { start_time?: string; end_time?: string; all_time?: boolean; platform?: MonitoringPlatform }, signal?: AbortSignal) {
   const qp = new URLSearchParams();
   qp.set('_ts', String(Date.now()));
   if (params?.all_time) qp.set('all_time', 'true');
   if (params?.start_time) qp.set('start_time', params.start_time);
   if (params?.end_time) qp.set('end_time', params.end_time);
-  const res = await client.get(`/alerts/dashboard/?${qp.toString()}`);
+  if (params?.platform) qp.set('platform', params.platform);
+  const res = await client.get(`/alerts/dashboard/?${qp.toString()}`, { signal });
   return res.data;
 }
 
@@ -1145,42 +1147,47 @@ export async function deleteIntegration(id:string){
 
 export default client
 
-export async function fetchDashboardConversionStats(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+export async function fetchDashboardConversionStats(params?: { start_time?: string; end_time?: string; all_time?: boolean; platform?: MonitoringPlatform }) {
   const qp = new URLSearchParams();
   // Dashboard chart APIs live under the dashboard module, not tickets.
   if (params?.all_time) qp.set('all_time', 'true');
   if (params?.start_time) qp.set('created_from', params.start_time);
   if (params?.end_time) qp.set('created_to', params.end_time);
+  if (params?.platform) qp.set('platform', params.platform);
   const suffix = qp.toString() ? `?${qp.toString()}` : '';
   const r = await client.get(`/dashboards/conversion-stats/${suffix}`);
   return r.data;
 }
 
-export async function fetchDashboardEventFlow(params?: { start_time?: string; end_time?: string; all_time?: boolean }) {
+export async function fetchDashboardEventFlow(params?: { start_time?: string; end_time?: string; all_time?: boolean; platform?: MonitoringPlatform }) {
   const qp = new URLSearchParams();
   if (params?.start_time) qp.set('created_from', params.start_time);
   if (params?.end_time) qp.set('created_to', params.end_time);
+  if (params?.platform) qp.set('platform', params.platform);
   const suffix = qp.toString() ? `?${qp.toString()}` : '';
   const r = await client.get(`/dashboards/event-flow/${suffix}`);
   return r.data;
 }
 
-export async function fetchDashboardSankeyStats(params?: { start_time?: string; end_time?: string }) {
+export async function fetchDashboardSankeyStats(params?: { start_time?: string; end_time?: string; platform?: MonitoringPlatform }) {
   const qp = new URLSearchParams();
   if (params?.start_time) qp.set('created_from', params.start_time);
   if (params?.end_time) qp.set('created_to', params.end_time);
+  if (params?.platform) qp.set('platform', params.platform);
   const suffix = qp.toString() ? `?${qp.toString()}` : '';
   const r = await client.get(`/dashboards/sankey-stats/${suffix}`);
   return r.data;
 }
 
-export async function fetchDashboardAttackCoverage() {
-  const r = await client.get('/dashboards/attack-coverage/');
+export async function fetchDashboardAttackCoverage(platform?: MonitoringPlatform) {
+  const suffix = platform ? `?platform=${platform}` : '';
+  const r = await client.get(`/dashboards/attack-coverage/${suffix}`);
   return r.data;
 }
 
-export async function fetchDashboardLogSourceCoverage(days = 7) {
-  const r = await client.get(`/dashboards/log-source-coverage/?days=${days}`);
+export async function fetchDashboardLogSourceCoverage(days = 7, platform?: MonitoringPlatform) {
+  const suffix = platform ? `&platform=${platform}` : '';
+  const r = await client.get(`/dashboards/log-source-coverage/?days=${days}${suffix}`);
   return r.data;
 }
 
@@ -1194,67 +1201,75 @@ export async function syncAttackCatalog(url?: string) {
   return r.data;
 }
 
-export async function fetchLogSourceCategories() {
-  const r = await client.get('/dashboards/log-source-categories/');
+const logSourcePath = (path: string, platform?: MonitoringPlatform) =>
+  `/dashboards/log-source-categories/${path}${platform ? `?platform=${platform}` : ''}`;
+
+export async function fetchLogSourceCategories(platform?: MonitoringPlatform) {
+  const r = await client.get(logSourcePath('', platform));
   return Array.isArray(r.data) ? r.data : r.data?.results ?? [];
 }
 
-export async function createLogSourceCategory(payload: Record<string, unknown>) {
-  const r = await client.post('/dashboards/log-source-categories/', payload);
+export async function createLogSourceCategory(payload: Record<string, unknown>, platform?: MonitoringPlatform) {
+  const r = await client.post(logSourcePath('', platform), payload);
   return r.data;
 }
 
-export async function updateLogSourceCategory(id: number, payload: Record<string, unknown>) {
-  const r = await client.patch(`/dashboards/log-source-categories/${id}/`, payload);
+export async function updateLogSourceCategory(id: number, payload: Record<string, unknown>, platform?: MonitoringPlatform) {
+  const r = await client.patch(logSourcePath(`${id}/`, platform), payload);
   return r.data;
 }
 
-export async function uploadLogSourceCategoryIcon(id: number, file: File) {
+export async function uploadLogSourceCategoryIcon(id: number, file: File, platform?: MonitoringPlatform) {
   const form = new FormData();
   form.append('file', file);
-  const r = await client.post(`/dashboards/log-source-categories/${id}/icon/`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  const r = await client.post(logSourcePath(`${id}/icon/`, platform), form, { headers: { 'Content-Type': 'multipart/form-data' } });
   return r.data;
 }
 
-export async function deleteLogSourceCategoryIcon(id: number) {
-  const r = await client.delete(`/dashboards/log-source-categories/${id}/icon/`);
+export async function deleteLogSourceCategoryIcon(id: number, platform?: MonitoringPlatform) {
+  const r = await client.delete(logSourcePath(`${id}/icon/`, platform));
   return r.data;
 }
 
-export async function deleteLogSourceCategory(id: number) {
-  await client.delete(`/dashboards/log-source-categories/${id}/`);
+export async function deleteLogSourceCategory(id: number, platform?: MonitoringPlatform) {
+  await client.delete(logSourcePath(`${id}/`, platform));
 }
 
-export async function previewLogSourceMatchers(matchers: string[]) {
-  const r = await client.post('/dashboards/log-source-categories/preview/', { matchers });
-  return r.data as { es_available: boolean; window_days?: number; indices: Array<{ index: string; docs: number }> };
+export async function previewLogSourceMatchers(matchers: string[], platform?: MonitoringPlatform, timeRange?: SplunkCoverageTimeRange) {
+  const payload = { matchers, ...(platform === 'splunk' && timeRange ? { time_range: timeRange } : {}) };
+  const r = await client.post(logSourcePath('preview/', platform), payload);
+  return r.data as { es_available: boolean; window_days?: number; time_range?: SplunkCoverageTimeRange;
+    reason?: string; warnings?: string[]; truncated?: boolean; indices: Array<{ index: string; docs: number }> };
 }
 
-export async function fetchDiscoveredLogSources() {
-  const r = await client.get('/dashboards/log-source-categories/discover/');
+export async function fetchDiscoveredLogSources(platform?: MonitoringPlatform) {
+  const r = await client.get(logSourcePath('discover/', platform));
   return r.data as import('./types').LogSourceDiscovery;
 }
 
-export async function rescanLogSources() {
-  const r = await client.post('/dashboards/log-source-categories/discover/rescan/');
+export interface SplunkScanTarget { integration_id: string; indices: string[]; time_range?: SplunkCoverageTimeRange }
+
+export async function rescanLogSources(platform?: MonitoringPlatform, target?: SplunkScanTarget) {
+  const r = await client.post(logSourcePath('discover/rescan/', platform), target);
   return r.data as import('./types').LogSourceDiscovery;
 }
 
 export async function saveLogSourceMappings(
   mappings: Array<{ source_key: string; category_id?: number | null; ignored?: boolean }>,
+  platform?: MonitoringPlatform,
 ) {
-  const r = await client.post('/dashboards/log-source-categories/mappings/', { mappings });
+  const r = await client.post(logSourcePath('mappings/', platform), { mappings });
   return r.data as { updated: number };
 }
 
-export async function resetLogSourceMappings(sourceKeys: string[]) {
-  const r = await client.post('/dashboards/log-source-categories/mappings/reset/', { source_keys: sourceKeys });
+export async function resetLogSourceMappings(sourceKeys: string[], platform?: MonitoringPlatform) {
+  const r = await client.post(logSourcePath('mappings/reset/', platform), { source_keys: sourceKeys });
   return r.data as { reset: number };
 }
 
-export async function fetchLogSourceCategoryOptions() {
-  const r = await client.get('/dashboards/log-source-categories/options/');
-  return r.data as { asset_types: string[] };
+export async function fetchLogSourceCategoryOptions(platform?: MonitoringPlatform) {
+  const r = await client.get(logSourcePath('options/', platform));
+  return r.data as { asset_types: string[]; integrations?: Array<{ id: string; name: string; index: string }>; targets?: Partial<SplunkScanTarget> };
 }
 
 export async function fetchRiskFunnel() {

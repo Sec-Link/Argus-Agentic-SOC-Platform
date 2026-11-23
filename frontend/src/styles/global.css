@@ -80,6 +80,19 @@ html, body {
   overflow-x: hidden;
 }
 
+.dashboard-home-shell > .ant-tabs > .ant-tabs-nav {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dashboard-home-shell > .ant-tabs > .ant-tabs-nav > .ant-tabs-extra-content {
+  max-width: 100%;
+}
+
+.dashboard-overview-controls {
+  justify-content: flex-end;
+}
+
 /* Dashboard toolbar: holds only the time control, docked top-right inside the Overview tab. */
 .dashboard-toolbar-shell {
   display: flex;
@@ -309,6 +322,22 @@ html, body {
 /* Coverage cards size to their content instead of the fixed-height equal cards. */
 .dashboard-coverage-card {
   height: auto;
+}
+
+.dashboard-coverage-card .ant-card-head-wrapper {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 0;
+}
+.dashboard-coverage-card .ant-card-head-title {
+  white-space: normal;
+}
+.dashboard-coverage-card .ant-card-extra {
+  max-width: 100%;
+  margin-inline-start: 0;
+}
+.dashboard-coverage-card [data-tour="ls-actions"] {
+  flex-wrap: wrap;
 }
 
 .dashboard-equal-card,
@@ -2208,7 +2237,10 @@ html, body {
   align-items: center;
   gap: 4px;
   max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
+.ls-chip.ant-tag .anticon-close { flex-shrink: 0; }
 .ls-chip.ant-tag .anticon-close { color: var(--ls-fg); opacity: 0.7; }
 .ls-chip.ant-tag .anticon-close:hover { opacity: 1; }
 .ls-chip--alerting.ant-tag { --ls-bg: #e8f7ef; --ls-border: #9fdcb9; --ls-fg: #0f6b3c; }

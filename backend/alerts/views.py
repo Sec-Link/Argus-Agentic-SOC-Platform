@@ -7,6 +7,7 @@ import time
 from typing import Any
 from django.utils.dateparse import parse_datetime
 from django.utils import timezone
+from django.db import DatabaseError
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -16,6 +17,7 @@ from rest_framework.views import APIView
 from .models import ESIntegrationConfig
 from .services import AlertService, _detect_es_major_version, _http_search, _index_has_field
 from .tasks import get_or_create_alert_sync_schedule, sync_es_alerts_to_db
+from dashboards.source_scope import dashboard_platform
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ class AlertDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        platform = dashboard_platform(request.query_params)
         try:
             all_time_raw = request.GET.get('all_time')
             start_time_raw = request.GET.get('start_time')
@@ -70,8 +73,12 @@ class AlertDashboardView(APIView):
                 start_time=start_time,
                 end_time=end_time,
                 all_time=all_time,
+                platform=platform,
             )
             return Response(data)
+        except DatabaseError:
+            logger.warning('Dashboard base query unavailable')
+            return Response({'error': 'Dashboard data is temporarily unavailable.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:
             logger.exception('Error in dashboard_alerts: %s', exc)
             return Response(

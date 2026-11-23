@@ -2,18 +2,19 @@ import logging
 import re
 from datetime import datetime, time
 
+from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
-from alerts.models import Alert
 from detections.mitre_catalog import (
     MITRE_ATTACK_ENTERPRISE_URL,
     CatalogError,
@@ -40,6 +41,7 @@ from .log_source_coverage import compute_log_source_coverage, preview_matchers
 from .log_source_discovery import resolve_sources
 from .models import LogSourceCategory, LogSourceMapping
 from .serializers import LogSourceCategorySerializer
+from .source_scope import dashboard_alerts, dashboard_platform, dashboard_tickets, unattributed_tickets
 
 # Maps each MITRE ATT&CK tactic slug to one of the three use-case buckets shown
 # in the Sankey chart's second column.
@@ -63,10 +65,25 @@ TACTIC_TO_USE_CASE = {
 logger = logging.getLogger(__name__)
 
 
+def _unattributed_counts(tickets, *, severe_incidents=False):
+    incidents = Q(event_result='true_positive')
+    if severe_incidents:
+        incidents &= Q(priority__in=['critical', 'high'])
+    return unattributed_tickets(tickets).aggregate(
+        unattributed_tickets=Count('ticket_number'),
+        unattributed_open_tickets=Count('ticket_number', filter=~Q(status__in=['resolved', 'closed'])),
+        unattributed_incidents=Count('ticket_number', filter=incidents),
+    )
+
+
 class DashboardViewSet(viewsets.ViewSet):
     # The deprecated dashboard editor CRUD has been retired; only live chart stats remain here.
     permission_classes = [IsAuthenticated]
     admin_actions = ("attack_catalog", "attack_catalog_sync")
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        self.platform = dashboard_platform(request.query_params)
 
     def get_permissions(self):
         # Routes are wired with explicit as_view() mappings, so per-action permissions live here.
@@ -90,6 +107,15 @@ class DashboardViewSet(viewsets.ViewSet):
             dt = timezone.make_aware(dt, timezone.get_current_timezone())
         return dt
 
+    @staticmethod
+    def _tickets_in_window(created_from, created_to):
+        tickets = EventTicket.objects.filter(is_deleted=False)
+        if created_from:
+            tickets = tickets.filter(created_time__gte=created_from)
+        if created_to:
+            tickets = tickets.filter(created_time__lte=created_to)
+        return tickets
+
     @action(detail=False, methods=["get"], url_path="conversion-stats")
     def conversion_stats(self, request):
         """Return dashboard funnel metrics without coupling chart APIs to tickets."""
@@ -97,17 +123,14 @@ class DashboardViewSet(viewsets.ViewSet):
         created_from = self._parse_dt(params.get("created_from") or params.get("start_time"))
         created_to = self._parse_dt(params.get("created_to") or params.get("end_time"), end_of_day=True)
 
-        alert_qs = Alert.objects.all()
+        alert_qs = dashboard_alerts(self.platform)
         if created_from:
             alert_qs = alert_qs.filter(timestamp__gte=created_from)
         if created_to:
             alert_qs = alert_qs.filter(timestamp__lte=created_to)
 
-        ticket_qs = EventTicket.objects.filter(is_deleted=False)
-        if created_from:
-            ticket_qs = ticket_qs.filter(created_time__gte=created_from)
-        if created_to:
-            ticket_qs = ticket_qs.filter(created_time__lte=created_to)
+        tickets = self._tickets_in_window(created_from, created_to)
+        ticket_qs = dashboard_tickets(tickets, self.platform)
 
         detection_rules_count = (
             alert_qs.exclude(rule_id__isnull=True)
@@ -117,6 +140,7 @@ class DashboardViewSet(viewsets.ViewSet):
             .count()
         )
         return Response({
+            **_unattributed_counts(tickets, severe_incidents=True),
             "alerts": alert_qs.count(),
             "detection_rules": detection_rules_count,
             "tickets": ticket_qs.count(),
@@ -137,26 +161,24 @@ class DashboardViewSet(viewsets.ViewSet):
         created_from = self._parse_dt(params.get("created_from") or params.get("start_time"))
         created_to = self._parse_dt(params.get("created_to") or params.get("end_time"), end_of_day=True)
 
-        alert_qs = Alert.objects.all()
-        ticket_qs = EventTicket.objects.filter(is_deleted=False)
+        alert_qs = dashboard_alerts(self.platform)
+        tickets = self._tickets_in_window(created_from, created_to)
+        ticket_qs = dashboard_tickets(tickets, self.platform)
         if created_from:
             alert_qs = alert_qs.filter(timestamp__gte=created_from)
-            ticket_qs = ticket_qs.filter(created_time__gte=created_from)
         if created_to:
             alert_qs = alert_qs.filter(timestamp__lte=created_to)
-            ticket_qs = ticket_qs.filter(created_time__lte=created_to)
 
         open_qs = ticket_qs.exclude(status__in=["resolved", "closed"])
         incidents = ticket_qs.filter(event_result="true_positive").count()  # confirmed true positives
-        return Response(
-            build_event_flow(
-                resolve_sources(),
-                load_categories(),
-                alerts=alert_qs.count(),
-                open_tickets=open_qs.count(),
-                incidents=incidents,
-            )
+        data = build_event_flow(
+            resolve_sources(platform=self.platform or 'elk'),
+            load_categories(platform=self.platform or 'elk'),
+            alerts=alert_qs.count(),
+            open_tickets=open_qs.count(),
+            incidents=incidents,
         )
+        return Response({**data, **_unattributed_counts(tickets)})
 
     @action(detail=False, methods=["get"], url_path="funnel-stats")
     def funnel_stats(self, request):
@@ -182,13 +204,14 @@ class DashboardViewSet(viewsets.ViewSet):
                 "rate_from_top": round(count / top * 100, 1) if top else None,
             })
             prev = count
-        return Response({"stages": out})
+        return Response({"stages": out, **{key: data[key] for key in (
+            'unattributed_tickets', 'unattributed_open_tickets', 'unattributed_incidents')}})
 
     @action(detail=False, methods=["get"], url_path="attack-coverage")
     def attack_coverage(self, request):
         """MITRE ATT&CK coverage: techniques covered by enabled rules / all known techniques."""
         try:
-            return Response(compute_attack_coverage())
+            return Response(compute_attack_coverage(platform=self.platform))
         except Exception:
             logger.exception("attack_coverage failed")
             return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -220,7 +243,7 @@ class DashboardViewSet(viewsets.ViewSet):
         except (TypeError, ValueError):
             days = 7
         try:
-            return Response(compute_log_source_coverage(days=days))
+            return Response(compute_log_source_coverage(days=days, platform=self.platform))
         except Exception:
             logger.exception("log_source_coverage failed")
             return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -278,11 +301,8 @@ class DashboardViewSet(viewsets.ViewSet):
             params = request.query_params
             created_from = self._parse_dt(params.get("created_from") or params.get("start_time"))
             created_to = self._parse_dt(params.get("created_to") or params.get("end_time"), end_of_day=True)
-            ticket_qs = EventTicket.objects.filter(is_deleted=False)
-            if created_from:
-                ticket_qs = ticket_qs.filter(created_time__gte=created_from)
-            if created_to:
-                ticket_qs = ticket_qs.filter(created_time__lte=created_to)
+            tickets = self._tickets_in_window(created_from, created_to)
+            ticket_qs = dashboard_tickets(tickets, self.platform)
 
             base_qs = (
                 ticket_qs
@@ -325,7 +345,7 @@ class DashboardViewSet(viewsets.ViewSet):
             ticket_to_rule_ids: dict[str, set] = {}
             if ticket_numbers:
                 for alert_row in (
-                    Alert.objects.filter(ticket_number__in=ticket_numbers)
+                    dashboard_alerts(self.platform).filter(ticket_number__in=ticket_numbers)
                     .exclude(rule_id__isnull=True)
                     .exclude(rule_id="")
                     .values("ticket_number", "rule_id")
@@ -428,7 +448,7 @@ class DashboardViewSet(viewsets.ViewSet):
                 "nodes": list(nodes_by_name.values()),
                 "links": links if live_total > 0 else [],
                 "stages": stages,
-                "summary": {"tickets": live_total},
+                "summary": {"tickets": live_total, "unattributed_tickets": unattributed_tickets(tickets).count()},
             })
         except Exception:
             logger.exception("sankey_stats failed")
@@ -440,6 +460,35 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
 
     queryset = LogSourceCategory.objects.all()
     serializer_class = LogSourceCategorySerializer
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        self.platform = dashboard_platform(request.query_params) or 'elk'
+
+    def get_queryset(self):
+        return super().get_queryset().filter(platform=self.platform)
+
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), 'platform': self.platform}
+
+    def _lock_host_budget(self):
+        if self.platform == 'splunk':
+            # Lock an existing sentinel even when no categories exist; validation and save share the transaction.
+            ContentType.objects.select_for_update().get(app_label='dashboards', model='logsourcecategory')
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        self._lock_host_budget()
+        return super().create(request, *args, **kwargs)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        self._lock_host_budget()
+        return super().update(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        defaults = {'host_field': 'host'} if self.platform == 'splunk' and 'host_field' not in serializer.validated_data else {}
+        serializer.save(platform=self.platform, **defaults)
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
@@ -470,11 +519,22 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="preview")
     def preview(self, request):
-        """Show which ES indices a matcher list hits and how much data they received recently."""
+        """Preview sources, optionally querying Splunk for an explicit time range."""
         matchers = request.data.get("matchers")
         if not isinstance(matchers, list) or not all(isinstance(m, str) and m.strip() for m in matchers):
             return Response({"detail": "matchers must be a list of non-empty strings."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(preview_matchers([m.strip() for m in matchers]))
+        if len(matchers) > 100 or any(len(m) > 255 for m in matchers):
+            raise ValidationError({'matchers': 'Use at most 100 patterns of up to 255 characters.'})
+        from integrations.splunk import SplunkError
+
+        if self.platform == 'splunk' and 'time_range' in request.data:
+            from .splunk_sources import ScanTimeRangeSerializer
+            ScanTimeRangeSerializer(data={'time_range': request.data['time_range']}).is_valid(raise_exception=True)
+        try:
+            return Response(preview_matchers([m.strip() for m in matchers], platform=self.platform,
+                                             time_range=request.data.get('time_range')))
+        except SplunkError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     @action(detail=False, methods=["get"], url_path="options")
     def options(self, request):
@@ -487,22 +547,38 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
             .distinct()
             .order_by("asset_type")
         )
-        return Response({"asset_types": list(asset_types)})
+        data = {"asset_types": list(asset_types)}
+        if self.platform == 'splunk':
+            from .splunk_sources import scan_options
+            from .log_source_discovery import load_snapshot
+            snapshot = load_snapshot(self.platform)
+            data.update(integrations=scan_options(), targets=snapshot.targets if snapshot else {})
+        return Response(data)
 
     @action(detail=False, methods=["get"], url_path="discover")
     def discover(self, request):
         """Stored log source scan with auto classification and manual overrides (never re-scans)."""
         try:
-            return Response(resolve_sources())
+            return Response(resolve_sources(platform=self.platform))
         except Exception:
             logger.exception("log source discovery failed")
             return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=["post"], url_path="discover/rescan")
     def rescan(self, request):
-        """Scan Elasticsearch again and store the result (admin only via get_permissions)."""
+        """Scan the selected platform and store the result (admin only)."""
         try:
-            return Response(resolve_sources(rescan_actor=getattr(request.user, "username", "") or "admin"))
+            targets = None
+            if self.platform == 'splunk':
+                from .splunk_sources import validate_target
+                from .log_source_discovery import load_snapshot
+                snapshot = load_snapshot(self.platform)
+                targets = request.data or (snapshot.targets if snapshot else {})
+                validate_target(targets)
+            return Response(resolve_sources(rescan_actor=getattr(request.user, "username", "") or "admin",
+                                            platform=self.platform, targets=targets))
+        except ValidationError:
+            raise
         except Exception:
             logger.exception("log source rescan failed")
             return Response({"detail": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -513,12 +589,17 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
         items = request.data.get("mappings")
         if not isinstance(items, list) or not items or len(items) > 500:
             return Response({"detail": "mappings must be a non-empty list (max 500)."}, status=status.HTTP_400_BAD_REQUEST)
-        category_ids = {c.id for c in LogSourceCategory.objects.all()}
+        category_ids = set(self.get_queryset().values_list('id', flat=True))
+        known_sources = None
+        if self.platform == 'splunk':
+            known_sources = {s['source_key']: s for s in resolve_sources(platform=self.platform, allow_scan=False)['sources']}
         cleaned = []
         for item in items:
             key = item.get("source_key") if isinstance(item, dict) else None
             if not isinstance(key, str) or not key.strip() or len(key) > 255:
                 return Response({"detail": "Each mapping needs a source_key."}, status=status.HTTP_400_BAD_REQUEST)
+            if known_sources is not None and key.strip() not in known_sources:
+                raise ValidationError({'source_key': 'Select a source from the current platform scan.'})
             ignored = bool(item.get("ignored"))
             category_id = item.get("category_id")
             if ignored:
@@ -532,8 +613,9 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             for key, category_id, ignored in cleaned:
                 LogSourceMapping.objects.update_or_create(
-                    source_key=key,
-                    defaults={"category_id": category_id, "ignored": ignored, "updated_by": actor},
+                    platform=self.platform, source_key=key,
+                    defaults={"category_id": category_id, "ignored": ignored, "updated_by": actor,
+                              "note": (known_sources[key].get('source_label', '')[:255] if known_sources else '')},
                 )
         return Response({"updated": len(cleaned)})
 
@@ -541,7 +623,7 @@ class LogSourceCategoryViewSet(viewsets.ModelViewSet):
     def reset_mappings(self, request):
         """Drop manual decisions so the sources fall back to automatic classification."""
         keys = request.data.get("source_keys")
-        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        if not isinstance(keys, list) or len(keys) > 500 or not all(isinstance(k, str) and len(k) <= 255 for k in keys):
             return Response({"detail": "source_keys must be a list of strings."}, status=status.HTTP_400_BAD_REQUEST)
-        deleted, _ = LogSourceMapping.objects.filter(source_key__in=keys).delete()
+        deleted, _ = LogSourceMapping.objects.filter(platform=self.platform, source_key__in=keys).delete()
         return Response({"reset": deleted})
