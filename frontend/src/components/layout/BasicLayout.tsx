@@ -175,6 +175,9 @@ export default function BasicLayout({
   }, [selectedKey]);
 
   const canAccess = (perm?: string, key?: RouteKey) => {
+    if (key === 'permissions') {
+      return !impersonation && Boolean(rbacMe?.is_staff || rbacMe?.is_superuser);
+    }
     if (key === 'ai-assistant') {
       if (impersonation || rbacMe?.is_readonly !== false) return false;
       if (rbacMe?.is_superuser) return true;

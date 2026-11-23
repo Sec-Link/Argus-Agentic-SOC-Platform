@@ -15,7 +15,7 @@ from accounts.permissions import DenyReadonlyUser
 from accounts.services import is_user_readonly
 from .conversation_history import (
     MAX_CONVERSATIONS, MAX_TURNS, ConversationConflict, ConversationLimit, clean_public,
-    current_actor, recover_expired, require_history_permissions,
+    current_actor, has_history_permissions, recover_expired, require_history_permissions,
 )
 from .models import PageChatConversation, PageChatTurn
 
@@ -64,11 +64,12 @@ class ConversationSummarySerializer(serializers.ModelSerializer):
     def get_title(self, conversation):
         actor = self.context["actor"]
         reviewing_other = conversation.owner_id != actor.pk and self.context["can_view_all"]
-        if not reviewing_other and not all(
-            actor.has_perm(permission) for permission in conversation.required_permissions
-        ):
+        if not reviewing_other and not self._can_read_evidence(conversation):
             return "Restricted conversation"
         return conversation.title
+
+    def _can_read_evidence(self, conversation):
+        return has_history_permissions(self.context["actor"], conversation.required_permissions)
 
     def get_owner(self, conversation):
         return {"id": conversation.owner_id, "username": conversation.owner.get_username()}
@@ -81,7 +82,7 @@ class ConversationSummarySerializer(serializers.ModelSerializer):
 
     def get_can_continue(self, conversation):
         return (self.get_can_manage(conversation) and not self.get_active(conversation)
-                and all(self.context["actor"].has_perm(permission) for permission in conversation.required_permissions))
+                and self._can_read_evidence(conversation))
 
 
 class ConversationTurnSerializer(serializers.ModelSerializer):

@@ -40,7 +40,7 @@ PAGE_PERMISSIONS = (
     ("/settings/orchestrator", "orchestrator.view_task"),
     ("/settings/interfaces", "workflow_interfaces.view_interfaceendpoint"),
     ("/settings/correlation", "correlation.view_correlationpolicy"),
-    ("/settings/permissions", "accounts.view_user"),
+    ("/settings/permissions", "accounts.staff_access_management"),
     ("/settings/registration-approvals", "accounts.view_user"),
     ("/settings/audit-logs", "accounts.view_user"), ("/settings/system", "accounts.view_user"),
 )
@@ -79,8 +79,16 @@ def current_actor(user, *, write=False):
     return actor
 
 
+def has_history_permissions(user, permissions):
+    return all(
+        isinstance(permission, str) and (
+            (user.is_staff or user.is_superuser) if permission == "accounts.staff_access_management" else user.has_perm(permission)
+        ) for permission in permissions
+    )
+
+
 def require_history_permissions(user, permissions):
-    if not all(user.has_perm(permission) for permission in permissions):
+    if not has_history_permissions(user, permissions):
         raise PermissionDenied("Your current permissions do not allow access to this conversation's saved evidence.")
 
 
