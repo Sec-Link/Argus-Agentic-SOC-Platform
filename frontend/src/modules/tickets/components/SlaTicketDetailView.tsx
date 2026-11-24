@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { Alert, Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
-import { Bot, Clock3, ListChecks, MessageCircleQuestion, Plus, Send, ShieldCheck, Wrench } from 'lucide-react';
+import { Bot, Clock3, ListChecks, MessageCircleQuestion, Plus, ShieldCheck, Wrench } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
 import { aiAssistantChat, askTicketInvestigationSideQuestion, cancelTicketInvestigationSideQuestion, clearSlaTicketAiChatHistory, clearTicketInvestigationSideQuestions, controlTicketInvestigationRun, createTicketInvestigation, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketInvestigation, fetchTicketInvestigationSideQuestions, fetchTicketInvestigations, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, sendTicketInvestigationMessage, sendTicketInvestigationWorkerFeedback, toggleSlaTicketPending, type TicketInvestigationRun, type TicketInvestigationSession, type TicketInvestigationSideConversation, updateSlaTicket } from 'services/tickets';
 import TicketInvestigationGraph from './TicketInvestigationGraph';
 import TicketPlannerOutline from './TicketPlannerOutline';
+import { TicketSessionMessage, TicketSessionNavigation, TicketSessionSender } from './TicketSessionChat';
+import { TicketInvestigationEvents, TicketInvestigationTools } from './TicketInvestigationTools';
 import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
 import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
 import { warningsFromTrace } from '../../aiAssistant/chatState';
@@ -1369,7 +1371,7 @@ export default function SlaTicketDetailView(props: Props) {
     setInvestigationError('');
     try {
       const detail = await fetchTicketInvestigation(ticket.ticket_number, sessionId);
-      applyInvestigation(detail);
+      applyInvestigation(detail, detail.runs?.find((run) => run.role === 'main')?.id);
       setInvestigationPane('run');
       setInvestigationDraft('');
     } catch (err: any) {
@@ -1717,6 +1719,11 @@ export default function SlaTicketDetailView(props: Props) {
     return () => window.clearInterval(timer);
   }, [activeInvestigation?.id, activeInvestigationRunId, investigationGraphRunning, ticket.ticket_number]);
 
+  const roleNavigationItems = (runs: TicketInvestigationRun[]) => runs.map((run) => ({
+    key: run.id, icon: runStatusBadge(run), label: run.role === 'worker' ? `#${run.title.replace(/^Worker · /, '')}` : run.title,
+  }));
+  const selectedRoleKey = investigationPane === 'run' ? activeInvestigationRunId || '' : '';
+
   const assistantTabs = [
     {
       key: 'sessions', label: 'Sessions', children: (
@@ -1741,58 +1748,46 @@ export default function SlaTicketDetailView(props: Props) {
                   <Button type="primary" size="small" onClick={() => void startInvestigation()} loading={investigationSending && !mainInvestigationStarted} disabled={investigationLoading || investigationSending || mainInvestigationStarted || !aiModelReady}>{mainInvestigationStarted ? 'Started' : 'Start investigation'}</Button>
                   <Button type="text" size="small" icon={<Plus size={13} />} onClick={() => void createInvestigation()} loading={investigationLoading} disabled={investigationSending || !aiModelReady}>New</Button>
                 </div>
-                {investigationSessions.map((session) => (
-                  <button key={session.id} type="button" className={`${layoutStyles.ticketSessionItem} ${activeInvestigation?.id === session.id && investigationPane === 'run' && selectedInvestigationRun?.role === 'main' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => void openInvestigation(session.id)}>
-                    <span className={layoutStyles.ticketSessionItemMain}>Main Agent · Session #{session.sequence}</span>
-                    {session.id !== activeInvestigation?.id ? <small>Archived</small> : null}
-                  </button>
-                ))}
+                <TicketSessionNavigation items={investigationSessions.map((session) => ({
+                  key: session.id, label: <span className={layoutStyles.ticketSessionNavigationLabel}>
+                    <span>Main Agent · Session #{session.sequence}</span>{session.id !== activeInvestigation?.id ? <small>Archived</small> : null}
+                  </span>,
+                }))} activeKey={investigationPane === 'run' && selectedInvestigationRun?.role === 'main' ? activeInvestigation?.id || '' : ''}
+                  onActiveChange={(id) => void openInvestigation(id)} />
                 {!investigationSessions.length && !investigationLoading ? <div className={layoutStyles.ticketSessionEmpty}>No sessions found.</div> : null}
               </section>
 
               {activeInvestigation ? <>
                 <section className={layoutStyles.ticketSessionBlock}>
                   <div className={layoutStyles.ticketSessionGroup}><ShieldCheck size={16} /><span>Organization</span></div>
-                  <button type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'organization' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationPane('organization')}>
-                    <span className={layoutStyles.ticketSessionItemMain}>Ticket organization and evidence scope</span>
-                  </button>
+                  <TicketSessionNavigation items={[{ key: 'organization', label: 'Ticket organization and evidence scope' }]}
+                    activeKey={investigationPane === 'organization' ? 'organization' : ''} onActiveChange={() => selectInvestigationPane('organization')} />
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
-                  <button type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'goals' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationPane('goals')}>
-                    <ListChecks size={16} /><span className={layoutStyles.ticketSessionItemMain}>Goals · Deliverables and Acceptance</span>
-                  </button>
+                  <TicketSessionNavigation items={[{ key: 'goals', label: 'Goals · Deliverables and Acceptance', icon: <ListChecks size={16} /> }]}
+                    activeKey={investigationPane === 'goals' ? 'goals' : ''} onActiveChange={() => selectInvestigationPane('goals')} />
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
                   <div className={layoutStyles.ticketSessionGroup}><ListChecks size={16} /><span>Planner</span></div>
-                  {investigationRunsByRole('planner').map((run) => (
-                    <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'run' && activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationRun(run.id)}>
-                      {runStatusBadge(run)}<span className={layoutStyles.ticketSessionItemMain}>{run.title}</span>
-                    </button>
-                  ))}
+                  <TicketSessionNavigation items={roleNavigationItems(investigationRunsByRole('planner'))}
+                    activeKey={selectedRoleKey} onActiveChange={selectInvestigationRun} />
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
                   <div className={layoutStyles.ticketSessionGroup}><ShieldCheck size={16} /><span>Review and Reporting</span></div>
-                  {(['reviewer', 'reporter', 'explainer'] as const).map((role) => investigationRunsByRole(role).map((run) => (
-                    <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'run' && activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationRun(run.id)}>
-                      {runStatusBadge(run)}<span className={layoutStyles.ticketSessionItemMain}>{run.title}</span>
-                    </button>
-                  )))}
+                  <TicketSessionNavigation items={roleNavigationItems((['reviewer', 'reporter', 'explainer'] as const).flatMap(investigationRunsByRole))}
+                    activeKey={selectedRoleKey} onActiveChange={selectInvestigationRun} />
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
                   <div className={layoutStyles.ticketSessionGroup}><Clock3 size={16} /><span>System Audit</span></div>
-                  <button type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'runtime' ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationPane('runtime')}>
-                    <span className={layoutStyles.ticketSessionItemMain}>System Events · Runtime</span><small>{activeInvestigation.runtime_events?.length || 0} events</small>
-                  </button>
+                  <TicketSessionNavigation items={[{ key: 'runtime', label: <span className={layoutStyles.ticketSessionNavigationLabel}>
+                    <span>System Events · Runtime</span><small>{activeInvestigation.runtime_events?.length || 0} events</small>
+                  </span> }]} activeKey={investigationPane === 'runtime' ? 'runtime' : ''} onActiveChange={() => selectInvestigationPane('runtime')} />
                   <div className={layoutStyles.ticketSessionReadonly}>{activeInvestigation.tool_receipts?.length || 0} tool receipts</div>
                 </section>
                 <section className={layoutStyles.ticketSessionBlock}>
                   <div className={layoutStyles.ticketSessionGroup}><Wrench size={16} /><span>Execution Agents</span><Typography.Text type="secondary">· {investigationRunsByRole('worker').length}</Typography.Text></div>
-                  {investigationRunsByRole('worker').map((run) => (
-                    <button key={run.id} type="button" className={`${layoutStyles.ticketSessionItem} ${investigationPane === 'run' && activeInvestigationRunId === run.id ? layoutStyles.ticketSessionItemActive : ''}`} onClick={() => selectInvestigationRun(run.id)}>
-                      {runStatusBadge(run)}
-                      <span className={layoutStyles.ticketSessionItemMain}>#{run.title.replace(/^Worker · /, '')}</span>
-                    </button>
-                  ))}
+                  <TicketSessionNavigation items={roleNavigationItems(investigationRunsByRole('worker'))}
+                    activeKey={selectedRoleKey} onActiveChange={selectInvestigationRun} />
                   {!investigationRunsByRole('worker').length ? <div className={layoutStyles.ticketSessionReadonly}>Planner defines investigation directions and dispatches Workers.</div> : null}
                 </section>
               </> : null}
@@ -1851,49 +1846,33 @@ export default function SlaTicketDetailView(props: Props) {
               ) : investigationPane === 'runtime' ? (
                 <div className={layoutStyles.ticketRuntimeBoard}>
                   <Card size="small" title="System Events · Runtime">
-                    {activeInvestigation?.runtime_events?.length ? <List dataSource={[...(activeInvestigation.runtime_events || [])].reverse()} renderItem={(item) => <List.Item><List.Item.Meta title={<Space><Tag>{item.event_type}</Tag><Typography.Text strong>{item.title}</Typography.Text></Space>} description={<><div>{item.content || 'No additional detail'}</div><Typography.Text type="secondary">{formatTimestamp(item.created_at)}</Typography.Text></>} /></List.Item>} /> : <Empty description="No runtime events have been recorded." />}
+                    <TicketInvestigationEvents events={activeInvestigation?.runtime_events} />
                   </Card>
                   <Card size="small" title="Tool receipts">
-                    {activeInvestigation?.tool_receipts?.length ? activeInvestigation.tool_receipts.map((receipt) => <details key={receipt.id} className={layoutStyles.ticketRuntimeReceipt}><summary><span>{receipt.status === 'completed' ? '⌕' : '!'}</span> {receipt.tool_name} <small>{receipt.status}</small></summary>{Object.keys(receipt.arguments || {}).length ? <pre>{JSON.stringify(receipt.arguments, null, 2)}</pre> : null}{receipt.result_preview ? <pre>{receipt.result_preview}</pre> : null}</details>) : <Empty description="No tool receipts have been recorded." />}
+                    <TicketInvestigationTools receipts={activeInvestigation?.tool_receipts} />
                   </Card>
                 </div>
               ) : investigationLoading ? <Typography.Text type="secondary">Loading investigation session...</Typography.Text> : activeInvestigationRun?.role === 'planner' && plannerView === 'plan' && activeInvestigation ? (
                 <TicketPlannerOutline key={activeInvestigation.id} session={activeInvestigation} planner={activeInvestigationRun} onSelectRun={selectInvestigationRun} />
               ) : activeInvestigationRun?.messages.length ? (
                 activeInvestigationRun.messages.map((msg, index) => (
-                  <article key={msg.id || `${msg.role}_${index}`} className={`${layoutStyles.ticketChatMessage} ${msg.role === 'user' ? layoutStyles.ticketChatMessageUser : layoutStyles.ticketChatMessageAssistant}`}>
-                    <div className={layoutStyles.ticketChatMessageText}>{msg.content}</div>
-                    {msg.trace?.length ? (
-                      <details className={layoutStyles.ticketChatTrace}>
-                        <summary>Tool calls</summary>
-                        <pre>{JSON.stringify(msg.trace, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                    {activeInvestigation?.tool_receipts?.filter((receipt) => receipt.message_id === msg.id).map((receipt) => (
-                      <details key={receipt.id} className={layoutStyles.ticketRuntimeReceipt}>
-                        <summary><span>{receipt.status === 'completed' ? '⌕' : '!'}</span> {receipt.tool_name} <small>{receipt.status}</small></summary>
-                        {Object.keys(receipt.arguments || {}).length ? <pre>{JSON.stringify(receipt.arguments, null, 2)}</pre> : null}
-                        {receipt.result_preview ? <pre>{receipt.result_preview}</pre> : null}
-                      </details>
-                    ))}
-                    <time className={layoutStyles.ticketChatMessageTime}>{formatTimestamp(msg.created_at)}</time>
-                  </article>
+                  <TicketSessionMessage key={msg.id || `${msg.role}_${index}`} role={msg.role} content={msg.content}
+                    footer={<time dateTime={msg.created_at}>{formatTimestamp(msg.created_at)}</time>}>
+                    <TicketInvestigationTools trace={msg.trace} receipts={activeInvestigation?.tool_receipts?.filter((receipt) => receipt.message_id === msg.id)} />
+                  </TicketSessionMessage>
                 ))
               ) : null}
               {activeInvestigationRun?.role === 'worker' && activeInvestigationRun.objective ? <Alert type="info" showIcon message={`Worker objective: ${activeInvestigationRun.objective}`} /> : null}
             </div>
-            {investigationPane === 'run' ? <form className={layoutStyles.ticketSessionComposer} onSubmit={(event) => { event.preventDefault(); if (activeInvestigationRun?.role === 'worker') void sendWorkerFeedback(); else void sendInvestigationMessage(); }}>
-              <div className={layoutStyles.ticketSessionInputBox}>
-                <Input.TextArea value={investigationDraft} onChange={(event) => setInvestigationDraft(event.target.value)}
-                  onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); if (activeInvestigationRun?.role === 'worker') void sendWorkerFeedback(); else void sendInvestigationMessage(); } }}
-                  placeholder={plannerAwaitingMain ? 'Describe the investigation goal to Main Agent first. It will hand off to Planner automatically.' : activeInvestigationRun?.role === 'worker' ? 'Message this Worker. /rerun explicitly retries this Intent…' : activeInvestigationRun?.role === 'main' ? 'Describe the scope, question or response objective to investigate…' : 'Continue this investigation…'} maxLength={4000}
-                  autoSize={{ minRows: 3, maxRows: 6 }} disabled={!activeInvestigationRun || plannerAwaitingMain || investigationSending || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'} />
-              </div>
-              <div className={layoutStyles.ticketSessionComposerFoot}>
-                <Typography.Text type="secondary">{plannerAwaitingMain ? 'Planner starts automatically after the Main Agent handoff.' : activeInvestigationRun?.role === 'main' ? 'Main Agent defines the goal and hands it off to Planner.' : activeInvestigationRun?.role === 'worker' ? 'Feedback belongs to this Intent; its evidence and tool receipts are preserved.' : 'Enter to send · Shift + Enter for a new line'}</Typography.Text>
-                <Button type="primary" htmlType="submit" loading={investigationSending} disabled={!investigationDraft.trim() || !activeInvestigationRun || plannerAwaitingMain || !aiModelReady || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'} aria-label="Send message" icon={<Send size={15} />}>Send</Button>
-              </div>
-            </form> : null}
+            {investigationPane === 'run' ? <div className={layoutStyles.ticketSessionComposer}>
+              <TicketSessionSender key={activeInvestigationRun?.id || 'no-run'} value={investigationDraft} onChange={setInvestigationDraft}
+                role={activeInvestigationRun?.role} onSideQuestion={sideQuestionParent ? openSideQuestions : undefined}
+                onSubmit={() => { if (activeInvestigationRun?.role === 'worker') void sendWorkerFeedback(); else void sendInvestigationMessage(); }}
+                placeholder={plannerAwaitingMain ? 'Describe the investigation goal to Main Agent first. It will hand off to Planner automatically.' : activeInvestigationRun?.role === 'worker' ? 'Message this Worker. /rerun explicitly retries this Intent…' : activeInvestigationRun?.role === 'main' ? 'Describe the scope, question or response objective to investigate…' : 'Continue this investigation…'}
+                hint={plannerAwaitingMain ? 'Planner starts automatically after the Main Agent handoff.' : activeInvestigationRun?.role === 'main' ? 'Main Agent defines the goal and hands it off to Planner.' : activeInvestigationRun?.role === 'worker' ? 'Feedback belongs to this Intent; its evidence and tool receipts are preserved.' : 'Enter to send · Shift + Enter for a new line'}
+                disabled={!activeInvestigationRun || plannerAwaitingMain || investigationSending || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'}
+                loading={investigationSending} submitDisabled={!aiModelReady} />
+            </div> : null}
           </section>
           {sideQuestionOpen ? <aside className={layoutStyles.ticketSideQuestionPanel} aria-label="Side Question">
             <header className={layoutStyles.ticketSideQuestionHead}>
@@ -1916,23 +1895,20 @@ export default function SlaTicketDetailView(props: Props) {
               {sideQuestionError ? <Alert type="error" showIcon message={sideQuestionError} /> : null}
               {!sideConversation?.messages.length && !sideQuestionLoading ? <div className={layoutStyles.ticketSideQuestionEmpty}>Ask a question using this Agent's saved context. The main investigation continues independently.</div> : null}
               {sideConversation?.messages.map((item) => (
-                <article key={item.id} className={layoutStyles.ticketSideQuestionEntry}>
-                  <div className={item.role === 'user' ? layoutStyles.ticketSideQuestionPrompt : item.role === 'system' ? layoutStyles.ticketSideQuestionSystem : layoutStyles.ticketSideQuestionAnswer}>{item.content}</div>
-                  <div className={layoutStyles.ticketSideQuestionStatus}>
+                <TicketSessionMessage key={item.id} role={item.role} content={item.content}
+                  footer={<div className={layoutStyles.ticketSideQuestionStatus}>
                     <Tag>{item.status === 'queued' || item.status === 'running' ? 'Answering' : item.status === 'completed' ? 'Completed' : item.status === 'cancelled' ? 'Stopped' : 'Failed'}</Tag>
-                    <time>{formatTimestamp(item.created_at)}</time>
-                  </div>
-                </article>
+                    <time dateTime={item.created_at}>{formatTimestamp(item.created_at)}</time>
+                  </div>} />
               ))}
             </div>
-            <form className={layoutStyles.ticketSideQuestionComposer} onSubmit={(event) => { event.preventDefault(); void askSideQuestion(); }}>
-              <Input.TextArea value={sideQuestionDraft} onChange={(event) => setSideQuestionDraft(event.target.value)} maxLength={4000} autoSize={{ minRows: 2, maxRows: 5 }}
-                onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); void askSideQuestion(); } }} placeholder="Ask about this Agent's context…" disabled={sideQuestionLoading || sideQuestionRunning || !sideQuestionParent} />
-              <div className={layoutStyles.ticketSideQuestionFoot}>
-                <Typography.Text type="secondary">Independent discussion · No tool execution</Typography.Text>
-                {sideQuestionRunning ? <Button size="small" onClick={() => void cancelSideQuestion()} loading={sideQuestionLoading}>■ Stop</Button> : <Button type="primary" size="small" htmlType="submit" disabled={!sideQuestionDraft.trim() || !sideQuestionParent || sideQuestionLoading || !aiModelReady} icon={<Send size={14} />}>Send</Button>}
-              </div>
-            </form>
+            <div className={layoutStyles.ticketSideQuestionComposer}>
+              <TicketSessionSender value={sideQuestionDraft} onChange={setSideQuestionDraft} onSubmit={() => void askSideQuestion()}
+                placeholder="Ask about this Agent's context…" hint="Independent discussion · No tool execution" compact
+                disabled={sideQuestionLoading || sideQuestionRunning || !sideQuestionParent}
+                loading={sideQuestionRunning || sideQuestionLoading} submitDisabled={!aiModelReady}
+                onCancel={sideQuestionRunning ? () => void cancelSideQuestion() : undefined} cancelDisabled={sideQuestionLoading} />
+            </div>
           </aside> : null}
         </section>
       ),

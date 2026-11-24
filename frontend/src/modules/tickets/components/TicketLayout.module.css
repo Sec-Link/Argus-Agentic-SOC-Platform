@@ -45,6 +45,7 @@
 
 .ticketSessionSidebarTitle {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -52,7 +53,7 @@
   font-size: 13px;
 }
 
-.ticketSessionRunState { font-size: 12px; }
+.ticketSessionRunState { font-size: 12px; white-space: nowrap; }
 
 .ticketSessionMetrics {
   display: flex;
@@ -83,6 +84,7 @@
 
 .ticketSessionGroup {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   min-height: 38px;
   gap: 8px;
@@ -92,43 +94,41 @@
 }
 
 .ticketSessionGroup > svg { flex: 0 0 auto; }
+.ticketSessionGroup > span { white-space: nowrap; }
 .ticketSessionGrow { flex: 1; min-width: 0; }
 .ticketSessionEmpty { padding: 6px 8px; color: var(--access-secondary-text); font-size: 12px; }
 .ticketSessionReadonly { padding: 7px 8px; color: var(--access-secondary-text); font-size: 12px; }
-.ticketSessionItem {
-  display: flex;
-  width: 100%;
-  min-height: 38px;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 9px;
-  margin-bottom: 2px;
-  padding: 9px 12px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
+.ticketSessionConversations {
+  padding: 0;
+  gap: 2px;
+  overflow: visible;
 }
-
-.ticketSessionItem:hover,
-.ticketSessionItemActive {
+.ticketSessionConversations :global(.ant-conversations-item) {
+  height: auto;
+  min-height: 38px;
+  gap: 9px;
+  padding: 9px 12px;
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+.ticketSessionConversations :global(.ant-conversations-item:hover),
+.ticketSessionConversations :global(.ant-conversations-item-active) {
   background: var(--menu-selected-bg);
   color: var(--menu-selected-edge);
   box-shadow: inset 3px 0 var(--menu-selected-edge);
 }
-.ticketSessionItem > svg { flex: 0 0 auto; color: #52c41a; }
-.ticketSessionItemMain {
+.ticketSessionConversations :global(.ant-conversations-item:focus-visible) { outline: 2px solid var(--menu-selected-edge); outline-offset: -2px; }
+.ticketSessionConversations :global(.ant-conversations-label) {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: inherit;
   font-size: 13px;
   font-weight: 550;
 }
-.ticketSessionItem small { margin-left: auto; color: var(--access-secondary-text); font-size: 11px; }
+.ticketSessionSidebar .ticketSessionConversations :global(.ant-conversations-item-active) :global(.ant-conversations-label) { color: var(--menu-selected-edge); }
+.ticketSessionConversations :global(.ant-conversations-icon) { display: flex; flex: 0 0 auto; align-items: center; }
+.ticketSessionNavigationLabel { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.ticketSessionNavigationLabel > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ticketSessionNavigationLabel > small { margin-left: auto; flex: 0 0 auto; color: var(--access-secondary-text); font-size: 11px; }
 
 .ticketSessionStatus {
   display: grid;
@@ -171,7 +171,8 @@
   display: flex;
   min-height: 55px;
   flex: 0 0 auto;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 6px 8px;
   padding: 10px 14px;
@@ -186,10 +187,20 @@
   gap: 8px;
   flex-wrap: wrap;
 }
-.ticketSessionHeading > :global(.ant-typography) { font-size: 14px; }
+.ticketSessionHeading { flex: 1 1 100%; max-width: 100%; }
+.ticketSessionHeading > :global(.ant-typography) {
+  flex: 1 1 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .ticketSessionHeading :global(.ant-tag) { margin: 0; }
-.ticketSessionHeaderActions { flex-shrink: 0; color: var(--access-secondary-text); font-size: 12px; }
-.ticketSessionModel { width: 180px; }
+.ticketSessionHeaderActions { flex: 1 1 100%; max-width: 100%; color: var(--access-secondary-text); font-size: 12px; }
+.ticketSessionHeaderActions > span { white-space: nowrap; }
+.ticketSessionModel { width: 180px; min-width: 0; max-width: 100%; flex: 0 1 240px; }
 .ticketSessionModel :global(.ant-select) { width: 100%; }
 
 .ticketSessionOptions { position: relative; }
@@ -202,6 +213,7 @@
   cursor: pointer;
   font-size: 12px;
   list-style: none;
+  white-space: nowrap;
 }
 
 .ticketSessionOptions > summary::-webkit-details-marker { display: none; }
@@ -272,32 +284,76 @@
 .ticketPlannerDecision h4 { margin: 0 0 6px; font-size: 13px; }
 .ticketPlannerDecision p { margin: 0 0 6px; white-space: pre-wrap; font-size: 12px; line-height: 1.65; }
 
-.ticketChatMessage {
-  max-width: 100%;
+.ticketSessionBubble {
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
   margin: 0 0 18px;
+}
+
+.ticketSessionBubble .ticketSessionBubbleContent {
+  width: 100%;
+  max-width: 100%;
   padding: 12px 14px;
   border-radius: 8px;
   background: var(--workflow-muted-card-bg);
   color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.65;
 }
 
-.ticketChatMessageUser {
+.ticketSessionBubbleUser .ticketSessionBubbleContent {
+  width: auto;
   max-width: 88%;
-  margin-left: auto;
-  align-self: flex-end;
   background: var(--menu-selected-bg);
 }
 
+.ticketSessionBubbleSystem .ticketSessionBubbleContent { border-color: var(--workflow-border); background: transparent; color: var(--access-secondary-text); }
+.ticketSessionBubble .ticketSessionBubbleFooter { margin-top: 5px; color: var(--access-secondary-text); font-size: 11px; }
 .ticketChatMessageText { color: var(--text-primary); font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ticketChatMessageTime { display: block; margin-top: 5px; color: var(--access-secondary-text); font-size: 11px; }
-.ticketChatMessageUser .ticketChatMessageTime { text-align: right; }
-.ticketChatTrace { margin-top: 10px; color: var(--access-secondary-text); font-size: 12px; }
-.ticketChatTrace > summary { cursor: pointer; }
-.ticketChatTrace pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ticketRuntimeReceipt { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--workflow-border); border-radius: 6px; color: #168c96; font-size: 12px; }
-.ticketRuntimeReceipt summary { cursor: pointer; font-size: 13px; font-weight: 600; }
-.ticketRuntimeReceipt summary small { margin-left: 6px; color: var(--access-secondary-text); font-weight: 400; }
-.ticketRuntimeReceipt pre { max-height: 240px; margin: 8px 0 0; overflow: auto; padding: 8px; border-radius: 4px; background: var(--workflow-muted-card-bg); color: var(--text-primary); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ticketSessionMarkdown { min-width: 0; overflow-wrap: anywhere; }
+.ticketSessionMarkdown p,
+.ticketSessionMarkdown ul,
+.ticketSessionMarkdown ol,
+.ticketSessionMarkdown blockquote,
+.ticketSessionMarkdown pre,
+.ticketSessionMarkdown table { margin: 0 0 10px; }
+.ticketSessionMarkdown > :last-child { margin-bottom: 0; }
+.ticketSessionMarkdown h1,
+.ticketSessionMarkdown h2,
+.ticketSessionMarkdown h3,
+.ticketSessionMarkdown h4,
+.ticketSessionMarkdown h5,
+.ticketSessionMarkdown h6 { margin: 14px 0 8px; color: var(--text-primary); font-size: 14px; font-weight: 600; line-height: 1.5; }
+.ticketSessionMarkdown > :first-child { margin-top: 0; }
+.ticketSessionMarkdown ul,
+.ticketSessionMarkdown ol { padding-left: 22px; }
+.ticketSessionMarkdown li + li { margin-top: 4px; }
+.ticketSessionMarkdown li > p { margin-bottom: 4px; }
+.ticketSessionMarkdown a { color: var(--menu-selected-edge); text-decoration: underline; }
+.ticketSessionMarkdown blockquote { padding-left: 12px; border-left: 3px solid var(--workflow-border); color: var(--access-secondary-text); }
+.ticketSessionMarkdown pre { max-width: 100%; overflow-x: auto; padding: 10px; border: 1px solid var(--workflow-border); border-radius: 6px; white-space: pre; }
+.ticketSessionMarkdown code { padding: 1px 4px; border-radius: 3px; background: var(--workflow-palette-item-bg); font: 12px/1.65 ui-monospace, monospace; }
+.ticketSessionMarkdown pre code { padding: 0; background: transparent; }
+.ticketSessionMarkdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.ticketSessionMarkdown th,
+.ticketSessionMarkdown td { padding: 7px 10px; border: 1px solid var(--workflow-border); text-align: left; }
+.ticketSessionMarkdown th { background: var(--workflow-palette-item-bg); }
+.ticketSessionMarkdown hr { margin: 12px 0; border: 0; border-top: 1px solid var(--workflow-border); }
+.ticketSessionMessageFooter { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 6px; }
+.ticketSessionActions :global(.ant-actions-list) { color: var(--access-secondary-text); }
+.ticketSessionActions button { display: inline-flex; width: 100%; height: 100%; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.ticketSessionActions button:focus-visible { outline: 2px solid var(--menu-selected-edge); border-radius: 3px; }
+.ticketToolChain { min-width: 0; margin-top: 12px; }
+.ticketToolChain :global(.ant-thought-chain-item-title-content) { color: #168c96; }
+.ticketToolChain :global(.ant-thought-chain-item-desc) { color: var(--access-secondary-text); font-size: 11px; }
+.ticketToolChain :global(.ant-thought-chain-item-content-box) { width: 100%; min-width: 0; border-color: var(--workflow-border); background: var(--workflow-palette-item-bg); }
+.ticketToolTitle { display: block; max-width: 100%; overflow: hidden; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.ticketToolTitle:focus-visible { outline: 2px solid var(--menu-selected-edge); outline-offset: -2px; }
+.ticketToolDetails { min-width: 0; color: var(--text-primary); font-size: 12px; }
+.ticketToolDetails strong { display: block; font-size: 11px; }
+.ticketToolDetails pre { max-height: 300px; margin: 6px 0 10px; overflow: auto; padding: 8px; border-radius: 4px; background: var(--workflow-muted-card-bg); color: var(--text-primary); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ticketToolDetails time { color: var(--access-secondary-text); font-size: 11px; }
 .ticketRuntimeBoard { display: grid; gap: 14px; }
 .ticketRuntimePanePre { max-height: 360px; margin: 10px 0 0; overflow: auto; padding: 10px; border-radius: 6px; background: var(--workflow-muted-card-bg); color: var(--text-primary); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 
@@ -308,30 +364,50 @@
   border-top: 1px solid var(--workflow-border);
 }
 
-.ticketSessionInputBox {
-  padding: 12px;
-  border: 1px solid var(--workflow-border);
+.ticketSessionComposer .ticketSessionSender,
+.ticketSideQuestionComposer .ticketSessionSender {
+  min-width: 0;
+  border-color: var(--workflow-border);
   border-radius: 11px;
   background: var(--workflow-muted-card-bg);
+  box-shadow: none;
 }
 
-.ticketSessionInputBox:focus-within { border-color: var(--menu-selected-edge); }
+.ticketSessionComposer .ticketSessionSender:focus-within,
+.ticketSideQuestionComposer .ticketSessionSender:focus-within { border-color: var(--menu-selected-edge); }
 
-.ticketSessionComposer :global(.ant-input) {
-  min-height: 56px;
-  padding: 0;
+.ticketSessionSender :global(.ant-sender-input) {
+  min-width: 0;
   resize: none;
   background: transparent;
   color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.65;
 }
+.ticketSessionSender :global(.ant-sender-input)::placeholder { color: var(--access-secondary-text); }
+.ticketSessionSuggestion { min-width: 0; }
+.ticketSessionSuggestion :global(.ant-suggestion-item) { min-width: 0; flex-wrap: wrap; gap: 4px 12px; }
+.ticketSessionSuggestion :global(.ant-suggestion-item-extra) { color: var(--access-secondary-text); font-size: 11px; }
+.ticketSessionPrompts { padding: 10px 12px 0; }
+.ticketSessionPrompts :global(.ant-prompts-item) { min-width: 0; flex: 0 1 auto; padding: 6px 9px; border-color: var(--workflow-border); background: var(--workflow-palette-item-bg); }
+.ticketSessionPrompts :global(.ant-prompts-label) { color: var(--text-primary); font-size: 11px; }
+.ticketSessionPrompts :global(.ant-prompts-item:hover) { background: var(--menu-selected-bg); }
+.ticketPromptButton { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; }
+.ticketPromptButton:focus-visible { outline: 2px solid var(--menu-selected-edge); outline-offset: 2px; }
 
 .ticketSessionComposerFoot {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 7px;
+  color: var(--access-secondary-text);
+  font-size: 11px;
+  line-height: 1.6;
 }
+.ticketSessionComposerFoot > span { flex: 1 1 160px; min-width: 0; }
+.ticketSessionComposerFoot > button { flex: 0 0 auto; margin-left: auto; }
 
 .ticketSideQuestionPanel {
   display: flex;
@@ -369,19 +445,12 @@
 
 .ticketSideQuestionHistory { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .ticketSideQuestionEmpty { padding: 18px 8px; color: var(--access-secondary-text); font-size: 12px; line-height: 1.7; text-align: center; }
-.ticketSideQuestionEntry { margin-bottom: 14px; }
-.ticketSideQuestionPrompt,
-.ticketSideQuestionAnswer,
-.ticketSideQuestionSystem { padding: 9px 10px; border-radius: 8px; font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ticketSideQuestionPrompt { background: var(--menu-selected-bg); }
-.ticketSideQuestionAnswer { background: var(--workflow-muted-card-bg); }
-.ticketSideQuestionSystem { border: 1px solid var(--workflow-border); color: var(--access-secondary-text); }
+.ticketSideQuestionHistory .ticketSessionBubble { margin-bottom: 14px; }
+.ticketSideQuestionHistory .ticketSessionBubbleContent { padding: 9px 10px; }
 .ticketSideQuestionStatus { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--access-secondary-text); font-size: 11px; }
 .ticketSideQuestionStatus :global(.ant-tag) { margin: 0; font-size: 11px; }
 
 .ticketSideQuestionComposer { flex: 0 0 auto; padding: 12px; border-top: 1px solid var(--workflow-border); }
-.ticketSideQuestionComposer :global(.ant-input) { resize: none; background: var(--workflow-muted-card-bg); }
-.ticketSideQuestionFoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; }
 
 /* ai_forensic Exploration Graph: compact cards, dependency edges, canvas controls, and detail sheet. */
 .ticketGraphPanel { position: relative; overflow: hidden; border: 1px solid var(--workflow-border); border-radius: 12px; background: var(--workflow-palette-item-bg); }
@@ -451,19 +520,10 @@
 .ticketGraphSheetBody pre { margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--workflow-border); border-radius: 6px; background: var(--workflow-muted-card-bg); color: var(--text-primary); font: 11px/1.6 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (max-width: 900px) {
-  .ticketSessions { grid-template-columns: 210px minmax(0, 1fr); }
-  .ticketSessionsWithSide { grid-template-columns: 210px minmax(0, 1fr); }
-  .ticketSideQuestionPanel { grid-column: 1 / -1; min-height: 360px; }
-  .ticketSessionHeaderActions .ticketSessionModel { display: none; }
+  .ticketSessionHeaderActions { font-size: 11px; }
 }
 
 @media (max-width: 700px) {
-  .ticketSessions { display: flex; height: 850px; min-height: 0; flex-direction: column; gap: 12px; }
-  .ticketSessionsWithSide { display: flex; }
-  .ticketSessionSidebar { max-height: 230px; flex: 0 0 auto; }
-  .ticketSessionSidebarBody { max-height: 150px; }
-  .ticketSessionMain { flex: 1; min-height: 0; }
-  .ticketSideQuestionPanel { min-height: 460px; flex: 1; }
   .ticketSessionMainHead { flex-wrap: wrap; padding: 10px 12px; }
   .ticketSessionTranscript { padding: 14px 10px; }
   .ticketSessionHeaderActions { font-size: 11px; }
@@ -471,6 +531,29 @@
   .ticketGraphLegend { top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 9px; font-size: 10px; }
   .ticketGraphControls { bottom: 10px; left: 10px; }
   .ticketGraphMinimap { right: 10px; bottom: 10px; width: 128px; height: 82px; }
+}
+
+/* Use the ticket's available width, including the app sidebar and browser zoom. */
+@container ticket-detail (max-width: 1180px) {
+  .ticketSessionsWithSide { grid-template-columns: minmax(210px, 260px) minmax(0, 1fr); height: auto; }
+  .ticketSessionsWithSide > .ticketSessionSidebar,
+  .ticketSessionsWithSide > .ticketSessionMain { height: clamp(480px, calc(100dvh - 262px), 850px); }
+  .ticketSideQuestionPanel { grid-column: 1 / -1; height: 400px; }
+}
+
+@container ticket-detail (max-width: 900px) {
+  .ticketSessions { grid-template-columns: 210px minmax(0, 1fr); }
+}
+
+@container ticket-detail (max-width: 680px) {
+  .ticketSessions { display: flex; height: auto; min-height: 0; flex-direction: column; gap: 12px; }
+  .ticketSessions > .ticketSessionSidebar { height: auto; max-height: 240px; flex: 0 0 auto; }
+  .ticketSessionSidebarBody { max-height: 160px; }
+  .ticketSessions > .ticketSessionMain { height: 650px; min-height: 0; flex: 0 0 auto; }
+  .ticketSessions > .ticketSideQuestionPanel { height: 460px; min-height: 0; flex: 0 0 auto; }
+  .ticketSessionMainHead { padding: 10px 12px; }
+  .ticketSessionTranscript { padding: 14px 10px; }
+  .ticketSessionComposerFoot { flex-wrap: wrap; }
 }
 
 .list {
