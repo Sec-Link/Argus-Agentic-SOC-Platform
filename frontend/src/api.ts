@@ -1065,6 +1065,35 @@ export async function fetchSplunkIntegrationData(id: string, size = 500): Promis
   return result.data;
 }
 
+export type ClickHouseField = 'alert_id' | 'timestamp' | 'severity' | 'message' | 'title' | 'rule_id' | 'description' | 'category' | 'status';
+
+export type ClickHouseConfig = {
+  host: string;
+  username: string;
+  password?: string;
+  password_configured?: boolean;
+  verify_certs: boolean;
+  database: string;
+  table: string;
+  lookback_hours: number;
+  field_mapping: Partial<Record<ClickHouseField, string>>;
+};
+
+export type ClickHouseIntegration = { id: string; name: string; type: 'clickhouse'; config: ClickHouseConfig };
+export type ClickHouseConnectionTestResult = { ok: boolean; status: number; server_info: { version: string } };
+export type ClickHouseFetchResult = {
+  ok: boolean; fetched: number; inserted: number; updated: number; skipped: number;
+  limit_reached?: boolean; errors: string[];
+};
+
+export async function testClickHouseIntegration(config: ClickHouseConfig): Promise<ClickHouseConnectionTestResult> {
+  return (await client.post('/integrations/test_clickhouse', config, { timeout: 65000 })).data;
+}
+
+export async function fetchClickHouseIntegrationData(id: string, size = 500): Promise<ClickHouseFetchResult> {
+  return (await client.post(`/integrations/${encodeURIComponent(id)}/fetch-data/`, { size }, { timeout: 65000 })).data;
+}
+
 export async function testEsIntegration(payload:any){
   const r = await client.post('/integrations/test_es', payload)
   return r.data

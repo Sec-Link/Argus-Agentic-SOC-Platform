@@ -20,7 +20,8 @@ def dashboard_alerts(platform):
         return qs.filter(source_data__connector_type='splunk_search')
     if platform == 'elk':
         # Legacy ES rows have no connector marker, including SQL/JSON null payloads.
-        qs = qs.filter(Q(source_data__connector_type__isnull=True) | ~Q(source_data__connector_type='splunk_search'))
+        qs = qs.filter(Q(source_data__connector_type__isnull=True)
+                       | ~Q(source_data__connector_type__in=['splunk_search', 'clickhouse']))
     return qs
 
 

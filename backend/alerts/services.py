@@ -28,6 +28,7 @@ from django.utils import timezone
 from django.core.cache import cache
 
 from .models import Alert, ESIntegrationConfig
+from .querysets import es_alerts_queryset
 from detections.models import LocalDetectionRule
 
 MOCK_FILE = Path(__file__).resolve().parent / 'mock_alerts.json'
@@ -140,7 +141,7 @@ def _alerts_queryset_for_active_index():
     qs = Alert.objects.all()
     active_index = _get_active_index_name()
     if active_index:
-        qs = qs.filter(Q(source_index=active_index) | Q(source_data__connector_type='splunk_search'))
+        qs = qs.filter(Q(source_index=active_index) | Q(source_data__connector_type__in=['splunk_search', 'clickhouse']))
     # Guard dashboard/list APIs from legacy/broken rows that were inserted
     # without a stable identity.
     qs = qs.exclude(alert_id__isnull=True).exclude(alert_id='')
@@ -477,7 +478,7 @@ def _upsert_docs_to_db(docs: List[Dict]) -> None:
             }
             with transaction.atomic():
                 if alert_id:
-                    existing = Alert.objects.filter(alert_id=alert_id, source_index=src_idx).order_by('-id').first()
+                    existing = es_alerts_queryset().filter(alert_id=alert_id, source_index=src_idx).order_by('-id').first()
                     if existing:
                         for k, v in defaults.items():
                             setattr(existing, k, v)
