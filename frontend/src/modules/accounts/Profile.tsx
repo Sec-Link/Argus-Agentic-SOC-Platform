@@ -1,6 +1,29 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Space, Input, Button, message, Typography, Divider } from 'antd'
 import { changePassword, getRbacMe, getUser, updateUser } from 'services/accounts'
+import { useGuide } from 'components/layout/useGuide'
+import type { GuideStep } from 'components/layout/useGuide'
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="pf-details"]',
+    title: '1. Your account details',
+    description: 'Review your username and edit your email, first name and last name. The username cannot be changed.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="pf-save"]',
+    title: '2. Save your profile',
+    description: 'Click Save to store profile changes. If the fields are greyed out, your role does not allow editing profiles.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="pf-password"]',
+    title: '3. Change your password',
+    description: 'Enter your current password, then the new one twice, and click Update password.',
+    placement: 'top',
+  },
+]
 
 const Profile: React.FC = () => {
   const [loading, setLoading] = useState(false)
@@ -15,6 +38,7 @@ const Profile: React.FC = () => {
   const [newPassword, setNewPassword] = useState<string>('')
   const [confirmPassword, setConfirmPassword] = useState<string>('')
   const [passwordSaving, setPasswordSaving] = useState(false)
+  const guide = useGuide(GUIDE_STEPS)
 
   useEffect(() => {
     const load = async () => {
@@ -114,7 +138,7 @@ const Profile: React.FC = () => {
   return (
     <Card title="My Profile" loading={loading}>
       <Space direction="vertical" style={{ width: '100%' }} size={12}>
-        <Space direction="vertical" style={{ width: '100%' }} size={6}>
+        <Space direction="vertical" style={{ width: '100%' }} size={6} data-tour="pf-details">
           <Typography.Text type="secondary">Username</Typography.Text>
           <Input value={username} disabled />
         </Space>
@@ -132,10 +156,10 @@ const Profile: React.FC = () => {
           <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Last name" disabled={!canEdit} />
         </Space>
         <Space>
-          <Button type="primary" onClick={handleSave} loading={saving} disabled={!canEdit || emailInvalid}>Save</Button>
+          <Button type="primary" onClick={handleSave} loading={saving} disabled={!canEdit || emailInvalid} data-tour="pf-save">Save</Button>
         </Space>
         <Divider />
-        <Space direction="vertical" style={{ width: '100%' }} size={8}>
+        <Space direction="vertical" style={{ width: '100%' }} size={8} data-tour="pf-password">
           <Typography.Text strong>Change Password</Typography.Text>
           <Input.Password
             value={oldPassword}
@@ -158,6 +182,7 @@ const Profile: React.FC = () => {
           </Space>
         </Space>
       </Space>
+      {guide}
     </Card>
   )
 }

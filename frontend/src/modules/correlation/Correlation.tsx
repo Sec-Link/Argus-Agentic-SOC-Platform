@@ -3,6 +3,7 @@ import { Card, Form, InputNumber, Select, Switch, Button, Space, message, Table,
 import { Line } from '@ant-design/plots'
 import { getCorrelationPolicy, saveCorrelationPolicy, getCorrelationEvents, getCorrelationRiskEntities } from 'services/correlation'
 import { listIntegrations, integrationsPreviewEsMapping } from 'services/integrations'
+import { useGuide, type GuideStep } from 'components/layout/useGuide'
 
 const { Title, Text } = Typography
 
@@ -37,6 +38,57 @@ function exportCsv(rows: any[], filename: string) {
   link.click()
 }
 
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-node-key="policy"]',
+    title: '1. Correlation Policy',
+    description: 'Correlation groups related alerts into tickets. Use the tabs to switch between the Policy, Activity and Risk Entities views.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="co-policy"]',
+    title: '2. Configure the policy',
+    description: 'Turn correlation on, set the time window in minutes, and pick the Elasticsearch integration and index that hold your alerts.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="co-es-fields"]',
+    title: '3. Load ES Fields',
+    description: 'Load the field list from your alerts index first. The Order By Fields selector stays disabled until fields are loaded.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="co-save"]',
+    title: '4. Save the policy',
+    description: 'Save applies the window and Order By Fields. Reset reloads the form back to its initial state.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-node-key="activity"]',
+    title: '5. Correlation Activity',
+    description: 'See how many correlated alerts arrived over time, and which tickets they belong to.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="co-activity-controls"]',
+    title: '6. Time range and export',
+    description: 'Choose the time range and bucket size, Refresh the data, or Export CSV of the table. Seed Data generates sample events for a demo.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-node-key="risk_entities"]',
+    title: '7. Risk Entities',
+    description: 'Lists IP, user and host risk objects that link multiple alerts or detection rules within the window.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="co-entity-controls"]',
+    title: '8. Filter entities',
+    description: 'Set the minimum number of alerts and the time range to focus on the entities that matter, then click Refresh.',
+    placement: 'bottom',
+  },
+]
+
 type Props = {
   onNavigate?: (path: string) => void
 }
@@ -57,6 +109,7 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
   const [entities, setEntities] = useState<any[]>([])
   const [entitiesLoading, setEntitiesLoading] = useState(false)
   const [minAlerts, setMinAlerts] = useState<number>(2)
+  const guide = useGuide(GUIDE_STEPS)
 
   useEffect(() => {
     setLoadingPolicy(true)
@@ -232,6 +285,7 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
       <Title level={3}>Correlation</Title>
       <Text type="secondary">Configure correlation ordering rules and review correlated activity.</Text>
       <Divider />
+      {guide}
 
       <Tabs
         defaultActiveKey="policy"
@@ -240,7 +294,7 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
             key: 'policy',
             label: 'Correlation Policy',
             children: (
-              <Card title="Policy" loading={loadingPolicy}>
+              <Card data-tour="co-policy" title="Policy" loading={loadingPolicy}>
                 <Form form={form} layout="vertical">
                   <Form.Item label="Enabled" name="enabled" valuePropName="checked">
                     <Switch />
@@ -261,7 +315,7 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
                   <Form.Item name="es_index" label="ES Index">
                     <Input placeholder="alerts" />
                   </Form.Item>
-                  <Space style={{ marginBottom: 12 }}>
+                  <Space data-tour="co-es-fields" style={{ marginBottom: 12 }}>
                     <Button onClick={loadEsFields} loading={loadingFields}>Load ES Fields</Button>
                     <Text type="secondary">{esFields.length ? `${esFields.length} fields loaded` : "No fields loaded"}</Text>
                   </Space>
@@ -275,7 +329,7 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
                       style={{ width: 360 }}
                     />
                   </Form.Item>
-                  <Space>
+                  <Space data-tour="co-save">
                     <Button type="primary" onClick={onSave} loading={saving}>Save</Button>
                     <Button onClick={() => form.resetFields()}>Reset</Button>
                   </Space>
@@ -288,7 +342,7 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
             label: 'Correlation Activity',
             children: (
               <Card title="Activity" extra={
-                <Space>
+                <Space data-tour="co-activity-controls">
                   <Select value={rangeKey} style={{ width: 140 }} onChange={setRangeKey} options={RANGE_OPTIONS.map(r => ({ label: r.label, value: r.key }))} />
                   <Select value={bucket} style={{ width: 110 }} onChange={setBucket} options={['5m','15m','1h','3h','6h'].map(v => ({ label: v, value: v }))} />
                   <Button onClick={() => refreshEvents()} loading={eventsLoading}>Refresh</Button>
@@ -316,7 +370,7 @@ const Correlation: React.FC<Props> = ({ onNavigate }) => {
               <Card
                 title="Entity-Centric Correlation"
                 extra={
-                  <Space>
+                  <Space data-tour="co-entity-controls">
                     <Text type="secondary">Min alerts</Text>
                     <Select value={minAlerts} style={{ width: 90 }} onChange={setMinAlerts} options={[1,2,3,5].map(v => ({ label: `≥ ${v}`, value: v }))} />
                     <Select value={rangeKey} style={{ width: 140 }} onChange={setRangeKey} options={RANGE_OPTIONS.map(r => ({ label: r.label, value: r.key }))} />

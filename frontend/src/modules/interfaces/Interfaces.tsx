@@ -35,6 +35,8 @@ import {
   updateInterfaceEndpoint,
 } from 'services/interfaces';
 import type { InterfaceEndpoint, InterfaceRequestLog } from 'services/interfaces';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
 
 const { Paragraph, Text } = Typography;
 
@@ -50,7 +52,47 @@ const getEndpointUrl = (record: InterfaceEndpoint) => {
   return `/api/v1/interfaces/endpoints/${record.id}/ingest/`;
 };
 
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="if-card"]',
+    title: '1. Inbound interfaces',
+    description: 'Interfaces are API or Webhook endpoints that let external systems send events into the platform.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="if-filters"]',
+    title: '2. Find an interface',
+    description: 'Search by keyword or filter by type (API or Webhook). Refresh reloads the list.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="if-create"]',
+    title: '3. Create an interface',
+    description: 'Click Create Interface to set a name, type and an optional HMAC secret for signature verification.',
+    placement: 'bottomRight',
+  },
+  {
+    selector: '[data-tour="if-table"]',
+    title: '4. Your interfaces',
+    description: 'Each row shows the endpoint URL (copyable), an enable switch, and when it was created and last received an event.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="if-actions"]',
+    title: '5. Row actions',
+    description: 'Edit the interface, Copy URL, open request Logs, send a Test request, or Delete it.',
+    placement: 'left',
+  },
+  {
+    selector: '[data-tour="if-examples"]',
+    title: '6. Request code examples',
+    description: 'Copy ready-made cURL, Python or JavaScript snippets to send data to the selected interface.',
+    placement: 'top',
+  },
+];
+
 export default function Interfaces() {
+  const guide = useGuide(GUIDE_STEPS);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<InterfaceEndpoint[]>([]);
   const [query, setQuery] = useState('');
@@ -223,7 +265,7 @@ export default function Interfaces() {
       key: 'actions',
       width: 350,
       render: (_, record) => (
-        <Space wrap>
+        <Space wrap data-tour={filtered[0]?.id === record.id ? 'if-actions' : undefined}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             Edit
           </Button>
@@ -250,9 +292,10 @@ export default function Interfaces() {
 
   return (
     <Card
+      data-tour="if-card"
       title="Interface Management"
       extra={
-        <Space>
+        <Space data-tour="if-filters">
           <Input.Search
             allowClear
             placeholder="Search keywords"
@@ -278,15 +321,15 @@ export default function Interfaces() {
           <Button icon={<ReloadOutlined />} onClick={loadData}>
             Refresh
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          <Button data-tour="if-create" type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             Create Interface
           </Button>
         </Space>
       }
     >
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={filtered} pagination={{ pageSize: 10 }} />
+      <Table data-tour="if-table" rowKey="id" loading={loading} columns={columns} dataSource={filtered} pagination={{ pageSize: 10 }} />
 
-      <Card size="small" title="Request Code Examples" style={{ marginTop: 16 }}>
+      <Card data-tour="if-examples" size="small" title="Request Code Examples" style={{ marginTop: 16 }}>
         {!selectedForExamples ? (
           <Text type="secondary">Create an interface to see request examples.</Text>
         ) : (
@@ -367,6 +410,7 @@ export default function Interfaces() {
           ]}
         />
       </Drawer>
+      {guide}
     </Card>
   );
 }

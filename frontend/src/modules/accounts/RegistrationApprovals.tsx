@@ -8,6 +8,35 @@ import {
   rejectRegistrationRequest,
   updateSystemSettings,
 } from 'services/accounts';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="ra-auto"]',
+    title: '1. Auto approval',
+    description: 'Turn Auto Approve Email Registration ON to approve new sign-ups automatically, or OFF to review each request by hand.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="ra-status"]',
+    title: '2. Pick a status',
+    description: 'Switch between Pending, Approved and Rejected requests. Pending is the queue that needs your decision.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="ra-search"]',
+    title: '3. Find a request',
+    description: 'Type part of an email address and click Search. Use Reset to go back to Pending, or View Audit Logs to see past decisions.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="ra-table"]',
+    title: '4. Review requests',
+    description: 'Each row shows the requester, status, request time and reviewer. Approve sends the user a one-time code; Reject lets you add an optional reason.',
+    placement: 'top',
+  },
+];
 
 type RegistrationItem = {
   id: string;
@@ -31,6 +60,7 @@ const RegistrationApprovals: React.FC = () => {
   const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
   const [autoApproveEnabled, setAutoApproveEnabled] = useState(true);
   const [savingAutoApprove, setSavingAutoApprove] = useState(false);
+  const guide = useGuide(GUIDE_STEPS);
 
   const reload = async () => {
     setLoading(true);
@@ -109,7 +139,7 @@ const RegistrationApprovals: React.FC = () => {
     <Card title="Registration Approvals">
       <Space direction="vertical" style={{ width: '100%' }} size={12}>
         <Space wrap>
-          <Space>
+          <Space data-tour="ra-auto">
             <Typography.Text>Auto Approve Email Registration:</Typography.Text>
             <Switch
               checked={autoApproveEnabled}
@@ -120,6 +150,7 @@ const RegistrationApprovals: React.FC = () => {
             />
           </Space>
           <Input
+            data-tour="ra-search"
             placeholder="Filter by email"
             value={emailFilter}
             onChange={(e) => setEmailFilter(e.target.value)}
@@ -128,7 +159,7 @@ const RegistrationApprovals: React.FC = () => {
           <Button onClick={reload}>Search</Button>
           <Button onClick={() => router.push('/settings/audit-logs')}>View Audit Logs</Button>
           <Button onClick={() => { setEmailFilter(''); setStatusFilter('pending'); }}>Reset</Button>
-          <Space>
+          <Space data-tour="ra-status">
             <Typography.Text>Status:</Typography.Text>
             <Button type={statusFilter === 'pending' ? 'primary' : 'default'} onClick={() => setStatusFilter('pending')}>
               Pending
@@ -142,6 +173,7 @@ const RegistrationApprovals: React.FC = () => {
           </Space>
         </Space>
 
+        <div data-tour="ra-table">
         <Table
           rowKey="id"
           dataSource={rows}
@@ -184,6 +216,7 @@ const RegistrationApprovals: React.FC = () => {
             },
           ]}
         />
+        </div>
       </Space>
 
       <Modal
@@ -201,6 +234,7 @@ const RegistrationApprovals: React.FC = () => {
           onChange={(e) => setReasonDraft(e.target.value)}
         />
       </Modal>
+      {guide}
     </Card>
   );
 };

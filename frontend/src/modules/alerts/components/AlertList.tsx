@@ -298,12 +298,13 @@ const AlertList: React.FC = () => {
   return (
     <div>
       {/* Slim toolbar — no title / debug text */}
-      <div className="alerts-toolbar">
+      <div className="alerts-toolbar" data-tour="al-toolbar">
         <Input
           allowClear
           prefix={<SearchOutlined style={{ color: 'rgba(127,127,127,0.7)' }} />}
           placeholder="Filter by id / message / details / rule / host / ip"
           className="alerts-search"
+          data-tour="al-search"
           value={searchText}
           onChange={(e) => { setSearchText(e.target.value); setPage(1); }}
         />
@@ -312,6 +313,7 @@ const AlertList: React.FC = () => {
           suffixIcon={<FilterOutlined />}
           placeholder="Severity"
           className="alerts-severity-select"
+          data-tour="al-severity"
           value={severityFilter}
           onChange={(v) => { setSeverityFilter(v); setPage(1); }}
           options={[
@@ -322,12 +324,12 @@ const AlertList: React.FC = () => {
             { label: 'Unknown', value: 'unknown' },
           ]}
         />
-        <Button icon={<ReloadOutlined />} onClick={resetFilters}>
+        <Button icon={<ReloadOutlined />} onClick={resetFilters} data-tour="al-reset">
           Reset
         </Button>
       </div>
 
-      <div className="alerts-table-wrap">
+      <div className="alerts-table-wrap" data-tour="al-table">
         <Table
           className="alerts-resizable-table"
           rowKey="alert_id"

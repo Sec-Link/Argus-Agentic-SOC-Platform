@@ -3,6 +3,35 @@ import dayjs from 'dayjs'
 import { Card, Button, List, Modal, Form, Input, Select, message, InputNumber, DatePicker, Table, Popconfirm, Tag } from 'antd'
 import client from 'services/client'
 import { previewEsIntegration } from 'services/integrations'
+import { useGuide } from 'components/layout/useGuide'
+import type { GuideStep } from 'components/layout/useGuide'
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="or-card"]',
+    title: '1. Scheduled tasks',
+    description: 'The Orchestrator runs tasks on a cron schedule, for example copying data from Elasticsearch into the platform database.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="or-new"]',
+    title: '2. Create a task',
+    description: 'Click New Task to set its name, cron schedule, source Elasticsearch integration, index, time range, destination and limit.',
+    placement: 'bottomLeft',
+  },
+  {
+    selector: '[data-tour="or-task"]',
+    title: '3. Manage a task',
+    description: 'Run starts the task immediately, View Runs lists its past runs with logs, Edit changes its settings, and Delete removes it together with its runs. The latest run status is shown under the name.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="or-runs"]',
+    title: '4. Task run history',
+    description: 'Choose a task in the selector to see its runs, their status and timing in one table.',
+    placement: 'top',
+  },
+]
 
 // Orchestrator page for scheduled tasks (Task) management.
 // - Create/edit/list tasks (schedule, source/dest integration, index, limit, query)
@@ -14,6 +43,7 @@ import { previewEsIntegration } from 'services/integrations'
 // - Frontend keeps backend data model intact and only builds the expected payload
 
 export default function Orchestrator(){
+  const guide = useGuide(GUIDE_STEPS)
   const [items, setItems] = useState<any[]>([])
   const [integrations, setIntegrations] = useState<any[]>([])
   const [runs, setRuns] = useState<any[]>([])
@@ -393,10 +423,10 @@ export default function Orchestrator(){
 
   return (
     <div style={{ padding: 12 }}>
-      <Card title="Orchestrator">
-        <Button type="primary" onClick={()=>{ setEditingTask(null); form.resetFields(); setShowModal(true) }} style={{ marginBottom: 12 }}>New Task</Button>
+      <Card title="Orchestrator" data-tour="or-card">
+        <Button data-tour="or-new" type="primary" onClick={()=>{ setEditingTask(null); form.resetFields(); setShowModal(true) }} style={{ marginBottom: 12 }}>New Task</Button>
         <List dataSource={visibleItems} renderItem={(it:any)=>(
-          <List.Item actions={[
+          <List.Item data-tour={visibleItems[0]?.id === it.id ? 'or-task' : undefined} actions={[
             <Button key="run" onClick={()=>runTask(it.id)}>Run</Button>,
             <Button key="runs" onClick={()=>openRunsForTask(it)}>View Runs</Button>,
             <Button key="edit" onClick={()=>openEditTask(it)}>Edit</Button>,
@@ -430,7 +460,7 @@ export default function Orchestrator(){
         )} />
       </Card>
 
-      <Card title="Task Runs" style={{ marginTop: 16 }} extra={
+      <Card title="Task Runs" data-tour="or-runs" style={{ marginTop: 16 }} extra={
         <Select
           style={{ minWidth: 220 }}
           placeholder="Select task"
@@ -636,6 +666,7 @@ export default function Orchestrator(){
           <Form.Item name="limit" label="Limit"><InputNumber style={{ width: '100%' }} min={1} /></Form.Item>
         </Form>
       </Modal>
+      {guide}
     </div>
   )
 }

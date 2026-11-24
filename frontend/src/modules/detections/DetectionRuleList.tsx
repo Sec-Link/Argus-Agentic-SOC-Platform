@@ -264,6 +264,7 @@ export default function DetectionRuleList(props: Props) {
     <Card styles={{ body: { paddingInline: 16 } }}>
       {/* Row 1 — Filter bar */}
       <div
+        data-tour="dt-filters"
         style={{
           display: "flex",
           flexWrap: "wrap",
@@ -292,6 +293,7 @@ export default function DetectionRuleList(props: Props) {
 
       {/* Row 2 — Action & meta bar */}
       <div
+        data-tour="dt-actions"
         style={{
           display: "flex",
           flexWrap: "wrap",
@@ -330,14 +332,14 @@ export default function DetectionRuleList(props: Props) {
             </Button>
           </Popconfirm>
           <Tooltip title="Pull enabled state of published rules from Kibana so the library, rule list and dashboard agree">
-            <Button icon={<SyncOutlined />} loading={props.syncingKibana} onClick={props.onSyncKibana}>Sync with Kibana</Button>
+            <Button data-tour="dt-sync" icon={<SyncOutlined />} loading={props.syncingKibana} onClick={props.onSyncKibana}>Sync with Kibana</Button>
           </Tooltip>
           <Button icon={<DownloadOutlined />} onClick={props.onExportRules}>Export</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={props.onCreateRule}>New Rule</Button>
+          <Button data-tour="dt-new" type="primary" icon={<PlusOutlined />} onClick={props.onCreateRule}>New Rule</Button>
         </Space>
       </div>
 
-      <div style={{ width: "100%", overflowX: "auto" }}>
+      <div data-tour="dt-table" style={{ width: "100%", overflowX: "auto" }}>
         <Table
           rowKey="id"
           loading={props.loading}

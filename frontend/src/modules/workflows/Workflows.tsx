@@ -61,6 +61,8 @@ import {
   TicketWorkflowBinding,
 } from 'services/workflows';
 import { startWorkflowPolling } from 'services/workflows/polling';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
 
 interface WorkflowsProps {
   onNavigate?: (path: string) => void;
@@ -132,8 +134,54 @@ const isWorkflowRunning = (workflow: Workflow): boolean => {
   return !!status && RUNNING_EXECUTION_STATES.has(status);
 };
 
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="wf-stats"]',
+    title: '1. Workflow overview',
+    description: 'These cards summarise how many workflows exist, how many are Active, and the overall execution count and success rate.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="wf-filters"]',
+    title: '2. Find workflows',
+    description: 'Search by name, or narrow the list by Status and Trigger Type. Use Refresh to reload the list.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="wf-create"]',
+    title: '3. Create a workflow',
+    description: 'Click Create Visual Workflow to open the visual editor and build a new playbook from scratch.',
+    placement: 'bottomRight',
+  },
+  {
+    selector: '[data-tour="wf-import"]',
+    title: '4. Import JSON',
+    description: 'Import a previously exported workflow file. It is added as an inactive draft so you can review it before publishing.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="wf-executions"]',
+    title: '5. View executions',
+    description: 'Open the execution history to see the runs of all workflows and inspect their logs.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="wf-table"]',
+    title: '6. Your workflows',
+    description: 'Each row shows the trigger, run status, bound ticket labels and the last execution. Click a name to edit it in the visual editor.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="wf-actions"]',
+    title: '7. Row actions',
+    description: 'Execute or stop a run (or toggle the schedule for scheduled workflows), open the Visual Editor, Clone, Export the published JSON, Publish to Prefect, or Delete. A workflow must be published and active before it can run.',
+    placement: 'left',
+  },
+];
+
 const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow }) => {
   const { message } = App.useApp();
+  const guide = useGuide(GUIDE_STEPS);
   const [modal, modalContextHolder] = Modal.useModal();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -601,6 +649,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       key: 'actions',
       onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
       render: (_: any, record: Workflow) => {
+        const isFirstRow = (item: Workflow) => workflows[0]?.id === item.id;
         const running = isWorkflowRunning(record);
         const isLegacyLocal = record.execution_engine === 'local';
         const hasPublishedManifest = Boolean(record.published_version);
@@ -625,7 +674,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
               ? `Execute the last published version (v${record.published_version})`
               : `Execute published version v${record.published_version}`;
         return (
-          <Space size="small">
+          <Space size="small" data-tour={isFirstRow(record) ? 'wf-actions' : undefined}>
             {record.trigger_type === 'scheduled' ? (
               <Tooltip title={scheduleTooltip}>
                 <span>
@@ -740,7 +789,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       {modalContextHolder}
 
       {/* Stats Cards */}
-      <Row gutter={16} style={{ marginBottom: 24 }}>
+      <Row gutter={16} style={{ marginBottom: 24 }} data-tour="wf-stats">
         <Col span={6}>
           <Card>
             <Statistic
@@ -786,7 +835,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={[16, 12]} align="middle">
           <Col xs={24} lg={10} xl={9}>
-            <Space size="middle" wrap style={{ width: '100%' }}>
+            <Space size="middle" wrap style={{ width: '100%' }} data-tour="wf-filters">
               <Input
                 placeholder="Search workflows..."
                 prefix={<SearchOutlined />}
@@ -826,6 +875,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
           <Col xs={24} lg={14} xl={15} style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <Space wrap style={{ justifyContent: 'flex-end' }}>
               <Button
+                data-tour="wf-import"
                 icon={<ImportOutlined />}
                 onClick={handleImport}
               >
@@ -843,12 +893,14 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
               </Button>
               */}
               <Button
+                data-tour="wf-executions"
                 icon={<HistoryOutlined />}
                 onClick={() => onNavigate?.('/settings/workflows/executions')}
               >
                 View Executions
               </Button>
               <Button
+                data-tour="wf-create"
                 type="primary"
                 icon={<BranchesOutlined />}
                 onClick={() => onVisualEditWorkflow?.()}
@@ -862,7 +914,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
 
       {/* Workflows Table */}
       <Card title="Workflows" extra={<span>{workflows.length} items</span>}>
-        <div ref={tableContainerRef}>
+        <div ref={tableContainerRef} data-tour="wf-table">
           <Table
             className="workflow-resizable-table"
             columns={resizableColumns as ColumnsType<Workflow>}
@@ -876,6 +928,7 @@ const Workflows: React.FC<WorkflowsProps> = ({ onNavigate, onVisualEditWorkflow 
           />
         </div>
       </Card>
+      {guide}
     </div>
   );
 };

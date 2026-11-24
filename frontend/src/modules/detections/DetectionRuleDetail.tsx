@@ -196,12 +196,12 @@ export default function DetectionRuleDetail(props: Props) {
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
         <Button onClick={props.onBack}>Back to List</Button>
         <Space wrap>
-          <Segmented value={target} onChange={value => setTarget(String(value))}
+          <Segmented data-tour="dt-target" value={target} onChange={value => setTarget(String(value))}
             options={[{ value: 'elastic', label: 'Elastic' }, { value: 'splunk', label: 'Splunk' }]} />
-          <Button onClick={props.onEdit}>Edit</Button>
+          <Button data-tour="dt-edit" onClick={props.onEdit}>Edit</Button>
           {target === 'elastic' && <>
             <Button loading={props.rulePreviewLoading} onClick={props.onPreview}>Preview in Kibana</Button>
-            <Button type="primary" onClick={props.onPublish}>Publish to Kibana</Button>
+            <Button data-tour="dt-publish" type="primary" onClick={props.onPublish}>Publish to Kibana</Button>
           </>}
         </Space>
       </div>
@@ -222,6 +222,7 @@ export default function DetectionRuleDetail(props: Props) {
 
       {target === 'splunk' ? <SplunkRulePanel key={props.detail.id} rule={props.detail} versions={props.versions} onChanged={props.onSplunkChanged} /> : <>
       <Card
+        data-tour="dt-kibana"
         size="small"
         title="Kibana Detection Rule"
         style={{ marginBottom: 16 }}
@@ -246,6 +247,7 @@ export default function DetectionRuleDetail(props: Props) {
       </Card>
 
       <Card
+        data-tour="dt-risk"
         size="small"
         title="Risk Object Fields"
         style={{ marginBottom: 16 }}

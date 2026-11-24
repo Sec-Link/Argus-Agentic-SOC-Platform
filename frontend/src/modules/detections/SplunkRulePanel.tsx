@@ -108,7 +108,7 @@ export default function SplunkRulePanel({ rule, versions, onChanged }: {
     {!loading && !integrations.length ? error ? <Button icon={<RefreshCw size={16} />} onClick={() => setReload(value => value + 1)}>Retry</Button> : <Empty description="No Splunk Rule Publisher configured">
       <Button href="/settings/integrations">Integrations</Button>
     </Empty> : <>
-      <Space wrap style={{ marginBottom: 16 }}>
+      <Space data-tour="dt-splunk-publisher" wrap style={{ marginBottom: 16 }}>
         <Select aria-label="Splunk publisher" placeholder="Splunk publisher" value={integrationId || undefined}
           disabled={Boolean(busy)} onChange={setIntegrationId} style={{ width: 280, maxWidth: '100%' }}
           options={integrations.map(item => ({ value: item.id, label: item.name }))} />
@@ -138,7 +138,7 @@ export default function SplunkRulePanel({ rule, versions, onChanged }: {
           <Form.Item name="email_to" label="Email recipients"><Select mode="tags" tokenSeparators={[',', ';']} /></Form.Item>
         </div>
       </Form>
-      <Space wrap style={{ marginBottom: 16 }}>
+      <Space data-tour="dt-splunk-actions" wrap style={{ marginBottom: 16 }}>
         <Button icon={<Save size={16} />} disabled={disabled || !integrationId} loading={busy === 'save'} onClick={() => run('save')}>Save Configuration</Button>
         <Button icon={<Code size={16} />} disabled={disabled || !integrationId} loading={busy === 'compile'} onClick={() => run('compile')}>Compile SPL</Button>
         <Popconfirm title="Publish this rule to Splunk in disabled state?" onConfirm={() => run('publish')} disabled={disabled || !publication || dirty}>

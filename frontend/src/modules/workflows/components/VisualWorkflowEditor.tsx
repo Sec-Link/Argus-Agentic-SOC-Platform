@@ -99,6 +99,41 @@ import WorkflowVariablesPanel, { VariableReference } from './WorkflowVariablesPa
 import { declarationsToPayload, getWorkflowVariableOptions, variablesToDeclarations } from '../variables';
 import type { VariableDeclaration } from '../variables';
 import { clampSidebarWidth, getSidebarFontSize } from '../sidebar';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="we-header"]',
+    title: '1. Save your work',
+    description: 'Use Save Draft to keep your changes, or Save & Activate to turn the workflow on. Once it is published and active, Execute runs it.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="we-settings"]',
+    title: '2. Workflow settings',
+    description: 'Name the workflow, choose the execution deployment and the Trigger, and set Active or Draft. Variables you declare here can be reused in step configuration.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="we-labels"]',
+    title: '3. Ticket labels',
+    description: 'Bind ticket labels to this workflow so tickets carrying them are routed to it. Save Labels to apply the binding.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="we-palette"]',
+    title: '4. Action palette',
+    description: 'Drag an action or condition from here onto the canvas to add a step to the workflow.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="we-canvas"]',
+    title: '5. Build on the canvas',
+    description: 'Connect steps by dragging between their handles, and click a node to configure it. Select a node or connection and press Delete to remove it.',
+    placement: 'left',
+  },
+];
 
 const { Text } = Typography;
 
@@ -380,6 +415,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
 }) => {
   const { message } = App.useApp();
   const [modal, modalContextHolder] = Modal.useModal();
+  const guide = useGuide(GUIDE_STEPS);
   const [form] = Form.useForm();
   const [bindingForm] = Form.useForm();
   const [saving, setSaving] = useState(false);
@@ -1422,6 +1458,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       {modalContextHolder}
       {/* Header */}
       <Card
+        data-tour="we-header"
         style={{ borderRadius: 0, borderBottom: '1px solid var(--workflow-border, #f0f0f0)' }}
         styles={{ body: { padding: '12px 24px' } }}
       >
@@ -1511,7 +1548,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
           } as React.CSSProperties}
         >
           <ConfigProvider theme={{ token: { fontSize: sidebarFontSize, controlHeight: 32 * sidebarFontSize / 14 } }}>
-          <Card title="Workflow Settings" size="small" style={{ marginBottom: 16 }}>
+          <Card data-tour="we-settings" title="Workflow Settings" size="small" style={{ marginBottom: 16 }}>
             <Form form={form} layout="vertical" size="small">
               <Form.Item name="name" label="Name" rules={[{ required: true }]}>
                 <Input placeholder="Workflow Name" />
@@ -1642,6 +1679,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
 
           {!isNew && (
             <Card
+              data-tour="we-labels"
               title={
                 <Space>
                   <TagsOutlined />
@@ -1720,11 +1758,13 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
             </Card>
           )}
 
+          <div data-tour="we-palette">
           <ActionPalette
             actions={availableActions}
             savedNodes={savedNodes}
             onManageSavedNodes={() => setSavedNodesManagerVisible(true)}
           />
+          </div>
           </ConfigProvider>
         </div>
 
@@ -1763,7 +1803,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
         />
 
         {/* Canvas */}
-        <div ref={reactFlowWrapper} style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+        <div ref={reactFlowWrapper} data-tour="we-canvas" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -2285,6 +2325,7 @@ const VisualWorkflowEditor: React.FC<VisualWorkflowEditorProps> = ({
       >
         <p>Are you sure you want to delete "{selectedNode?.data?.label || 'this node'}"?</p>
       </Modal>
+      {guide}
     </div>
   );
 };

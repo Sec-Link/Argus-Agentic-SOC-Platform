@@ -9,6 +9,8 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { fetchReport } from '../api';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
 
 type TimeRange = '24h' | '7d' | '30d' | 'all';
 type ThemeMode = 'light' | 'dark';
@@ -34,6 +36,45 @@ const getTemplatePanelCollapsed = () => {
   try { return localStorage.getItem(TEMPLATE_PANEL_KEY) === 'true'; }
   catch { return false; }
 };
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="rp-range"]',
+    title: '1. Choose a time range',
+    description: 'Pick 24 Hours, 7 Days, 30 Days or All Time, then click Regenerate to refresh the report with live SOC metrics for that window.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="rp-brand"]',
+    title: '2. Set your branding',
+    description: 'Enter your company name and upload a PNG, JPEG or WebP logo (up to 1 MB). They are saved in this browser and shown in the report header.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="rp-placeholders"]',
+    title: '3. Use placeholders',
+    description: 'Search the Placeholder library for fields such as company name or MTTD. Copy a token, or use Insert at cursor to drop it into the template.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="rp-editor"]',
+    title: '4. Edit the template',
+    description: 'Write the report in Markdown. Placeholders in double curly braces are replaced with real values in the preview.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="rp-preview"]',
+    title: '5. Check the live preview',
+    description: 'See the finished report as you type. Scrolling is linked to the editor section by section.',
+    placement: 'left',
+  },
+  {
+    selector: '[data-tour="rp-export"]',
+    title: '6. Copy or export',
+    description: 'Copy Template keeps the raw Markdown, Export Resolved Markdown fills in the placeholders, and Download PDF saves the preview as a PDF.',
+    placement: 'bottom',
+  },
+];
 
 const DEFAULT_PLACEHOLDERS: PlaceholderDefinition[] = [
   { key: 'company.name', token: '{{company.name}}', label: 'Company name', group: 'Brand', description: 'Organization shown in the report header.', value: 'Argus' },
@@ -156,6 +197,7 @@ export default function ReportGenerator() {
   const [companyLogo, setCompanyLogo] = useState(DEFAULT_LOGO);
   const [placeholderSearch, setPlaceholderSearch] = useState('');
   const [templatePanelCollapsed, setTemplatePanelCollapsed] = useState(getTemplatePanelCollapsed);
+  const guide = useGuide(GUIDE_STEPS);
   const reportRequestId = useRef(0);
   const editorRef = useRef<TextAreaRef>(null);
   const editorMirrorRef = useRef<HTMLDivElement>(null);
@@ -454,11 +496,11 @@ export default function ReportGenerator() {
         </div>
       </div>
       <div className="soc-report-toolbar">
-        <Space wrap>
+        <Space wrap data-tour="rp-range">
           <Segmented<TimeRange> options={[{ label: '24 Hours', value: '24h' }, { label: '7 Days', value: '7d' }, { label: '30 Days', value: '30d' }, { label: 'All Time', value: 'all' }]} value={range} onChange={(value) => { setRange(value); void generate(value); }} />
           <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={() => void generate(range)}>Regenerate</Button>
         </Space>
-        <Space wrap>
+        <Space wrap data-tour="rp-export">
           <Button icon={<CopyOutlined />} onClick={() => void copyMarkdown()}>Copy Template</Button>
           <Button icon={<DownloadOutlined />} onClick={exportMarkdown}>Export Resolved Markdown</Button>
           <Button icon={<FilePdfOutlined />} onClick={() => void exportPdf()}>Download PDF</Button>
@@ -480,7 +522,7 @@ export default function ReportGenerator() {
           className="soc-report-card setup-card"
         >
           <div className="template-data-layout">
-          <section className="report-setup-section">
+          <section className="report-setup-section" data-tour="rp-brand">
             <div className="report-section-label">Brand</div>
             <label className="report-field-label" htmlFor="report-company-name">Company name</label>
             <Input id="report-company-name" value={companyName} maxLength={80} onChange={(event) => saveCompanyName(event.target.value)} placeholder="Company name" />
@@ -495,7 +537,7 @@ export default function ReportGenerator() {
             </div>
             <div className="report-field-help">PNG, JPEG, or WebP · maximum 1 MB · saved in this browser</div>
           </section>
-          <section className="report-setup-section placeholder-library">
+          <section className="report-setup-section placeholder-library" data-tour="rp-placeholders">
             <div className="report-section-label">Placeholder library</div>
             <Input.Search value={placeholderSearch} onChange={(event) => setPlaceholderSearch(event.target.value)} allowClear placeholder="Search fields" />
             <div className="placeholder-groups">
@@ -525,7 +567,7 @@ export default function ReportGenerator() {
         )}
 
         <div className="soc-report-editor-grid">
-          <Card title="Markdown Editor" extra={<span className="scroll-link-label">Section linked</span>} className="soc-report-card editor-card">
+          <Card title="Markdown Editor" extra={<span className="scroll-link-label">Section linked</span>} className="soc-report-card editor-card" data-tour="rp-editor">
             <div ref={editorMirrorRef} className="editor-scroll-mirror" aria-hidden="true">{editorMirrorContent}</div>
             <Input.TextArea
               ref={editorRef}
@@ -539,7 +581,7 @@ export default function ReportGenerator() {
               wrap="soft"
             />
           </Card>
-          <Card title="Live Preview" extra={<span className="scroll-link-label">Section linked</span>} className="soc-report-card preview-card">
+          <Card title="Live Preview" extra={<span className="scroll-link-label">Section linked</span>} className="soc-report-card preview-card" data-tour="rp-preview">
             <div ref={previewScrollRef} className="preview-scroll-pane" onScroll={(event) => handleLinkedScroll('preview', event.currentTarget)}>
               <article id="report-preview-container" className="soc-report-markdown">
                 <ReactMarkdown urlTransform={(url: string) => /^data:image\/(png|jpeg|webp);base64,/.test(url) ? url : defaultUrlTransform(url)} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={{
@@ -554,6 +596,8 @@ export default function ReportGenerator() {
           </Card>
         </div>
       </div>
+
+      {guide}
 
       <style jsx global>{`
         .soc-report-page { width:100%; max-width:100%; min-width:0; padding:24px; min-height:100%; overflow-x:hidden; box-sizing:border-box; transition:background-color .2s ease; }

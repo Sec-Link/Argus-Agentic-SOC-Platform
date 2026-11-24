@@ -18,6 +18,8 @@ import {
   updateAiAssistantSkillConfig,
   updateAiAssistantSkillContent,
 } from '../../api';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
 
 const STORAGE_KEYS = {
   enabled: 'siem_ai_enabled',
@@ -27,7 +29,59 @@ const STORAGE_KEYS = {
   timeout: 'siem_ai_timeout',
 };
 
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="ai-tabs"]',
+    title: '1. Settings tabs',
+    description: 'Switch between General settings, the MCP and Skill monitors, MCP Management and Skills Management.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="ai-general"]',
+    title: '2. General settings',
+    description: 'Enable the AI Assistant and set the API key, Model, Base URL and Timeout. These are stored locally in this browser.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="ai-general-actions"]',
+    title: '3. Save and test',
+    description: 'Click Save General to keep your changes, then Test Connectivity to confirm the assistant can reach the model.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="ai-mcp-stats"]',
+    title: '4. MCP call statistics',
+    description: 'See total calls, success rate and per-tool counts for MCP tool usage. Use Refresh to reload them.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="ai-mcp-executions"]',
+    title: '5. Recent executions',
+    description: 'Search by tool name or filter by status, then open Details on a row to inspect the request and response.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="ai-mcp-servers"]',
+    title: '6. MCP servers',
+    description: 'Add external MCP servers, switch them on or off, and edit or delete them. Built-in and Skill MCP tools are listed below.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="ai-skills"]',
+    title: '7. Configured skills',
+    description: 'Add a skill, edit its SKILL.md content, or toggle it on and off to control what the assistant can do.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="ai-skill-library"]',
+    title: '8. Skill library',
+    description: 'Browse the skills available in the library and see whether each one is Enabled, Disabled or Not Added.',
+    placement: 'top',
+  },
+];
+
 export default function AiAssistantSettings() {
+  const guide = useGuide(GUIDE_STEPS);
   const [generalForm] = Form.useForm();
   const [mcpEditForm] = Form.useForm();
   const [skillEditForm] = Form.useForm();
@@ -617,12 +671,13 @@ export default function AiAssistantSettings() {
       ) : null}
 
       <Tabs
+        data-tour="ai-tabs"
         items={[
           {
             key: 'general',
             label: 'General',
             children: (
-              <Card>
+              <Card data-tour="ai-general">
                 <Form form={generalForm} layout="vertical" disabled={isReadonly}>
                   <Form.Item label="Enable AI Assistant" name="enabled" valuePropName="checked">
                     <Switch />
@@ -641,7 +696,7 @@ export default function AiAssistantSettings() {
                   </Form.Item>
                   {isReadonly ? null : (
                     <Form.Item>
-                      <Space>
+                      <Space data-tour="ai-general-actions">
                         <Button type="primary" onClick={onSaveGeneral}>
                           Save General
                         </Button>
@@ -662,6 +717,7 @@ export default function AiAssistantSettings() {
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <Card
                   title="Execution Statistics"
+                  data-tour="ai-mcp-stats"
                   extra={
                     <Button size="small" loading={monitorLoading} onClick={() => loadMonitor()}>
                       Refresh
@@ -708,7 +764,7 @@ export default function AiAssistantSettings() {
                   </Row>
                 </Card>
 
-                <Card title="Recent Executions">
+                <Card title="Recent Executions" data-tour="ai-mcp-executions">
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
                     <Input
                       placeholder="Search tool name"
@@ -818,6 +874,7 @@ export default function AiAssistantSettings() {
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <Card
                   title="Added MCP Servers"
+                  data-tour="ai-mcp-servers"
                   extra={(
                     <Space>
                       <Button onClick={() => loadMcpServers()} loading={mcpLoading}>Refresh</Button>
@@ -895,6 +952,7 @@ export default function AiAssistantSettings() {
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <Card
                   title="Configured Skills"
+                  data-tour="ai-skills"
                   extra={(
                     <Space>
                       <Button onClick={() => loadSkills()} loading={skillsLoading}>Refresh</Button>
@@ -936,7 +994,7 @@ export default function AiAssistantSettings() {
                   />
                 </Card>
 
-                <Card title="Available Skills (Library)">
+                <Card title="Available Skills (Library)" data-tour="ai-skill-library">
                   <Table
                     size="small"
                     rowKey={(row: any) => row.name}
@@ -967,6 +1025,7 @@ export default function AiAssistantSettings() {
           },
         ]}
       />
+      {guide}
       <Modal
         title="Tool call details"
         open={detailOpen}

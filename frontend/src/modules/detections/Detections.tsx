@@ -36,6 +36,7 @@ import {
   type DetectionRuleItem,
 } from "services/detections";
 
+import { useGuide, type GuideStep } from "components/layout/useGuide";
 import DetectionDeployments from "./DetectionDeployments";
 import DetectionMappings from "./DetectionMappings";
 import DetectionRuleDetailView from "./DetectionRuleDetail";
@@ -178,10 +179,92 @@ function GlobalRiskConfigPanel({
   );
 }
 
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-node-key="rules"]',
+    title: "1. Rule Library",
+    description: "Detection rules are written in Sigma and published to Kibana or Splunk. Use the tabs to move between the Rule Library, Field Mappings, Publish History and Notable Events.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-tour="dt-filters"]',
+    title: "2. Find rules",
+    description: "Search by name, tag or data source, and narrow the list by product, severity and status. Reset clears all filters.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-tour="dt-new"]',
+    title: "3. Add rules",
+    description: "New Rule opens a Sigma YAML editor. You can also import a rule from a GitHub raw URL or Upload files or a folder of .yml rules.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-tour="dt-sync"]',
+    title: "4. Sync with Kibana",
+    description: "Pulls the enabled state of published rules from Kibana so the library, the rule list and the dashboard agree.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-tour="dt-table"]',
+    title: "5. Rule list",
+    description: "Each row shows severity, status, log source and whether the rule is published to Elastic and Splunk. Click a row to open its details.",
+    placement: "top",
+  },
+  {
+    selector: '[data-tour="dt-target"]',
+    title: "6. Choose a target",
+    description: "Switch between Elastic and Splunk to see the publishing controls for that platform.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-tour="dt-publish"]',
+    title: "7. Publish to Kibana",
+    description: "Compiles the Sigma rule using your field mappings and creates it in Kibana. Use Preview in Kibana first to check the generated rule.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-tour="dt-kibana"]',
+    title: "8. Manage the Kibana rule",
+    description: "After publishing, enable or disable the rule in Kibana, preview it, or delete it from Kibana here.",
+    placement: "top",
+  },
+  {
+    selector: '[data-tour="dt-risk"]',
+    title: "9. Risk object fields",
+    description: "Choose which ECS fields become risk objects when this rule's alerts are ingested, and map source fields to ECS aliases. Click Save to keep changes.",
+    placement: "top",
+  },
+  {
+    selector: '[data-tour="dt-splunk-actions"]',
+    title: "10. Publish to Splunk",
+    description: "Save the configuration, compile the SPL, then publish. Splunk rules are published disabled, and you enable them afterwards.",
+    placement: "top",
+  },
+  {
+    selector: '[data-node-key="mappings"]',
+    title: "11. Field Mappings",
+    description: "Mappings translate Sigma field names into Splunk and Elastic ECS fields per mapping profile. Rules need them to compile correctly.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-tour="dt-map-actions"]',
+    title: "12. Manage mappings",
+    description: "Create a mapping, upload JSON or CSV files (a CSV template is available), export them, or delete selected rows.",
+    placement: "bottom",
+  },
+  {
+    selector: '[data-node-key="deployments"]',
+    title: "13. Publish History",
+    description: "A log of every publish attempt with its status and message, useful for troubleshooting failed deployments.",
+    placement: "bottom",
+  },
+];
+
 export default function Detections({ initialRuleId }: { initialRuleId?: string } = {}) {
   const { message, modal } = App.useApp();
   const router = useRouter();
   const DETECTION_BASE = "/settings/detection";
+  const guide = useGuide(GUIDE_STEPS);
 
   const [topTab, setTopTab] = useState("rules");
   const [rules, setRules] = useState<RuleRow[]>([]);
@@ -1183,6 +1266,7 @@ export default function Detections({ initialRuleId }: { initialRuleId?: string }
 
   return (
     <>
+      {guide}
       <Tabs
         activeKey={topTab}
         onChange={(key) => { setTopTab(key); if (key === 'notable') loadNotableEvents(); }}

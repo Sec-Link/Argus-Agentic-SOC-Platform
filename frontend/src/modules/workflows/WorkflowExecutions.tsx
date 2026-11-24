@@ -41,6 +41,8 @@ import {
 } from 'services/workflows';
 import { startWorkflowPolling } from 'services/workflows/polling';
 import { ExecutionLogViewer } from './components';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
 
 const { Text, Paragraph } = Typography;
 const { Panel } = Collapse;
@@ -60,7 +62,35 @@ const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
   skipped: { color: 'default', icon: <StopOutlined /> },
 };
 
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="wx-filters"]',
+    title: '1. Filter executions',
+    description: 'Pick a workflow and/or a status such as Failed or Running to narrow the list. Refresh reloads it.',
+    placement: 'bottomRight',
+  },
+  {
+    selector: '[data-tour="wx-table"]',
+    title: '2. Execution history',
+    description: 'Each row is one run with its status, step progress, trigger, start time and duration. Click a row to open its details.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="wx-actions"]',
+    title: '3. Row actions',
+    description: 'View Logs opens the full log viewer, Details shows the step-by-step breakdown, and the stop button cancels a pending or running execution.',
+    placement: 'left',
+  },
+  {
+    selector: '[data-tour="wx-detail"]',
+    title: '4. Execution details',
+    description: 'See who ran it, any error, and each step with its status, output and logs. Use Full Logs for the complete log, or Close to hide this panel.',
+    placement: 'left',
+  },
+];
+
 const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onBack }) => {
+  const guide = useGuide(GUIDE_STEPS);
   const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -243,7 +273,7 @@ const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onB
       key: 'actions',
       width: 180,
       render: (_: any, record: WorkflowExecution) => (
-        <Space>
+        <Space data-tour={executions[0]?.id === record.id ? 'wx-actions' : undefined}>
           <Tooltip title="View Logs">
             <Button
               size="small"
@@ -289,7 +319,7 @@ const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onB
             </Space>
           </Col>
           <Col>
-            <Space>
+            <Space data-tour="wx-filters">
               <Select
                 placeholder="Filter by Workflow"
                 value={filterWorkflow || undefined}
@@ -327,6 +357,7 @@ const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onB
         <Col span={selectedExecution ? 14 : 24}>
           <Card title="Executions" extra={<span>{executions.length} items</span>}>
             <Table
+              data-tour="wx-table"
               columns={columns}
               dataSource={executions}
               rowKey="id"
@@ -345,6 +376,7 @@ const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onB
         {selectedExecution && (
           <Col span={10}>
             <Card
+              data-tour="wx-detail"
               title="Execution Details"
               loading={detailLoading}
               extra={
@@ -502,6 +534,7 @@ const WorkflowExecutions: React.FC<WorkflowExecutionsProps> = ({ workflowId, onB
           setLogViewerExecutionId(null);
         }}
       />
+      {guide}
     </div>
   );
 };

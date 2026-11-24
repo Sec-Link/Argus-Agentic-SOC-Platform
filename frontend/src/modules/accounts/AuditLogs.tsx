@@ -3,6 +3,35 @@ import { Button, Card, DatePicker, Input, Select, Space, Table, Tag, Typography,
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { listAuditLogs } from 'services/accounts';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="au-filters"]',
+    title: '1. Filter the log',
+    description: 'Narrow the log by Event Type, Status, user email and a From / To date range, then click Search.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="au-reset"]',
+    title: '2. Reset filters',
+    description: 'Clear every filter and return to the newest 20 entries.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="au-table"]',
+    title: '3. Read the entries',
+    description: 'Each row shows when it happened, the event, who triggered it and whether it succeeded. Click the Timestamp header to flip the sort order.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="au-table"] .ant-table-row-expand-icon',
+    title: '4. Expand for details',
+    description: 'Use the arrow on a row to see the IP address, user agent, endpoint and full request details.',
+    placement: 'right',
+  },
+];
 
 type AuditLogItem = {
   id: string;
@@ -76,6 +105,7 @@ const AuditLogs: React.FC = () => {
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [sort, setSort] = useState<'created_at' | '-created_at'>('-created_at');
+  const guide = useGuide(GUIDE_STEPS);
 
   const load = async (nextPage = page, nextPageSize = pageSize) => {
     setLoading(true);
@@ -141,7 +171,7 @@ const AuditLogs: React.FC = () => {
   return (
     <Card title="Audit Logs">
       <Space direction="vertical" style={{ width: '100%' }} size={12}>
-        <Space wrap>
+        <Space wrap data-tour="au-filters">
           <Select
             style={{ width: 190 }}
             value={eventType}
@@ -175,6 +205,7 @@ const AuditLogs: React.FC = () => {
           />
           <Button onClick={() => load(1, pageSize)}>Search</Button>
           <Button
+            data-tour="au-reset"
             onClick={() => {
               setEventType('');
               setStatus('');
@@ -189,6 +220,7 @@ const AuditLogs: React.FC = () => {
           </Button>
         </Space>
 
+        <div data-tour="au-table">
         <Table<AuditLogItem>
           rowKey="id"
           loading={loading}
@@ -236,7 +268,9 @@ const AuditLogs: React.FC = () => {
             ),
           }}
         />
+        </div>
       </Space>
+      {guide}
     </Card>
   );
 };

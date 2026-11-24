@@ -22,10 +22,58 @@ import {
   deleteAssetColumn,
 } from 'services/cmdb';
 import { useResizableColumns } from 'components/table/resizableColumns';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="cm-table"]',
+    title: '1. Asset inventory',
+    description: 'Every asset (CI) known to the platform is listed here with its hostname, IP address, type, level and whether it is alive. Click a column header to sort.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="cm-search"]',
+    title: '2. Search',
+    description: 'Type to filter assets by text; the list reloads as you type. The search also applies to Export.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="cm-add"]',
+    title: '3. Add Asset',
+    description: 'Create a single asset by hand with its hostname, IP address, type, level and any custom attributes.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="cm-import"]',
+    title: '4. Import Excel',
+    description: 'Upload an Excel file to create or update many assets at once. A message reports how many were created, updated or failed.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="cm-export"]',
+    title: '5. Export',
+    description: 'Download the assets as an Excel (.xlsx) or CSV file.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="cm-columns"]',
+    title: '6. Custom columns',
+    description: 'Add your own fields (for example location) to track extra details. They show up as new table columns and in the asset form.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="cm-actions"]',
+    title: '7. Edit or delete',
+    description: 'Use the pencil to edit an asset, or the trash icon to delete it after confirming.',
+    placement: 'left',
+  },
+];
 
 const { Option } = Select;
 
 export default function AssetList() {
+  const guide = useGuide(GUIDE_STEPS);
   const [assets, setAssets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [columnsDef, setColumnsDef] = useState<any[]>([]);
@@ -265,8 +313,8 @@ export default function AssetList() {
       key: 'actions',
       fixed: 'right',
       width: 100,
-      render: (_: any, record: any) => (
-        <Space>
+      render: (_: any, record: any, index: number) => (
+        <Space data-tour={index === 0 ? 'cm-actions' : undefined}>
           <Button
             type="text"
             icon={<EditOutlined />}
@@ -298,6 +346,7 @@ export default function AssetList() {
         <Space>
           <Button
             type="primary"
+            data-tour="cm-add"
             icon={<PlusOutlined />}
             onClick={() => {
               setEditingAsset(null);
@@ -308,7 +357,7 @@ export default function AssetList() {
             Add Asset
           </Button>
           <Upload customRequest={handleImport} showUploadList={false}>
-            <Button icon={<UploadOutlined />} loading={importing}>Import Excel</Button>
+            <Button icon={<UploadOutlined />} loading={importing} data-tour="cm-import">Import Excel</Button>
           </Upload>
           <Dropdown
             menu={{
@@ -320,7 +369,7 @@ export default function AssetList() {
             }}
             trigger={['click']}
           >
-            <Button icon={<DownloadOutlined />} loading={exporting}>Export</Button>
+            <Button icon={<DownloadOutlined />} loading={exporting} data-tour="cm-export">Export</Button>
           </Dropdown>
           <Button icon={<ReloadOutlined />} onClick={loadData} />
         </Space>
@@ -328,17 +377,19 @@ export default function AssetList() {
         <Space>
            <Input
             placeholder="Search..."
+            data-tour="cm-search"
             prefix={<SearchOutlined />}
             value={search}
             onChange={e => setSearch(e.target.value)}
             onPressEnter={loadData}
           />
-           <Button icon={<SettingOutlined />} onClick={() => setIsColumnModalOpen(true)}>
+           <Button icon={<SettingOutlined />} onClick={() => setIsColumnModalOpen(true)} data-tour="cm-columns">
             Columns
           </Button>
         </Space>
       </div>
 
+      <div data-tour="cm-table">
       <Table
         dataSource={assets}
         columns={resizableColumns}
@@ -353,6 +404,7 @@ export default function AssetList() {
             total: total,
         }}
       />
+      </div>
 
       {/* Audit Log Hint or Link? - omitted for brevity, maybe add a separate tab or view */}
 
@@ -452,6 +504,7 @@ export default function AssetList() {
           ))}
         </div>
       </Drawer>
+      {guide}
     </div>
   );
 }

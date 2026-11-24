@@ -115,7 +115,7 @@ export default function DetectionMappings(props: Props) {
 
   return (
     <Card>
-      <Space style={{ marginBottom: 12 }} wrap>
+      <Space data-tour="dt-map-actions" style={{ marginBottom: 12 }} wrap>
         <Button loading={props.loading} onClick={() => document.getElementById("detection-upload-mappings-files")?.click()}>Upload Mapping Files</Button>
         <Button loading={props.loading} onClick={() => document.getElementById("detection-upload-mappings-folder")?.click()}>Upload Mapping Folder</Button>
         <Button onClick={props.onDownloadTemplate}>Download CSV Template</Button>
@@ -132,6 +132,7 @@ export default function DetectionMappings(props: Props) {
         <Button type="primary" onClick={props.onOpenCreate}>New Mapping</Button>
         <Button onClick={props.onRefresh}>Refresh</Button>
         <Input.Search
+          data-tour="dt-map-search"
           allowClear
           placeholder="Search mappings"
           value={search}

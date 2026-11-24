@@ -1217,14 +1217,14 @@ export default function SlaTicketDetailView(props: Props) {
   return (
     <div style={{ padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-        <Space size={12} wrap>
+        <Space size={12} wrap data-tour="td-header">
           <Typography.Title level={4} style={{ margin: 0 }}>
             {ticket.ticket_number}
           </Typography.Title>
           {renderStatusTag(ticket.status)}
           {renderSeverityTag(ticket.priority)}
         </Space>
-        <Space>
+        <Space data-tour="td-actions">
           <Button onClick={togglePending} loading={pendingLoading} disabled={!canTogglePending}>
             {isPending ? 'In Progress' : 'Pending'}
           </Button>
@@ -1234,7 +1234,7 @@ export default function SlaTicketDetailView(props: Props) {
         </Space>
       </div>
 
-      <div style={{ marginTop: 10 }}>
+      <div style={{ marginTop: 10 }} data-tour="td-tabs">
         <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}
@@ -1311,7 +1311,7 @@ export default function SlaTicketDetailView(props: Props) {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 320px', gap: 14 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Card size="small" title="Case Details">
+              <Card size="small" title="Case Details" data-tour="td-case">
                 <Descriptions size="small" column={1} bordered>
                   {caseDetailsItems.map((r) => (
                     <Descriptions.Item key={r.label} label={r.label}>
@@ -1320,7 +1320,7 @@ export default function SlaTicketDetailView(props: Props) {
                   ))}
                 </Descriptions>
               </Card>
-              <Card size="small" title="Decision Actions">
+              <Card size="small" title="Decision Actions" data-tour="td-decision">
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <Button onClick={() => updateDecisionStatus('acknowledged')} disabled={!canAcknowledge}>Acknowledge</Button>
                   <Button type="primary" onClick={() => updateDecisionStatus('triaged')} disabled={!canTriaged}>Triaged</Button>
@@ -1426,7 +1426,7 @@ export default function SlaTicketDetailView(props: Props) {
               </div>
             </Card>
 
-              <Card size="small" title="AI Summary">
+              <Card size="small" title="AI Summary" data-tour="td-summary">
                 <div style={{ maxHeight: 140, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {summaryText}
                 </div>
@@ -1440,7 +1440,7 @@ export default function SlaTicketDetailView(props: Props) {
                 ) : null}
               </Card>
 
-              <Card size="small">
+              <Card size="small" data-tour="td-timeline">
                 <Tabs
                   items={[
                     { key: 'timeline', label: 'Timeline' },
@@ -1582,7 +1582,7 @@ export default function SlaTicketDetailView(props: Props) {
                 )}
               </Card>
 
-              <Card size="small">
+              <Card size="small" data-tour="td-comment">
                 <Input.TextArea
                   value={commentDraft}
                   onChange={(e) => handleCommentDraftChange(e.target.value)}
@@ -1622,7 +1622,7 @@ export default function SlaTicketDetailView(props: Props) {
             </div>
 
             <div ref={aiAssistantCardRef} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Card size="small" title="SOC AI Assistant">
+              <Card size="small" title="SOC AI Assistant" data-tour="td-ai">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#e6f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>AI</div>
                 <div>

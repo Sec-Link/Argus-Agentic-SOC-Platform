@@ -23,6 +23,8 @@ import {
 } from 'services/integrations';
 import { getIsReadonly } from 'lib/auth';
 import SplunkIntegrations from './SplunkIntegrations';
+import { useGuide } from 'components/layout/useGuide';
+import type { GuideStep } from 'components/layout/useGuide';
 
 const { Title, Text } = Typography;
 
@@ -70,6 +72,33 @@ const CONNECTOR_DEFAULTS: Record<ConnectorKind, ElasticFormData> = {
   },
 };
 
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="in-intro"]',
+    title: '1. Connect your SIEM',
+    description: 'This page manages the connectors that bring data and detection rules in and out of the platform.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="in-grid"]',
+    title: '2. Available connectors',
+    description: 'Each card is one connector, such as Elasticsearch, Kibana, Splunk or the Splunk Rule Publisher. Click a card to open its settings.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="in-status"]',
+    title: '3. Check the status',
+    description: 'A card is marked Installed once it has been configured, and Available if it has not been set up yet.',
+    placement: 'left',
+  },
+  {
+    selector: '[data-tour="in-actions"]',
+    title: '4. Setup or configure',
+    description: 'Use Setup Integration to add a connector, or Configure to change its connection details. Delete removes an installed connector (not shown for read-only accounts).',
+    placement: 'top',
+  },
+];
+
 const HOST_PATTERN = /^(localhost|(([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+)|(\d{1,3}(\.\d{1,3}){3}))$/;
 
 const Integrations: React.FC = () => {
@@ -90,6 +119,7 @@ const Integrations: React.FC = () => {
   // - indicesList: fetched index options to populate combobox
   const [indicesLoading, setIndicesLoading] = useState(false);
   const [indicesList, setIndicesList] = useState<string[]>([]);
+  const guide = useGuide(GUIDE_STEPS);
   const [testResult, setTestResult] = useState({
     open: false,
     ok: true,
@@ -478,6 +508,7 @@ const Integrations: React.FC = () => {
     return (
       <Card
         key={card.key}
+        data-tour="in-card"
         hoverable
         onClick={card.onConfigure}
         style={{
@@ -512,6 +543,7 @@ const Integrations: React.FC = () => {
       >
         {/* Pill badge is absolutely positioned so Ant Design card layout cannot stretch it into a distorted circle. */}
         <span
+          data-tour="in-status"
           style={{
             ...badgeStyle,
             position: 'absolute',
@@ -566,7 +598,7 @@ const Integrations: React.FC = () => {
         <div style={{ flex: 1 }} />
 
         {/* Conditional lifecycle actions: installed cards can be configured and uninstalled; available cards only start setup. */}
-        <Space style={{ marginTop: 18 }}>
+        <Space style={{ marginTop: 18 }} data-tour="in-actions">
           <Button type="primary" onClick={(e) => { e.stopPropagation(); card.onConfigure(); }}>
             {card.isInstalled ? 'Configure' : 'Setup Integration'}
           </Button>
@@ -593,11 +625,12 @@ const Integrations: React.FC = () => {
           />
         )}
 
-        <Text type="secondary">
+        <Text type="secondary" data-tour="in-intro">
           Manage and configure your SIEM data ingestion pipelines and connectors.
         </Text>
 
         <div
+          data-tour="in-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 440px))',
@@ -610,6 +643,7 @@ const Integrations: React.FC = () => {
           {integrationCards.map(renderIntegrationCard)}
         </div>
       </Card>
+      {guide}
 
       <SplunkIntegrations open={splunkOpen} item={splunkItem} isReadonly={isReadonly} onClose={() => setSplunkOpen(false)} onChanged={fetchList} />
       <SplunkIntegrations publisher open={publisherOpen} item={publisherItem} publisherItems={publisherItems}

@@ -3,6 +3,60 @@ import { Card, Col, Row, Select, Space, Tabs, Transfer, Button, message, Tag, To
 import { PlusCircleOutlined, DeleteOutlined, FilterOutlined } from '@ant-design/icons'
 import { createGroup, createUser, deleteGroup, deleteUser, getGroupPermissions, getUserGroups, getUserPermissions, listGroups, listPermissions, listUsers, resetUserPassword, updateGroup, updateGroupPermissions, updateUser, updateUserGroups, updateUserPermissions } from 'services/accounts'
 
+import { useGuide } from 'components/layout/useGuide'
+import type { GuideStep } from 'components/layout/useGuide'
+
+const GUIDE_STEPS: GuideStep[] = [
+  {
+    selector: '[data-tour="pm-tabs"]',
+    title: '1. Users and Groups',
+    description: 'Use the Users tab to manage individual accounts and the Groups tab to manage shared sets of permissions and members.',
+    placement: 'bottom',
+  },
+  {
+    selector: '[data-tour="pm-user-list"]',
+    title: '2. Find a user',
+    description: 'Search the list and click a username to select it. Superuser and Staff badges show elevated accounts.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="pm-user-create"]',
+    title: '3. Create a user',
+    description: 'Click Create user to add an account with a username, email, role flags and group membership.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="pm-user-detail"]',
+    title: '4. Edit the selected user',
+    description: 'Under Profile you can update details, Active / Staff / Superuser flags and groups, reset the password, impersonate or delete the user. Direct permissions and Effective permissions have their own tabs.',
+    placement: 'left',
+  },
+  {
+    selector: '[data-tour="pm-user-transfer"]',
+    title: '5. Assign direct permissions',
+    description: 'Pick a Category, then move permissions from Available to Assigned. Assign and Clear apply a whole category at once.',
+    placement: 'top',
+  },
+  {
+    selector: '[data-tour="pm-group-list"]',
+    title: '6. Manage groups',
+    description: 'Search groups, create a new one, and click a group to edit it. The number beside each name is its member count.',
+    placement: 'right',
+  },
+  {
+    selector: '[data-tour="pm-group-detail"]',
+    title: '7. Edit the selected group',
+    description: 'Rename or delete the group under Details, add or remove people under Members, and set what the group may do under Group permissions.',
+    placement: 'left',
+  },
+  {
+    selector: '[data-tour="pm-group-transfer"]',
+    title: '8. Group permissions',
+    description: 'Permissions given to a group apply to every member, in addition to each member\'s direct permissions.',
+    placement: 'top',
+  },
+]
+
 type BasicUser = {
   id: number
   username: string
@@ -33,6 +87,7 @@ const Permissions: React.FC = () => {
   const [groupPermissionFilter, setGroupPermissionFilter] = useState<string>('all')
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<string>('user')
+const guide = useGuide(GUIDE_STEPS)
   const [groupSearch, setGroupSearch] = useState<string>('')
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
   const [createGroupName, setCreateGroupName] = useState<string>('')
@@ -630,6 +685,7 @@ const Permissions: React.FC = () => {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={16}>
       <Tabs
+        data-tour="pm-tabs"
         activeKey={activeTab}
         onChange={(key) => setActiveTab(key)}
         items={[
@@ -639,14 +695,14 @@ const Permissions: React.FC = () => {
             children: (
               <Row gutter={12}>
                 <Col span={7}>
-                  <Card size="small">
+                  <Card size="small" data-tour="pm-user-list">
                     <Space direction="vertical" style={{ width: '100%' }}>
                       <Input
                         placeholder="Search users"
                         value={userSearch}
                         onChange={(e) => setUserSearch(e.target.value)}
                       />
-                      <Button type="primary" icon={<PlusCircleOutlined />} onClick={() => setCreateUserOpen(true)}>
+                      <Button type="primary" icon={<PlusCircleOutlined />} onClick={() => setCreateUserOpen(true)} data-tour="pm-user-create">
                         Create user
                       </Button>
                       <List
@@ -687,7 +743,7 @@ const Permissions: React.FC = () => {
                 </Col>
                 <Col span={17}>
                   {selectedUserId ? (
-                    <Card size="small">
+                    <Card size="small" data-tour="pm-user-detail">
                       <Tabs
                         size="small"
                         items={[
@@ -843,6 +899,7 @@ const Permissions: React.FC = () => {
                                   </Popconfirm>
                                 </Space>
                                 <Transfer
+                                  data-tour="pm-user-transfer"
                                   dataSource={userPermissionTransferData}
                                   titles={['Available', 'Assigned']}
                                   filterOption={(inputValue, item) =>
@@ -922,7 +979,7 @@ const Permissions: React.FC = () => {
             children: (
               <Row gutter={12}>
                 <Col span={7}>
-                  <Card size="small">
+                  <Card size="small" data-tour="pm-group-list">
                     <Space direction="vertical" style={{ width: '100%' }}>
                       <Input
                         placeholder="Search groups"
@@ -960,7 +1017,7 @@ const Permissions: React.FC = () => {
                 </Col>
                 <Col span={17}>
                   {selectedGroupId ? (
-                    <Card size="small">
+                    <Card size="small" data-tour="pm-group-detail">
                       <Tabs
                         size="small"
                         items={[
@@ -1064,6 +1121,7 @@ const Permissions: React.FC = () => {
                                   </Popconfirm>
                                 </Space>
                                 <Transfer
+                                  data-tour="pm-group-transfer"
                                   dataSource={groupPermissionTransferData}
                                   titles={['Available', 'Assigned']}
                                   filterOption={(inputValue, item) =>
@@ -1110,6 +1168,7 @@ const Permissions: React.FC = () => {
           },
         ]}
       />
+      {guide}
       <Modal
         title="Create group"
         open={createGroupOpen}

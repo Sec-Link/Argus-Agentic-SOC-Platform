@@ -743,20 +743,20 @@ export default function SlaTicketListView(props: Props) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+        <div data-tour="tk-header" style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
           <Typography.Title level={3} style={{ margin: 0 }}>Incidents</Typography.Title>
           <Typography.Text type="secondary">
             Showing {totalCount}{baseCount !== totalCount ? ` of ${baseCount}` : ''} incidents
           </Typography.Text>
         </div>
         <Space wrap>
-          <Button type="primary" onClick={() => setCreateOpen(true)}>New Incident</Button>
+          <Button type="primary" data-tour="tk-new" onClick={() => setCreateOpen(true)}>New Incident</Button>
           <Button onClick={() => onRefresh()} loading={loading}>Refresh</Button>
         </Space>
       </div>
 
       <div className="incident-workspace-controls">
-        <div className="incident-filter-bar">
+        <div className="incident-filter-bar" data-tour="tk-filters">
           <Select
             mode="multiple"
             allowClear
@@ -807,6 +807,7 @@ export default function SlaTicketListView(props: Props) {
           <Input.Search
             allowClear
             placeholder="Search in Incidents (e.g. status:pending owner:alice)"
+            data-tour="tk-search"
             style={{ width: 340 }}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -814,6 +815,7 @@ export default function SlaTicketListView(props: Props) {
           <Select
             value={quickRange || undefined}
             placeholder="Time Range"
+            data-tour="tk-range"
             onChange={(value) => applyQuickRange(value as TimeRangeKey)}
             style={{ width: 160 }}
             options={[
@@ -858,7 +860,7 @@ export default function SlaTicketListView(props: Props) {
       </div>
 
       {showChartPanel && (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 10 }} data-tour="tk-charts">
           <Space direction="vertical" style={{ width: '100%' }} size={10}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(220px, 1fr))', gap: 12 }}>
               <Card size="small" title="Severity" styles={{ body: { padding: '8px 12px 10px' } }}>
@@ -1004,7 +1006,7 @@ export default function SlaTicketListView(props: Props) {
       )}
 
       <div style={{ marginTop: 12 }}>
-        <Space wrap style={{ padding: '8px 0' }}>
+        <Space wrap style={{ padding: '8px 0' }} data-tour="tk-batch">
           <Button
             onClick={openAssign}
             disabled={disableBatchActions}
@@ -1051,6 +1053,7 @@ export default function SlaTicketListView(props: Props) {
           </Typography.Text>
         </Space>
 
+        <div data-tour="tk-table">
         {viewMode === 'table' ? (
           <Table
             rowKey="ticket_number"
@@ -1096,6 +1099,7 @@ export default function SlaTicketListView(props: Props) {
             ))}
           </Row>
         )}
+        </div>
       </div>
 
       <Modal
