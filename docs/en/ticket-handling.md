@@ -7,7 +7,9 @@ lang_ref: ticket-handling
 
 # Ticket Handling
 
-The Tickets module is the core incident management component of Argus. It provides a full lifecycle system for tracking security incidents from creation through resolution, with built-in SLA monitoring, AI-assisted analysis, collaborative investigation, and a SOAR workflow engine.
+The Tickets module is the core incident management component of Argus. It provides a full lifecycle system for tracking security incidents from creation through resolution, with built-in SLA monitoring, AI-assisted analysis and collaborative investigation. Automated response is handled by the Automation module, summarized at the end of this page.
+
+**Navigation:** `Investigation → Tickets`
 
 ---
 
@@ -15,72 +17,104 @@ The Tickets module is the core incident management component of Argus. It provid
 
 ### Navigation
 
-Click **Tickets** in the left sidebar to open the Tickets module.
+Click **Tickets** under **Investigation** in the left sidebar. The page heading is **Incidents**.
 
 ![Tickets Navigation]({{ '/assets/images/ticket-handling/tickets-nav.png' | relative_url }})
+<!-- TODO screenshot: assets/images/ticket-handling/tickets-nav.png (sidebar now groups Tickets under Investigation; recapture) -->
 
 ### Ticket List View
 
-The list provides a unified view of all active incidents with filtering, sorting, and chart visualization.
+The list provides a unified view of incidents with filtering, search and chart visualization. The header shows `Showing N of M incidents`.
 
 ![Ticket List]({{ '/assets/images/ticket-handling/tickets-list.png' | relative_url }})
+<!-- TODO screenshot: assets/images/ticket-handling/tickets-list.png (recapture if the filter bar, charts or batch toolbar differ) -->
 
 #### Key Features
 
 | Feature | Description |
 |---|---|
-| **Search Bar** | Free-text search across ticket number, title, status, priority, and owner. Supports structured queries: `status:new priority:high owner:admin` |
-| **Time Range Filter** | Quick presets (15m, 1h, 24h, 7d, 30d) or custom date range |
-| **Chart Panel** | Visual breakdown by severity, status, and SLA compliance |
-| **Auto-Refresh** | Configurable intervals (1m, 5m, 10m) |
-| **Multi-Select Filters** | Filter by severity, status, owner, and SLA bucket |
-| **View Modes** | Toggle between Table and Summary views |
+| **New Incident** / **Refresh** | Top-right buttons: create a ticket, reload the list |
+| **Severity**, **Status**, **Owner**, **SLA** filters | Multi-select dropdowns. Each option shows its count, for example `High (12)`. Options within one filter are OR-ed, different filters are AND-ed |
+| **Search** | Placeholder `Search in Incidents (e.g. status:pending owner:alice)`. Free text matches ticket number, title, status, priority and owner. `status:`, `priority:` and `owner:` terms filter on an exact value; other `key:value` terms are treated as free text |
+| **Time Range** | `Last 15 Mins`, `Last 1 Hour`, `Last 24 Hours`, `Last 7 Days`, `Last 30 Days` or `Custom Range` |
+| **Refresh every** | `Off` (default), `1m`, `5m` or `10m` automatic reload |
+| **Table View** / **Summary View** | Switch between the table and the chart-only summary |
+| **Chart cards** | **Severity**, **Status**, **SLA** and **Owner** pie charts with a **Total** in the center; they follow the search and time range |
+
+**Dashboard links.** Pages such as the dashboard open the list pre-filtered through the address:
+
+| Link | Effect |
+|---|---|
+| `/tickets?status=open` | Status filter set to New, Acknowledged, Triaged and Contained |
+| `/tickets?status=new,resolved` | Status filter set to the listed values |
+| `/tickets?priority=critical,high` | Severity filter set to the listed values |
+| `/tickets?result=true_positive` | Only tickets whose Event Result is `true_positive` |
 
 #### Table Columns
 
 | Column | Description |
 |---|---|
-| **Ticket Number** | Unique identifier (`SEC20260702NNNNN`) |
-| **Title** | Short incident summary |
-| **Priority** | Critical / High / Medium / Low |
+| **ID** | Unique ticket number (`SECYYYYMMDDNNNNN`); click to open the detail view |
+| **Name** | Short incident summary |
+| **Severity** | Critical / High / Medium / Low |
 | **Status** | Current lifecycle state (color-coded) |
-| **Owner** | Assigned analyst |
+| **Owner** | Assigned analyst, or `Unassigned` |
+| **SLA** | `TTA:<time to acknowledge> / TTR:<time to resolve>` |
+| **MITRE ATT&CK** | Up to three tactic tags from the originating detection rule, plus a `+N` counter; `—` when none |
 | **Created** | Creation timestamp |
-| **SLA** | MTTR bucket: `<=1h` / `1–4h` / `>4h` |
+
+#### Batch Operations
+
+Tick one or more rows to enable the toolbar above the table; it shows `N selected`.
+
+| Action | Description |
+|---|---|
+| **Assign** | Assigns the selected tickets to one user |
+| **Edit** | Sets any of Owner, Severity (priority) and Status on all selected tickets |
+| **Export** | Downloads the selected tickets as CSV (number, title, status, priority, assigned user, created and updated time, MTTA, MTTI, MTTC, MTTR in seconds) |
+| **Close** | Sets the selected tickets to Closed after confirmation |
+| **Delete** | Soft-deletes the selected tickets after confirmation (records are retained for audit) |
 
 ### Creating a Ticket
 
+Most tickets are created automatically from alerts (see the end of this page). To open one by hand:
+
 ![Create Ticket]({{ '/assets/images/ticket-handling/tickets-create.png' | relative_url }})
+<!-- TODO screenshot: assets/images/ticket-handling/tickets-create.png (outdated: the dialog is now titled New Incident with the fields below) -->
 
-1. Click **Create Ticket** in the top-right of the list.
-2. Fill in required fields:
-   - **Title** — brief incident summary
-   - **Priority** — Critical, High, Medium, or Low
-   - **Description** — detailed incident description
-   - **Assigned User** — responsible analyst
-3. Fill in optional fields as needed:
-   - **Event Category** — e.g., Malware, Denial of Service, Account Anomalies
-   - **Event Sources** — SIEM, EDR, Firewall
-   - **Event Platform** — Windows, Linux, AWS
-   - **Labels** — key-value pairs for categorization and automation
-4. Click **Submit**.
+1. Click **New Incident** in the top-right of the list.
+2. Fill in the **New Incident** dialog:
 
-The system generates a unique ticket number and starts SLA tracking automatically.
+| Field | Description |
+|---|---|
+| **Created By** | Required; defaults to your username |
+| **SIEM Event ID (optional)** | Identifier of the originating event |
+| **Title** | Required |
+| **Description** | Optional |
+| **Priority** | `Critical`, `High`, `Medium` (default) or `Low` |
+
+3. Confirm. The message `Incident created` appears and the ticket detail opens.
+
+The ticket starts in the **New** status with SLA tracking running. Event category and labels are set later from the detail view.
 
 ### Ticket Detail View
 
-Click any ticket row to open the detail view.
+Click any ticket ID to open the detail view; **Back to List** returns to the list.
 
 ![Ticket Detail]({{ '/assets/images/ticket-handling/tickets-detail.png' | relative_url }})
+<!-- TODO screenshot: assets/images/ticket-handling/tickets-detail.png (recapture: tabs are Incident Info, War Room, Work Plan, Evidence, Related Incidents) -->
 
 #### Tabs
 
 | Tab | Contents |
 |---|---|
-| **Incident** | Timeline, AI assistant panel, decision bar, case details, labels |
-| **War Room** | Work logs, handle logs, file attachments, evidence |
-| **Evidence** | Extracted observables (IPs, domains, hashes) |
-| **Raw Message** | Original alert JSON with syntax highlighting |
+| **Incident Info** | Sub-tabs **Timeline**, **Alerts**, **Raw Message** (original alert JSON with syntax highlighting) and **Tasks**; evidence, a **Work Plan** card listing workflow runs for the ticket, and the comment box; right column with **Case Details**, **Decision Actions**, **Resolution Summary**, **Labels**, **AI Summary**, **SOC AI Assistant** and **AI Tasks** |
+| **War Room** | Work logs, handle logs, files and evidence |
+| **Work Plan** | Placeholder (`No work plan items yet`); the ticket's workflow runs are shown in the **Work Plan** card of **Incident Info** |
+| **Evidence** | Attachments and observables (IPs, domains, hashes) extracted by AI analysis |
+| **Related Incidents** | Placeholder (`No related incidents yet`) |
+
+The header also has **Pending** (see below) and **Refresh**.
 
 ### Ticket Lifecycle
 
@@ -97,24 +131,23 @@ New → Acknowledged → Triaged → Contained → Resolved → Closed
 | **Resolved** | Root cause addressed; incident handled |
 | **Closed** | Administratively closed |
 
-**Updating status — Option 1 (recommended): Decision buttons**
+**Decision Actions** in the right column move the ticket forward; each button is enabled only from the matching status:
 
-Context-sensitive buttons appear at the top of the Incident tab:
 - **Acknowledge** — available when `New`
-- **Triage** — available when `Acknowledged`
-- **Contain** — available when `Triaged`
-- **Resolve** — available when `Triaged` or `Contained` (opens a resolve dialog)
+- **Triaged** — available when `Acknowledged`
+- **Contained** — available when `Triaged`
+- **Resolved** — available when `Triaged` or `Contained`; opens the **Resolve Ticket** dialog
 
-**Updating status — Option 2: Status dropdown**
+A ticket is moved to **Closed** with the batch **Close** action in the list, and any status can be set with the batch **Edit** action.
 
-Use the status dropdown and click **Update Status** to set any valid state manually.
-
-**Resolve dialog fields:**
+**Resolve Ticket dialog fields:**
 - **Event Category** — root cause classification
-- **Event Result** — True Positive / False Positive / True Positive - Benign
-- **Notes** — resolution summary
+- **Event Result** — verdict, for example True Positive or False Positive
+- **Notes** — optional resolution summary
 
-**Pending state:** Toggle **Pending** to temporarily pause SLA timers. Pending intervals are subtracted from SLA calculations.
+The chosen category and verdict then appear under **Resolution Summary** as **Ticket Category** and **Ticket Verdict**.
+
+**Pending state:** The **Pending** button (available once the ticket is acknowledged and until it is closed) pauses SLA timers; the button then reads **In Progress** and switches back. Pending intervals are subtracted from SLA calculations. While a ticket is pending, adding War Room entries is disabled.
 
 ### SLA Tracking
 
@@ -125,10 +158,11 @@ Use the status dropdown and click **Update Status** to set any valid state manua
 | **MTTC** | T5 − T2 | Mean Time To Containment |
 | **MTTR** | T6 − T2 | Mean Time To Resolution |
 
-SLA buckets in the list view:
+The list shows MTTA as `TTA` and MTTR as `TTR`. The **SLA** filter and chart group tickets by MTTR:
 - **Green** `<=1h` — within target
-- **Yellow** `1–4h` — approaching breach
+- **Yellow** `1-4h` — approaching breach
 - **Red** `>4h` — SLA breached
+- `n/a` — not resolved yet
 
 ### War Room
 
@@ -151,171 +185,42 @@ The War Room consolidates all investigative artifacts for a ticket.
 
 ### AI Assistant
 
-Click **AI Assistant** (or the lightning bolt icon) to generate:
-- **Alert Explanation** — plain-language description
-- **Risk Level Recommendation** — suggested severity with rationale
-- **Completed Tasks** — actions the AI has already performed
-- **Next Tasks** — recommended analyst follow-up
-
-**AI Chat:** Click **Chat** to open an interactive conversation scoped to the current ticket. Chat history persists per ticket.
+In the right column, **SOC AI Assistant** offers:
+- **Run AI Assistant** — generates an alert interpretation and summary, shown in **AI Summary**, with follow-up items in **AI Tasks** and extracted observables in **Evidence**
+- **Chat** — opens an interactive conversation scoped to the current ticket
 
 **@ai mention:** In the comment box, type `@ai <question>` to post an AI response directly to the work log.
 
-**@playbook mention:** Type `@playbook <name>` to invoke a workflow playbook with the current ticket as context.
+**@playbook mention:** Type `@` or `@playbook` to list the workflows that can be invoked from tickets, pick one, and click **Send**. The result is logged in the work log and the run appears in the **Work Plan** card of **Incident Info**. If no workflow is available for tickets, the list shows `No callable playbooks`.
 
-### Labels and Observables
+### Labels
 
-**Labels** are key-value pairs used for categorization and workflow automation:
-1. Go to the **Labels** section in the ticket detail.
-2. Click **Add Label**, enter name and value, click **Save**.
+**Labels** are name/value pairs used to categorize tickets.
 
-Labels can trigger automatic workflow bindings and filter tickets in the list.
+1. Open the **Labels** card in the right column.
+2. Enter **Label name** and an optional **Label value (optional)**, then click **Add**.
 
-**Observables** are extracted indicators (IPs, domains, hashes) that appear in the **Evidence** tab, populated by AI analysis or manual entry.
-
-### Batch Operations
-
-Select multiple tickets with checkboxes to access batch actions:
-
-| Action | Description |
-|---|---|
-| **Batch Update Status** | Change status for all selected tickets |
-| **Batch Assign** | Reassign to a different analyst |
-| **Batch Delete** | Soft-delete selected tickets (records retained for audit) |
+Labels can also be used by workflows (see below).
 
 ---
 
-## Workflows (SOAR)
+## Automation Overview
 
-The Workflows module is the SOAR engine that automates repetitive tasks, orchestrates multi-step response procedures, and integrates with external tools.
+Automation is a separate module, `Automation → Workflows`, with its own page: [Automation]({{ '/en/automation/' | relative_url }}). A **workflow** is a sequence of response steps (notify a channel, call an API, update a ticket, look up an IP, block an address) that starts from a trigger and runs on a Prefect worker.
 
-**Navigation:** `Settings → Workflows`
+What a ticket analyst needs to know:
 
-![Workflows Navigation]({{ '/assets/images/ticket-handling/workflows-nav.png' | relative_url }})
+1. **Tickets can start workflows automatically.** The triggers **On Ticket Created** and **On Ticket Status Change** start matching workflows when a ticket is created or an existing ticket is saved. **On Ticket Created** can be restricted with conditions on ticket fields (status, priority, event category, event result, a label as `name:value`).
+2. **Ticket Labels bindings.** A workflow can be bound to ticket labels (with AND/OR logic); bound labels appear in the workflow's **Ticket Labels** column.
+3. **Workflows can read and change tickets.** The **Create Ticket** and **Update Ticket** actions work on tickets, and steps can use ticket fields such as `{% raw %}{{ticket.priority}}{% endraw %}`.
+4. **Invoke from the ticket.** Use `@playbook` in the comment box (see above) to run a workflow for the current ticket; runs started this way are listed in the **Work Plan** card of **Incident Info**.
+5. **Only published workflows run.** A workflow must be active and published before it runs; editing alone never changes what runs.
+6. **Follow the results** in `Automation → Executions`, which shows each run's steps, logs and errors.
 
-### Workflow List View
+Building, publishing, variables and secrets, notification and API actions, and external webhook interfaces are described in [Automation]({{ '/en/automation/' | relative_url }}).
 
-![Workflow List]({{ '/assets/images/ticket-handling/workflows-list.png' | relative_url }})
+---
 
-Four summary cards at the top show: **Total Workflows**, **Active**, **Total Executions**, **Success Rate**.
+## From Alert to Ticket
 
-#### Table Columns
-
-| Column | Description |
-|---|---|
-| **Name** | Workflow name with version (draft v# / published v#) |
-| **Trigger** | Trigger type tag |
-| **Steps** | Step count |
-| **Status** | Run status + lifecycle tags (Draft, Published, Changes) |
-| **Ticket Labels** | Bound label filters |
-| **Last Execution** | Status and timestamp of most recent run |
-| **Executions** | Total execution count |
-
-#### Quick Actions
-
-| Button | Action |
-|---|---|
-| ▶ Execute | Manually trigger (active workflows only) |
-| ⏸ Stop | Cancel a running execution |
-| 🔀 Visual Editor | Open drag-and-drop editor |
-| 📋 Clone | Duplicate the workflow |
-| ☁ Publish | Publish manifest to Prefect |
-| 🗑 Delete | Delete with confirmation |
-
-### Visual Workflow Editor
-
-![Visual Editor]({{ '/assets/images/ticket-handling/workflow-visual-editor.png' | relative_url }})
-
-Click **Create Visual Workflow** or the branch icon on an existing workflow.
-
-#### Editor Layout
-
-| Area | Description |
-|---|---|
-| **Left Panel** | Action palette grouped by category |
-| **Center Canvas** | Drag-and-drop node workspace |
-| **Right Panel** | Node configuration (visible when a node is selected) |
-| **Top Bar** | Workflow name, trigger settings, save/back |
-
-#### Building a Workflow
-
-1. Set the workflow name.
-2. Select the trigger type.
-3. Drag action nodes from the palette onto the canvas.
-4. Connect nodes by dragging from one handle to another.
-5. Click each node and fill in its configuration in the right panel.
-6. Click **Save** to persist as a draft.
-
-#### Node Types
-
-| Type | Description |
-|---|---|
-| **Start** | Entry point |
-| **End** | Exit point |
-| **Action** | Executes a specific action (Block IP, Send Email, etc.) |
-| **Condition** | Evaluates a condition; branches into True/False paths |
-
-### Trigger Types
-
-| Trigger | Description | Config |
-|---|---|---|
-| **Manual** | Executed on demand | None required |
-| **On Alert Created** | Fires on new alert ingestion | JSON filter conditions |
-| **On Ticket Created** | Fires on new ticket creation | JSON filter conditions |
-| **On Ticket Status Change** | Fires on status transition | JSON filter conditions |
-| **Scheduled** | Recurring schedule | Cron expression |
-| **Webhook** | Triggered by HTTP call | Webhook URL provided |
-
-**Filter condition example** — trigger only for critical malware incidents:
-
-```json
-{
-  "priority": ["critical", "high"],
-  "event_category": ["malware"]
-}
-```
-
-### Execution History
-
-![Workflow Executions]({{ '/assets/images/ticket-handling/workflows-executions.png' | relative_url }})
-
-Navigate to `Settings → Workflows → View Executions`.
-
-| Column | Description |
-|---|---|
-| **Status** | Pending / Running / Completed / Failed / Cancelled / Paused |
-| **Trigger Source** | What triggered the run (manual, ticket ID, schedule) |
-| **Duration** | Total execution time |
-| **Progress** | Completion percentage |
-
-Click an execution to view step-by-step timeline, error details, accumulated context variables, and full execution logs.
-
-### Cron Schedule Examples
-
-| Expression | Meaning |
-|---|---|
-| `*/15 * * * *` | Every 15 minutes |
-| `0 */4 * * *` | Every 4 hours |
-| `0 8 * * 1-5` | Weekdays at 08:00 |
-| `0 0 * * *` | Daily at midnight |
-
-### Ticket-Workflow Bindings
-
-Bindings trigger workflows automatically based on ticket labels:
-
-1. Configure label filters on the workflow (name + value pairs).
-2. Choose logic: **AND** (all labels must match) or **OR** (any label may match).
-
-When a ticket event occurs, the system evaluates all active bindings and dispatches matching workflows with the ticket as trigger context.
-
-### Invoking Playbooks from Tickets
-
-Workflows with **Is Callable from Ticket** enabled can be invoked directly from a ticket.
-
-**Method 1 — @playbook command:**
-In the comment box, type `@` and select a playbook from the dropdown, then click **Send**.
-
-**Method 2 — Playbook panel:**
-Open the ticket detail, navigate to the playbook section, and click **Invoke**.
-
-Each ticket shows a **Workplan** listing all associated workflow executions with status, progress, and timestamps.
+Tickets are normally created from alerts by the Orchestrator and the Correlation policy: each new alert gets a ticket, and with Correlation enabled an alert can be attached to a matching in-progress ticket instead. See [Data Onboarding]({{ '/en/data-onboarding/' | relative_url }}) and [Alerts]({{ '/en/alerts/' | relative_url }}).

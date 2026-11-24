@@ -8,21 +8,33 @@ modules:
   - id: dashboard
     en_title: "Dashboard"
     zh_title: "仪表盘"
+  - id: detection-coverage
+    en_title: "Detection Coverage"
+    zh_title: "检测覆盖"
   - id: ticket-handling
     en_title: "Ticket Handling"
     zh_title: "工单处理"
   - id: alerts
     en_title: "Alerts"
     zh_title: "告警管理"
+  - id: assets
+    en_title: "Assets"
+    zh_title: "资产管理"
   - id: use-case-management
     en_title: "Use Case Management"
     zh_title: "用例管理"
   - id: data-onboarding
     en_title: "Data Onboarding"
     zh_title: "数据接入"
-  - id: docker-deployment
-    en_title: "Docker Deployment"
-    zh_title: "Docker 部署"
+  - id: automation
+    en_title: "Automation"
+    zh_title: "自动化"
+  - id: reports
+    en_title: "Reports"
+    zh_title: "报告"
   - id: ai-agent
     en_title: "AI Agent"
     zh_title: "AI 智能体"
+  - id: docker-deployment
+    en_title: "Docker Deployment"
+    zh_title: "Docker 部署"

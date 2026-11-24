@@ -7,100 +7,83 @@ lang_ref: alerts
 
 # Alerts
 
-The Alerts module is the central repository for all security events ingested into the platform. It provides a filterable, searchable view of every alert that has been collected from connected data sources, with detail views, correlation linkage, and triage capabilities.
+The Alerts page is the central list of security events ingested into the platform. It provides one searchable, filterable table of every alert collected from the connected data sources, with a detail view for each alert.
 
-**Navigation:** `Monitor → Alerts`
+**Navigation:** `Monitoring → Alerts`
 
-## Alert List View
+<!-- TODO screenshot: assets/images/alerts/alerts-list.png (Alerts page: search box, Severity filter, Reset, table with the six columns) -->
 
-The alert list displays all ingested security events in reverse-chronological order. It updates dynamically as the Orchestrator pulls new data from connected sources.
+## Alert List
+
+The list shows alerts from the Elasticsearch index of the active Elasticsearch integration, plus alerts fetched from Splunk. It is sorted by time, newest first, and reloads when you change a filter or the Elasticsearch connector. The footer shows the total (`N alerts`).
 
 ### Filtering and Search
 
-| Filter | Options |
+| Control | Description |
 |---|---|
-| **Time Range** | Quick presets (15m, 1h, 24h, 7d, 30d) or custom date range |
-| **Severity** | Critical / High / Medium / Low |
-| **Status** | New / Acknowledged / In Progress / Closed |
-| **Source** | Filter by data source integration name |
-| **Free-text Search** | Search across alert title, description, and raw message content |
+| **Search box** | Placeholder `Filter by id / message / details / rule / host / ip`. The list updates as you type and matches alert ID, message, description, title, rule ID, source index and the raw alert content |
+| **Severity** | `Critical`, `High`, `Medium`, `Low` or `Unknown`. Source values are normalized: for example `fatal` counts as Critical, `error` as High, `warning` as Medium, `info` as Low |
+| **Reset** | Clears the search and severity filter and restores the default sort (time, newest first) |
+
+**Links into this page.** Other pages open the list pre-filtered with address parameters:
+
+| Link | Effect |
+|---|---|
+| `/alerts?q=<text>` | Fills the search box |
+| `/alerts?severity=critical` | Sets the Severity filter |
+| `/alerts?q=<text>&severity=high` | Both |
 
 ### Table Columns
 
 | Column | Description |
 |---|---|
-| **Alert ID** | System-generated unique identifier |
-| **Title** | Alert name / event type from the source system |
-| **Severity** | Critical / High / Medium / Low (color-coded) |
-| **Source** | Data source that generated the alert (e.g., Elastic Stack ELK) |
-| **Timestamp** | Event occurrence time from the source |
-| **Ingested At** | Time the alert was written to the internal database |
-| **Status** | Current triage status |
-| **Ticket** | Linked ticket number (if this alert generated or was added to a ticket) |
+| **Severity** | Color-coded tag; sortable |
+| **ID** | Alert identifier with a copy icon (`Alert ID copied`); sortable |
+| **Time** | Event time in your local time zone, or `Unknown Time`; sortable (default, descending) |
+| **Message** | Alert description or title; hover for the full text; sortable |
+| **Detection Rule** | Name of the detection rule that produced the alert, as a link to the rule; `—` when no rule is linked |
+| **Risk Objects** | Up to two entities (IP, user, host, hash) as colored tags, plus `+N` for the rest (hover to see them); `—` when none |
 
-## Alert Detail View
+Drag a column header edge to resize it. Use the footer to move between pages and to choose a page size of 10, 20 (default), 50 or 100.
 
-Click any alert row to open the detail view.
+**Risk Objects** are the entities an alert is about: the IPs, users, hosts and file hashes extracted from alert fields. Which fields count as risk objects is configured per detection rule (with a platform default). The same entities drive the **Risk Entities** tab of Correlation.
 
-### Detail Sections
+## Alert Details
+
+Click any row to open the **Alert Details** dialog.
 
 | Section | Contents |
 |---|---|
-| **Summary** | Alert title, severity, source, timestamps |
-| **Raw Message** | Full original alert payload with JSON syntax highlighting |
-| **Linked Ticket** | Link to the associated incident ticket (if any) |
-| **MITRE ATT&CK** | Mapped tactic and technique (if the detection rule carries ATT&CK annotations) |
-| **Observables** | Extracted indicators: IPs, domains, file hashes, usernames |
+| Header | Severity tag, source index, time and alert ID |
+| **Message** | Alert message |
+| **Details** | Description or details of the event |
+| **Host Name** / **Source IP** | Host and source address when present in the alert |
+| **Risk Objects** | All extracted entities with the field they came from (shown when present) |
+| **Detection Rule** | Link to the detection rule |
+| **Raw Context** | The full alert record as JSON |
 
-## Alert Lifecycle
-
-Alerts follow a simple status progression:
-
-```
-New → Acknowledged → In Progress → Closed
-```
-
-| Status | Meaning |
-|---|---|
-| **New** | Alert received, not yet reviewed |
-| **Acknowledged** | Analyst has seen the alert |
-| **In Progress** | Under active investigation |
-| **Closed** | Investigation complete; ticket resolved or alert dismissed |
+The dialog is read-only: alerts have no status, assignment or acknowledgment in the list.
 
 ## From Alert to Ticket
 
-Alerts can generate tickets in two ways:
+Alerts become tickets through the data pipeline, not from this page:
 
-**Automatic (Correlation engine):**
-The Correlation policy evaluates each incoming alert against configured rules. When conditions match (time window, field values), the engine automatically creates a ticket and links the triggering alert. See [Data Onboarding]({{ '/en/data-onboarding/' | relative_url }}) → Correlation for configuration details.
+- **Elasticsearch alerts.** Each Orchestrator run stores new alerts and opens a ticket for every new or changed alert. With the Correlation policy enabled, an alert that matches an In Progress ticket inside the time window is attached to that ticket instead. See [Data Onboarding]({{ '/en/data-onboarding/' | relative_url }}).
+- **Splunk alerts.** Fetched with **Fetch Data** in the Splunk integration. They are listed here but are not ticketed automatically.
 
-**Manual (from alert detail):**
-In the alert detail view, click **Create Ticket** to manually open a new incident ticket pre-populated with alert metadata.
-
-## MITRE ATT&CK Mapping
-
-When an alert is generated by a Sigma rule that carries ATT&CK annotations, the platform displays the corresponding tactic and technique on the alert detail page. This allows analysts to quickly understand the kill-chain stage of an event and prioritize investigation accordingly.
+Tickets are listed under `Investigation → Tickets`; see [Ticket Handling]({{ '/en/ticket-handling/' | relative_url }}).
 
 ## Alert Deduplication
 
-When the Orchestrator runs, it uses the alert's unique identifier from the source system (combined with the timestamp field) to prevent duplicate ingestion. Alerts that have already been imported are skipped on subsequent runs.
-
-## Bulk Actions
-
-Select multiple alerts using checkboxes to:
-
-| Action | Description |
-|---|---|
-| **Acknowledge** | Mark selected alerts as acknowledged |
-| **Assign** | Assign to an analyst |
-| **Create Ticket** | Open a new ticket linked to all selected alerts |
-| **Close** | Mark selected alerts as closed |
+An alert is identified by its source ID (`alert_id`, `event_id` or `es_id` for Elasticsearch documents) together with its source index. When the same ID arrives again, the existing alert is updated and no duplicate is created. Splunk alerts get a hashed ID built from the event ID, the integration and the index, with the same effect.
 
 ## Troubleshooting
 
 | Issue | Check |
 |---|---|
-| No alerts appear after setup | Verify Orchestrator task ran successfully; check Run History for errors |
-| Alerts missing from expected time range | Confirm the `Timestamp field` in the Orchestrator task matches your ES document schema |
+| No alerts appear after setup | Verify the Orchestrator task ran successfully; open **View Runs** and check the log |
+| Alerts missing from the expected time range | Confirm the `Timestamp field` in the Orchestrator task matches your ES document schema; alerts without a usable time show `Unknown Time` |
+| Alerts from another index are not listed | The list follows the index of the active Elasticsearch integration; Splunk alerts are always listed |
 | Duplicate alerts appearing | Ensure the source document's unique ID field is consistently populated |
-| Alerts not generating tickets | Check Correlation policy is enabled and conditions match incoming alert fields |
+| Alerts not generating tickets | Elasticsearch: check the Orchestrator run counters and that the alert is new or changed; Correlation may have attached it to an existing ticket. Splunk alerts are never ticketed automatically |
+| **Detection Rule** shows `—` | The alert's rule ID does not match a detection rule in the platform |
