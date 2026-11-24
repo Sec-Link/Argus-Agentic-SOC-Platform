@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
-import { Alert, Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { Bot, Clock3, ListChecks, MessageCircleQuestion, Plus, ShieldCheck, Wrench } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
@@ -472,8 +472,6 @@ export default function SlaTicketDetailView(props: Props) {
   const chatHistorySequence = useRef(0);
   const chatCanContinue = canContinueTicketChat(chatScope, chatCapabilities) && !chatHistoryLoading && !chatMoreLoading;
   const [collapsedTraces, setCollapsedTraces] = useState<Record<number, boolean>>({});
-  const [expandedTaskIndex, setExpandedTaskIndex] = useState<number | null>(null);
-  const [expandedNextTaskIndex, setExpandedNextTaskIndex] = useState<number | null>(null);
   const [expandedTimelineIndex, setExpandedTimelineIndex] = useState<number | null>(null);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveLoading, setResolveLoading] = useState(false);
@@ -2453,102 +2451,6 @@ export default function SlaTicketDetailView(props: Props) {
               </Card>
             </div>
 
-            <div ref={aiAssistantCardRef} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Card size="small" title="SOC AI Assistant">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#e6f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>AI</div>
-                <div>
-                  <div style={{ fontWeight: 600 }}>AI Assistant</div>
-                  <div className="soc-ai-assistant-subtitle">Alert interpretation and summary</div>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
-                {aiModelSelector}
-                <Typography.Text type="secondary">Used for ticket analysis, chat and @AI. Changes apply to the next request.</Typography.Text>
-                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>
-                  Run AI Assistant
-                </Button>
-                <Button onClick={openChat}>
-                  Chat
-                </Button>
-              </div>
-              {aiError ? (
-                <>
-                  <Divider />
-                  <Typography.Text type="danger">{aiError}</Typography.Text>
-                </>
-              ) : null}
-              {aiWarnings.map((warning, index) => (
-                <Alert key={`ai_warning_${index}`} type="warning" showIcon message={warning} style={{ marginTop: 8 }} />
-              ))}
-            </Card>
-
-              <Card size="small" title="AI Tasks">
-              {aiTasks.length ? (
-                <List
-                  dataSource={aiTasks}
-                  renderItem={(item: any, idx: number) => {
-                    const text = item?.detail ? String(item.detail) : String(item || '');
-                    const title = item?.title ? String(item.title) : text;
-                    const short = title.length > 60 ? `${title.slice(0, 60)}...` : title;
-                    const isOpen = expandedTaskIndex === idx;
-                    return (
-                      <List.Item style={{ alignItems: 'flex-start' }}>
-                        <div style={{ width: '100%' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                            <div>
-                              <Tag color="green">OK</Tag> {short || '-'}
-                            </div>
-                            <Button size="small" type="link" onClick={() => setExpandedTaskIndex(isOpen ? null : idx)}>
-                              {isOpen ? 'Hide' : 'Details'}
-                            </Button>
-                          </div>
-                          {isOpen ? (
-                            <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', color: 'rgba(0,0,0,0.65)' }}>
-                              {text || title || '-'}
-                            </div>
-                          ) : null}
-                        </div>
-                      </List.Item>
-                    );
-                  }}
-                />
-              ) : (
-                <Empty description="No AI tasks yet" />
-              )}
-              <Divider />
-              <Typography.Text strong>Add Tasks</Typography.Text>
-              <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-                {nextTasks.length ? (
-                  nextTasks.map((t: any, idx: number) => {
-                    const title = t?.title || String(t);
-                    const detail = t?.detail ? String(t.detail) : '';
-                    const isOpen = expandedNextTaskIndex === idx;
-                    return (
-                      <div key={`${title}_${idx}`} style={{ display: 'grid', gap: 4 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <Checkbox>{title}</Checkbox>
-                          {detail ? (
-                            <Button size="small" type="link" onClick={() => setExpandedNextTaskIndex(isOpen ? null : idx)}>
-                              {isOpen ? 'Hide' : 'Details'}
-                            </Button>
-                          ) : null}
-                        </div>
-                        {detail && isOpen ? (
-                          <Typography.Text type="secondary" style={{ fontSize: 12, paddingLeft: 24, whiteSpace: 'pre-wrap' }}>
-                            {detail}
-                          </Typography.Text>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <Checkbox disabled>No AI-suggested tasks</Checkbox>
-                )}
-              </div>
-            </Card>
-
-            </div>
           </div>
         )}
       </div>
