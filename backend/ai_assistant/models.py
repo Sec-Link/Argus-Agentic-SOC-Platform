@@ -79,6 +79,7 @@ class AgentConfig(models.Model):
     role = models.CharField(max_length=500)
     instructions = models.TextField(max_length=6000)
     enabled = models.BooleanField(default=False)
+    use_groups = models.ManyToManyField("auth.Group", blank=True, related_name="usable_ai_agents")
     max_iterations = models.PositiveSmallIntegerField(
         default=3, validators=[MinValueValidator(1), MaxValueValidator(100)],
     )
@@ -90,9 +91,18 @@ class AgentConfig(models.Model):
 
     class Meta:
         db_table = "ai_agent_configs"
+        permissions = [("manage_access_agentconfig", "Can manage AI agent use roles")]
 
     def __str__(self) -> str:
         return self.name
+
+
+class BuiltinMCPToolAccess(models.Model):
+    name = models.CharField(max_length=64, primary_key=True)
+    use_groups = models.ManyToManyField("auth.Group", blank=True, related_name="usable_builtin_mcp_tools")
+
+    class Meta:
+        default_permissions = ("view", "change")
 
 
 class SkillConfig(models.Model):
@@ -100,12 +110,14 @@ class SkillConfig(models.Model):
     version = models.CharField(max_length=50, default="v1")
     route = models.CharField(max_length=200, blank=True)
     enabled = models.BooleanField(default=True)
+    use_groups = models.ManyToManyField("auth.Group", blank=True, related_name="usable_ai_skills")
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "ai_skill_configs"
+        permissions = [("manage_access_skillconfig", "Can manage AI skill use roles")]
 
     def __str__(self) -> str:
         return self.name
@@ -332,6 +344,7 @@ class ModelProfile(models.Model):
     )
     enabled = models.BooleanField(default=False)
     encrypted_api_key = models.TextField(blank=True, default="")
+    use_groups = models.ManyToManyField("auth.Group", blank=True, related_name="usable_ai_models")
     input_price_per_million = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True,
                                                  validators=[MinValueValidator(0)])
     output_price_per_million = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True,
@@ -344,6 +357,7 @@ class ModelProfile(models.Model):
 
     class Meta:
         db_table = "ai_model_profiles"
+        permissions = [("manage_access_modelprofile", "Can manage AI model use roles")]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(timeout_seconds__gte=1, timeout_seconds__lte=120),

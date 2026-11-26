@@ -32,6 +32,7 @@ from ai_assistant.skill_config import (
     normalize_skill_names, require_skill_permission,
 )
 from ai_assistant.skill_library import read_skill_content, write_skill_content
+from ai_assistant.skill_evidence import trace_skill_permissions
 
 _MOJIBAKE_CHARS = re.compile(r"[ÃÂâåäæçèéêëìíîïðñòóôöõøùúûüýÿ]")
 
@@ -211,10 +212,12 @@ def ai_chat(request):
         request.user, data, permissions=("tickets.view_eventticket",) if ticket_number else (),
     )
 
+    previous_skills = set()
+
     def model_guard():
         live_actor = current_actor(actor, write=True)
         if ticket_number:
-            require_history_permissions(live_actor, ("tickets.view_eventticket",))
+            require_history_permissions(live_actor, {"tickets.view_eventticket", *previous_skills})
         if profile_guard:
             profile_guard()
     ticket = None
@@ -222,6 +225,11 @@ def ai_chat(request):
         ticket = EventTicket.objects.filter(ticket_number=ticket_number, is_deleted=False).first()
         if not ticket:
             return Response({"error": "ticket not found"}, status=status.HTTP_404_NOT_FOUND)
+        if data.get("messages"):
+            traces = TicketAIChatMessage.objects.filter(ticket=ticket, created_by=actor).exclude(trace=[])
+            for trace in traces.values_list("trace", flat=True).iterator(chunk_size=200):
+                previous_skills.update(trace_skill_permissions(trace))
+            require_history_permissions(actor, previous_skills)
 
     overrides = {
         **model_overrides, "max_iterations": limits.max_iterations,
@@ -230,10 +238,11 @@ def ai_chat(request):
     overrides["_usage_context"] = model_usage_context(
         actor, source="ticket_chat" if ticket else "chat", overrides=overrides, agent_name="assistant",
     )
+    overrides["_usage_context"]["skill_permissions"].update(previous_skills)
 
     recommended_skills = normalize_skill_names(data.get("skills"))
     if not recommended_skills:
-        recommended_skills = get_enabled_skill_names()
+        recommended_skills = get_enabled_skill_names(actor)
 
     if ticket:
         if model_guard:
@@ -269,6 +278,7 @@ def ai_chat(request):
             history_messages=data.get("messages") or [],
             overrides=overrides,
             recommended_skills=recommended_skills,
+            user=actor,
             **({"model_call_guard": model_guard, "tool_guard": lambda **_kwargs: model_guard()}
                if model_guard else {}),
         )
@@ -400,11 +410,11 @@ def skill_catalog(request):
 def skill_configs(request):
     require_skill_permission(request, "view" if request.method == "GET" else "add")
     if request.method == "GET":
-        rows = SkillConfig.objects.all().order_by("name")
+        rows = SkillConfig.objects.prefetch_related("use_groups").order_by("name")
         serializer = SkillConfigSerializer(rows, many=True)
         return Response(serializer.data)
 
-    serializer = SkillConfigSerializer(data=request.data)
+    serializer = SkillConfigSerializer(data=request.data, context={"request": request})
     serializer.is_valid(raise_exception=True)
     with transaction.atomic():
         row = serializer.save()
@@ -414,9 +424,11 @@ def skill_configs(request):
 
 @api_view(["GET", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def skill_config_detail(request, name: str):
     require_skill_permission(request, {"GET": "view", "PUT": "change", "DELETE": "delete"}[request.method])
-    row = SkillConfig.objects.filter(name=name).first()
+    rows = SkillConfig.objects.filter(name=name)
+    row = (rows if request.method == "GET" else rows.select_for_update()).first()
     if not row:
         return Response({"error": "skill not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -424,16 +436,14 @@ def skill_config_detail(request, name: str):
         return Response(SkillConfigSerializer(row).data)
 
     if request.method == "DELETE":
-        with transaction.atomic():
-            row.delete()
-            audit_skill_configuration(request, name, "delete", [])
+        row.delete()
+        audit_skill_configuration(request, name, "delete", [])
         return Response({"message": "deleted"})
 
-    serializer = SkillConfigSerializer(row, data=request.data, partial=True)
+    serializer = SkillConfigSerializer(row, data=request.data, partial=True, context={"request": request})
     serializer.is_valid(raise_exception=True)
-    with transaction.atomic():
-        serializer.save()
-        audit_skill_configuration(request, name, "update", serializer.validated_data)
+    serializer.save()
+    audit_skill_configuration(request, name, "update", serializer.validated_data)
     return Response(serializer.data)
 
 

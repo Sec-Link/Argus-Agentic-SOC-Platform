@@ -3,8 +3,13 @@ import axios, { InternalAxiosRequestConfig } from 'axios';
 import { readPageChatStream, pageChatHttpError, PageChatStreamError, type PageChatEvent } from './services/aiAssistant/stream';
 
 let accessToken: string | null = null;
+let sessionRequests = new AbortController();
 
-export function setAccessToken(token: string) {
+export function setAccessToken(token: string | null) {
+  if (accessToken !== token) {
+    sessionRequests.abort();
+    sessionRequests = new AbortController();
+  }
   accessToken = token;
 }
 
@@ -48,23 +53,74 @@ function ensureDjangoCsrfCookie() {
   return token;
 }
 
-// initialize from persistent storage if available
-try {
-  const persisted = localStorage.getItem('siem_access_token');
-  // Migration safety: previous versions stored JWT (contains dots). DRF tokens do not.
-  if (persisted && !persisted.includes('.')) accessToken = persisted;
-  else if (persisted && persisted.includes('.')) {
-    accessToken = null;
-    try { localStorage.removeItem('siem_access_token'); } catch (e) {}
+export function readStoredAccessToken(): string | null {
+  try {
+    const token = localStorage.getItem('siem_access_token');
+    // Previous versions stored JWTs. The current API uses DRF tokens.
+    if (token?.includes('.')) {
+      localStorage.removeItem('siem_access_token');
+      return null;
+    }
+    return token;
+  } catch {
+    return accessToken;
   }
-} catch (err) {}
+}
+
+accessToken = readStoredAccessToken();
+
+export function isCurrentBrowserSession() {
+  // Bind the current page to one account until its data and pending actions are discarded.
+  if (readStoredAccessToken() !== accessToken) sessionRequests.abort();
+  return !sessionRequests.signal.aborted;
+}
+
+function checkBrowserSession() {
+  if (!isCurrentBrowserSession()) throw new axios.CanceledError('The signed-in account changed.');
+}
+
+const signalCleanup = new WeakMap<AbortSignal, () => void>();
+
+function sessionSignal(signal?: AbortSignal): AbortSignal {
+  const session = sessionRequests.signal;
+  if (!signal) return session;
+  if ('any' in AbortSignal && typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([signal, session]);
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal.aborted || session.aborted) abort();
+  else {
+    session.addEventListener('abort', abort);
+    signal.addEventListener('abort', abort);
+    signalCleanup.set(controller.signal, () => {
+      session.removeEventListener('abort', abort);
+      signal.removeEventListener('abort', abort);
+    });
+  }
+  return controller.signal;
+}
 
 export function clearAccessToken() {
-  accessToken = null;
+  setAccessToken(null);
   try {
-    localStorage.removeItem('siem_access_token');
     localStorage.removeItem('siem_is_readonly');
+    localStorage.removeItem('siem_username');
+    localStorage.removeItem('siem_impersonation');
+    localStorage.removeItem('siem_access_token');
   } catch (e) {}
+}
+
+function saveLogin(data: { token: string; user?: { username?: string; is_readonly?: boolean }; username?: string }, fallback: string) {
+  setAccessToken(data.token);
+  try {
+    localStorage.removeItem('siem_impersonation');
+    localStorage.setItem('siem_username', data.user?.username || data.username || fallback);
+    if (data.user?.is_readonly) localStorage.setItem('siem_is_readonly', '1');
+    else localStorage.removeItem('siem_is_readonly');
+    // Other tabs can mount the new account once its display state is complete.
+    localStorage.setItem('siem_access_token', data.token);
+  } catch { /* Storage may be unavailable; authentication still works in this tab. */ }
 }
 
 function resolveApiBase() {
@@ -106,6 +162,7 @@ export async function fetchReport(range: '24h' | '7d' | '30d' | 'all' = '7d') {
   };
 }
 const addAuthHeader = (config: InternalAxiosRequestConfig) => {
+  checkBrowserSession();
   const method = String(config.method || 'get').toUpperCase();
   const url = String(config.url || '');
   const readonlyAllowedPaths = ['/accounts/auth/logout/', '/accounts/auth/otp/request/', '/accounts/auth/otp/verify/', '/reports/generate/'];
@@ -130,28 +187,35 @@ const addAuthHeader = (config: InternalAxiosRequestConfig) => {
     }
     (config.headers as any).Authorization = `Token ${accessToken}`;
   }
+  config.signal = sessionSignal(config.signal as AbortSignal | undefined);
   return config;
 };
 client.interceptors.request.use(addAuthHeader);
+client.interceptors.response.use((response) => {
+  signalCleanup.get(response.config.signal as AbortSignal)?.();
+  checkBrowserSession();
+  return response;
+}, (error) => {
+  signalCleanup.get(error?.config?.signal)?.();
+  checkBrowserSession();
+  return Promise.reject(error);
+});
 
 const TICKETS_BASE = '/tickets';
 
 export async function login(username: string, password: string) {
   const res = await client.post('/accounts/auth/login/', { username, password });
-  setAccessToken(res.data.token);
-  try {
-    // persist token for page reloads
-    localStorage.setItem('siem_access_token', res.data.token);
-    // store username for UI display (fall back to provided username)
-    const apiUsername = res.data?.user?.username || res.data?.username;
-    if (apiUsername) localStorage.setItem('siem_username', apiUsername);
-    else if (username) localStorage.setItem('siem_username', username);
-    if (res.data?.user?.is_readonly) localStorage.setItem('siem_is_readonly', '1');
-    else localStorage.removeItem('siem_is_readonly');
-  } catch (err) {
-    // ignore storage errors
-  }
+  saveLogin(res.data, username);
   return res.data;
+}
+
+export async function logout() {
+  await client.post('/accounts/auth/logout/', undefined, {
+    timeout: 10000,
+    validateStatus: (status) => status === 204 || status === 401,
+  });
+  checkBrowserSession();
+  clearAccessToken();
 }
 
 export async function register(
@@ -166,14 +230,7 @@ export async function register(
     password,
     password_confirm: passwordConfirm,
   });
-  setAccessToken(res.data.token);
-  try {
-    localStorage.setItem('siem_access_token', res.data.token);
-    const apiUsername = res.data?.user?.username || username;
-    if (apiUsername) localStorage.setItem('siem_username', apiUsername);
-    if (res.data?.user?.is_readonly) localStorage.setItem('siem_is_readonly', '1');
-    else localStorage.removeItem('siem_is_readonly');
-  } catch (err) {}
+  saveLogin(res.data, username);
   return res.data;
 }
 
@@ -198,14 +255,7 @@ export async function requestOtp(email: string) {
 
 export async function verifyOtp(email: string, otp: string) {
   const res = await client.post('/accounts/auth/otp/verify/', { email, otp });
-  setAccessToken(res.data.token);
-  try {
-    localStorage.setItem('siem_access_token', res.data.token);
-    const apiUsername = res.data?.user?.username || email;
-    localStorage.setItem('siem_username', apiUsername);
-    if (res.data?.user?.is_readonly) localStorage.setItem('siem_is_readonly', '1');
-    else localStorage.removeItem('siem_is_readonly');
-  } catch (err) {}
+  saveLogin(res.data, email);
   return res.data;
 }
 
@@ -692,9 +742,19 @@ export async function streamAiAssistantPageChat(
   onEvent: (event: PageChatEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
+  checkBrowserSession();
   if (localStorage.getItem('siem_is_readonly') === '1') {
     throw pageChatHttpError(403);
   }
+  signal = sessionSignal(signal);
+  try {
+    await readAssistantResponse(payload, onEvent, signal);
+  } finally {
+    signalCleanup.get(signal)?.();
+  }
+}
+
+async function readAssistantResponse(payload: PageChatRequest, onEvent: (event: PageChatEvent) => void, signal: AbortSignal) {
   const csrfToken = getCookie('csrftoken');
   let response: Response;
   try {
@@ -726,7 +786,10 @@ export async function streamAiAssistantPageChat(
       message: 'The chat server did not return a readable event stream. Check the backend and proxy configuration.',
     });
   }
-  await readPageChatStream(response.body, onEvent, signal);
+  await readPageChatStream(response.body, (event) => {
+    checkBrowserSession();
+    onEvent(event);
+  }, signal);
 }
 
 export async function decidePageChatApproval(executionId: string, decision: 'approve' | 'reject', signal?: AbortSignal): Promise<void> {
@@ -808,6 +871,7 @@ export interface HttpToolFields {
 export interface HttpToolConfig extends HttpToolFields {
   id: number;
   use_group_ids: number[];
+  use_roles?: ToolAccessRole[];
   has_auth_secret: boolean;
   created_at: string;
   updated_at: string;
@@ -843,6 +907,7 @@ export interface AssistantAgentCatalogEntry {
 }
 
 export interface AssistantAgentFields extends AssistantAgentCatalogEntry {
+  use_group_ids?: number[];
   instructions: string;
   enabled: boolean;
   max_iterations: number;
@@ -851,6 +916,7 @@ export interface AssistantAgentFields extends AssistantAgentCatalogEntry {
 
 export interface AssistantAgentConfig extends AssistantAgentFields {
   id: number;
+  use_roles?: ToolAccessRole[];
   created_at: string;
   updated_at: string;
 }
@@ -952,6 +1018,7 @@ export async function listAiAssistantSkillConfigs() {
 
 export async function createAiAssistantSkillConfig(payload: {
   name: string;
+  use_group_ids?: number[];
   version?: string;
   route?: string;
   enabled?: boolean;
@@ -962,6 +1029,7 @@ export async function createAiAssistantSkillConfig(payload: {
 }
 
 export async function updateAiAssistantSkillConfig(name: string, payload: Partial<{
+  use_group_ids: number[];
   version: string;
   route: string;
   enabled: boolean;

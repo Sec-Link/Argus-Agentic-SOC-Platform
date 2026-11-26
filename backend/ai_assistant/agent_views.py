@@ -2,7 +2,7 @@
 
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
-from rest_framework import serializers, viewsets
+from rest_framework import serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -10,20 +10,20 @@ from rest_framework.response import Response
 
 from accounts.audit import AuditService, request_ip, request_user_agent
 from accounts.models import AuditLog
-from accounts.permissions import DenyReadonlyUser, RbacModelPermissions
 from accounts.services import is_user_readonly
 from .models import AgentConfig
+from .tool_access import AIConfigViewSet, UseGroupSerializer, allowed_tools
 
 
 MAX_AGENT_CONFIGS = 50
 
 
-class AgentConfigSerializer(serializers.ModelSerializer):
+class AgentConfigSerializer(UseGroupSerializer):
     class Meta:
         model = AgentConfig
         fields = (
             "id", "name", "title", "role", "instructions", "enabled", "max_iterations", "max_delegations",
-            "created_at", "updated_at",
+            "use_group_ids", "use_roles", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
 
@@ -39,10 +39,9 @@ class AgentConfigPagination(PageNumberPagination):
     max_page_size = 100
 
 
-class AgentConfigViewSet(viewsets.ModelViewSet):
-    queryset = AgentConfig.objects.order_by("name")
+class AgentConfigViewSet(AIConfigViewSet):
+    queryset = AgentConfig.objects.prefetch_related("use_groups").order_by("name")
     serializer_class = AgentConfigSerializer
-    permission_classes = (IsAuthenticated, DenyReadonlyUser, RbacModelPermissions)
     lookup_field = "name"
     pagination_class = AgentConfigPagination
 
@@ -56,6 +55,7 @@ class AgentConfigViewSet(viewsets.ModelViewSet):
             path=self.request.path, method=self.request.method,
             metadata={"resource": "agent", "id": instance.pk, "name": instance.name, "actor_id": self.request.user.pk,
                       "action": action, "enabled": instance.enabled,
+                      "use_group_ids": list(instance.use_groups.values_list("pk", flat=True)),
                       "max_iterations": instance.max_iterations, "max_delegations": instance.max_delegations},
         )
 
@@ -67,11 +67,9 @@ class AgentConfigViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError({"detail": f"At most {MAX_AGENT_CONFIGS} agents may be configured."})
         self._audit(serializer.save(), "create")
 
-    @transaction.atomic
     def perform_update(self, serializer):
         self._audit(serializer.save(), "update")
 
-    @transaction.atomic
     def perform_destroy(self, instance):
         self._audit(instance, "delete")
         instance.delete()
@@ -83,5 +81,5 @@ def agent_catalog(request):
     if is_user_readonly(request.user):
         return Response({"detail": "Readonly users cannot use the AI assistant."}, status=403)
     return Response(list(
-        AgentConfig.objects.filter(enabled=True).order_by("name").values("name", "title", "role")[:MAX_AGENT_CONFIGS]
+        allowed_tools(AgentConfig.objects.all(), request.user).order_by("name").values("name", "title", "role")[:MAX_AGENT_CONFIGS]
     ))

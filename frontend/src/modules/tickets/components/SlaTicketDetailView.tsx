@@ -4,7 +4,7 @@ import { Alert, Button, Card, Checkbox, Descriptions, Divider, Empty, Form, Inpu
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
 import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
-import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
+import { useAssistantPermissionPreview, useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
 import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
 import { warningsFromTrace } from '../../aiAssistant/chatState';
 import { fetchModelCatalog, type ModelCatalogEntry } from 'services/aiAssistant/models';
@@ -221,8 +221,12 @@ function WarRoomView({
     if (!onAddWorkLog) return;
     const text = (draft || '').trim();
     if (!text) return;
-    setDraft('');
-    await onAddWorkLog(text);
+    try {
+      await onAddWorkLog(text);
+      setDraft('');
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || 'Failed to add work log');
+    }
   };
 
   const onPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -413,6 +417,7 @@ function WarRoomView({
 }
 
 export default function SlaTicketDetailView(props: Props) {
+  const permissionPreview = useAssistantPermissionPreview();
   const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, onRefreshWorkLogs, loading } = props;
   const [showEmpty, setShowEmpty] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('incident');
@@ -431,6 +436,7 @@ export default function SlaTicketDetailView(props: Props) {
   const [aiModelsLoading, setAiModelsLoading] = useState(true);
   const [aiModelsError, setAiModelsError] = useState('');
   const aiModelsRequest = useRef<AbortController | null>(null);
+  const ticketGeneration = useRef(0);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
   const [chatWidthTouched, setChatWidthTouched] = useState(false);
@@ -471,6 +477,7 @@ export default function SlaTicketDetailView(props: Props) {
   const notesCount = workLogs?.length ?? 0;
 
   const loadAiModels = useCallback(async () => {
+    if (permissionPreview) return;
     aiModelsRequest.current?.abort();
     const controller = new AbortController();
     aiModelsRequest.current = controller;
@@ -491,7 +498,7 @@ export default function SlaTicketDetailView(props: Props) {
     } finally {
       if (!controller.signal.aborted) setAiModelsLoading(false);
     }
-  }, []);
+  }, [permissionPreview]);
 
   useEffect(() => {
     void loadAiModels();
@@ -501,6 +508,10 @@ export default function SlaTicketDetailView(props: Props) {
   const aiModelAvailable = aiModels.some((model) => model.id === aiModelId);
   const aiModelReady = aiModelAvailable && !aiModelsLoading && !aiModelsError;
   const requireAiModel = () => {
+    if (permissionPreview) {
+      message.warning('Exit permission preview to use ticket AI.');
+      return false;
+    }
     if (aiModelReady) return true;
     message.warning(aiModelsError || 'Choose an enabled model in AI Assistant > Models before using AI.');
     return false;
@@ -588,6 +599,10 @@ export default function SlaTicketDetailView(props: Props) {
     setChatHistoryLoading(false);
     setChatMoreLoading(false);
     setChatLoading(false);
+    return () => {
+      ticketGeneration.current++;
+      chatHistorySequence.current++;
+    };
   }, [ticket.ticket_number]);
 
   useEffect(() => {
@@ -732,7 +747,7 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   const runAiAssistant = async () => {
-    if (!requireAiModel()) return;
+    if (!props.onAddWorkLog || !requireAiModel()) return;
     setAiLoading(true);
     setAiError(null);
     try {
@@ -768,6 +783,7 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   const openChat = () => {
+    if (permissionPreview) return;
     const anchor = aiAssistantCardRef.current?.getBoundingClientRect();
     if (anchor) {
       const right = Math.max(12, window.innerWidth - anchor.right);
@@ -827,6 +843,7 @@ export default function SlaTicketDetailView(props: Props) {
   };
 
   const askAiByMention = async (prompt: string) => {
+    const generation = ticketGeneration.current;
     setAiLoading(true);
     setAiError(null);
     try {
@@ -841,6 +858,7 @@ export default function SlaTicketDetailView(props: Props) {
         related_logs: [],
       };
       const res = await generateSlaTicketAiMention(ticket.ticket_number, payload);
+      if (generation !== ticketGeneration.current) return;
       const observablesPayload = res?.observables;
       if (observablesPayload && typeof observablesPayload === 'object') {
         try {
@@ -872,6 +890,7 @@ export default function SlaTicketDetailView(props: Props) {
         }
       }
       const warnings = warningsFromTrace(res?.warnings);
+      if (generation !== ticketGeneration.current) return;
       await props.onAddWorkLog([`AI Reply (@ai):\n${reply}`, ...warnings.map((warning) => `AI Warning: ${warning}`)].join('\n\n'));
       setAiResult(null);
       setAiWarnings(warnings);
@@ -1735,7 +1754,8 @@ export default function SlaTicketDetailView(props: Props) {
                 ) : null}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
                   <Button>Attach</Button>
-                  <Button type="primary" onClick={sendComment} loading={commentSending} disabled={!commentDraft.trim() || commentSending}>
+                  <Button type="primary" onClick={sendComment} loading={commentSending}
+                    disabled={!commentDraft.trim() || commentSending || (!props.onAddWorkLog && !commentDraft.trimStart().toLowerCase().startsWith('@playbook'))}>
                     Send
                   </Button>
                 </div>
@@ -1751,16 +1771,16 @@ export default function SlaTicketDetailView(props: Props) {
                   <div className="soc-ai-assistant-subtitle">Alert interpretation and summary</div>
                 </div>
               </div>
-              <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+              {permissionPreview ? <Typography.Text type="secondary">Exit permission preview to use ticket AI.</Typography.Text> : <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
                 {aiModelSelector}
                 <Typography.Text type="secondary">Used for ticket analysis, chat and @AI. Changes apply to the next request.</Typography.Text>
-                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>
+                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!props.onAddWorkLog || !aiModelReady}>
                   Run AI Assistant
                 </Button>
                 <Button onClick={openChat}>
                   Chat
                 </Button>
-              </div>
+              </div>}
               {aiError ? (
                 <>
                   <Divider />

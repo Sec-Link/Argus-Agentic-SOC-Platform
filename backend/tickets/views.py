@@ -13,6 +13,7 @@ from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.services import is_user_readonly
 from alerts.models import Alert as AlertModel
 from detections.models import LocalDetectionRule
 from detections.sigma import ATTACK_TACTIC_MAP
@@ -35,6 +36,7 @@ from ai_assistant.external_tool_policy import saved_mcp_config
 from ai_assistant.usage_recording import model_usage_context
 from ai_assistant.models import TicketAIChatMessage
 from ai_assistant.skill_config import get_enabled_skill_configs
+from ai_assistant.skill_evidence import trace_skill_permissions
 from ai_assistant.serializers import AIAssistantRequestSerializer
 
 
@@ -84,11 +86,45 @@ def _build_mitre_tags_map(ticket_numbers: list[str]) -> dict[str, list[str]]:
     return result
 
 
+def _ticket_trace_permissions(trace):
+    if not isinstance(trace, list):
+        return set()
+    events = [event for event in trace if isinstance(event, dict) and isinstance(event.get("tool"), str)]
+    required = trace_skill_permissions(events)
+    failed = {
+        (event["tool"], event["execution_id"]) for event in events
+        if event.get("type") == "tool_result" and event.get("success") is False
+        and isinstance(event.get("execution_id"), str)
+    }
+    for event in events:
+        if event.get("type") == "tool_result" and event.get("success") is False:
+            continue
+        # Retain the protection on old attempts for which no outcome was recorded.
+        execution_id = event.get("execution_id")
+        if (event.get("type") == "tool_call" and isinstance(execution_id, str)
+                and (event["tool"], execution_id) in failed):
+            continue
+        required.update(event_permissions({"tool": event["tool"]}))
+    return required
+
+
 class EventTicketViewSet(viewsets.ModelViewSet):
     """API ViewSet for managing EventTicket model."""
 
     permission_classes = [IsAuthenticated]
     lookup_field = "ticket_number"
+
+    @staticmethod
+    def _can_add_worklog(user):
+        return user.has_perm("tickets.add_ticketworklog") and not is_user_readonly(user)
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        if self.action in {"timeline", "worklogs", "add_worklog"}:
+            if not request.user.has_perm("tickets.view_eventticket"):
+                raise PermissionDenied("Viewing ticket work logs requires ticket view permission.")
+            if self.action == "add_worklog" and not self._can_add_worklog(request.user):
+                raise PermissionDenied("You do not have permission to add ticket work logs.")
 
     @staticmethod
     def _parse_dt(value, end_of_day=False):
@@ -519,6 +555,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                     },
                 ],
                 "work_logs": serializer.data,
+                "can_add_worklog": self._can_add_worklog(request.user),
             }
         )
 
@@ -621,7 +658,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             overrides = {
                 **model_overrides,
                 "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
-                "skills": data.get("skills") or get_enabled_skill_configs(),
+                "skills": get_enabled_skill_configs(request.user, data.get("skills") or None),
             }
             overrides["_usage_context"] = model_usage_context(
                 request.user, source="ticket_analysis", overrides=overrides, agent_name="assistant",
@@ -633,7 +670,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
-                **({"model_call_guard": model_guard} if model_guard else {}),
+                user=request.user, model_call_guard=model_guard,
             )
             if model_guard:
                 model_guard()
@@ -740,15 +777,10 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             rows = rows.filter(created_by=actor)
             # A later answer may repeat earlier tool output, including evidence
             # outside this page. Check this owner's whole ticket history first.
-            if not all(actor.has_perm(permission) for permission in ("cmdb.view_asset", "ai_assistant.view_knowledgebaseitem")):
-                for trace in rows.order_by().values_list("trace", flat=True).iterator(chunk_size=200):
-                    if not isinstance(trace, list):
-                        continue
-                    required = set()
-                    for event in trace:
-                        if isinstance(event, dict) and isinstance(event.get("tool"), str):
-                            required.update(event_permissions({"tool": event["tool"]}))
-                    require_history_permissions(actor, required)
+            required = set()
+            for trace in rows.exclude(trace=[]).order_by().values_list("trace", flat=True).iterator(chunk_size=200):
+                required.update(_ticket_trace_permissions(trace))
+            require_history_permissions(actor, required)
         elif owner_id is not None:
             rows = rows.filter(created_by_id=owner_id)
         if before_dt:
@@ -773,7 +805,6 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             }
             for row in rows_display
         ]
-        from accounts.services import is_user_readonly
         if reviewing:
             from accounts.audit import AuditService, request_ip, request_user_agent
             from accounts.models import AuditLog
@@ -867,7 +898,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
             overrides = {
                 **model_overrides,
                 "mcp": saved_mcp_config(request.user, enabled=data.get("mcp_enabled") is not False),
-                "skills": data.get("skills") or get_enabled_skill_configs(),
+                "skills": get_enabled_skill_configs(request.user, data.get("skills") or None),
             }
             overrides["_usage_context"] = model_usage_context(
                 request.user, source="ticket_mention", overrides=overrides, agent_name="assistant",
@@ -879,7 +910,7 @@ class EventTicketViewSet(viewsets.ModelViewSet):
                 related_logs=data.get("related_logs", []),
                 user_prompt=data.get("prompt") or None,
                 overrides=overrides,
-                **({"model_call_guard": model_guard} if model_guard else {}),
+                user=request.user, model_call_guard=model_guard,
             )
             if model_guard:
                 model_guard()

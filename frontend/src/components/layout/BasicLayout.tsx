@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Layout, Card, ConfigProvider, theme as antdTheme } from 'antd';
+import { Layout, Card, ConfigProvider, message, theme as antdTheme } from 'antd';
 import { usePathname, useRouter } from 'next/navigation';
-import { clearAccessToken, getRbacMe } from 'services/accounts';
+import { getRbacMe, isCurrentBrowserSession, logout } from 'services/accounts';
 import { permissionByKey, resolveRouteKey, type RouteKey } from '../../route';
 import HeaderBar from './Header';
 import Sidebar from './Sidebar';
@@ -24,7 +24,6 @@ export default function BasicLayout({
 
   const [username, setUsername] = useState<string | null>(null);
   const [rbacMe, setRbacMe] = useState<any | null>(null);
-  const [effectivePermissions, setEffectivePermissions] = useState<string[]>([]);
 
   const [siderWidth, setSiderWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return 260;
@@ -120,13 +119,9 @@ export default function BasicLayout({
     loadMe();
   }, []);
 
-  useEffect(() => {
-    if (impersonation && Array.isArray(impersonation.permissions)) {
-      setEffectivePermissions(impersonation.permissions);
-    } else {
-      setEffectivePermissions(Array.isArray(rbacMe?.permissions) ? rbacMe.permissions : []);
-    }
-  }, [rbacMe, impersonation]);
+  const effectivePermissions: string[] = impersonation
+    ? (Array.isArray(impersonation.permissions) ? impersonation.permissions : [])
+    : (Array.isArray(rbacMe?.permissions) ? rbacMe.permissions : []);
 
   useEffect(() => {
     try {
@@ -180,9 +175,12 @@ export default function BasicLayout({
   }, [selectedKey]);
 
   const canAccess = (perm?: string, key?: RouteKey) => {
+    if (key === 'permissions') {
+      return !impersonation && Boolean(rbacMe?.is_staff || rbacMe?.is_superuser);
+    }
     if (key === 'ai-assistant') {
-      if (rbacMe?.is_readonly !== false) return false;
-      if (!impersonation && rbacMe?.is_superuser) return true;
+      if (impersonation || rbacMe?.is_readonly !== false) return false;
+      if (rbacMe?.is_superuser) return true;
       return [
         'ai_assistant.view_modelprofile',
         'ai_assistant.view_executionsettings',
@@ -250,18 +248,15 @@ export default function BasicLayout({
     if (!siderWidthCustomized) setSiderWidth(autoSiderWidth);
   }, [autoSiderWidth, siderWidthCustomized]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     try {
-      localStorage.removeItem('siem_access_token');
-      localStorage.removeItem('siem_username');
-      localStorage.removeItem('siem_impersonation');
-    } catch {}
-    clearAccessToken();
-    setUsername(null);
-    setImpersonation(null);
-    if (onLoggedOut) onLoggedOut();
-    router.push('/');
-    router.refresh();
+      await logout();
+    } catch {
+      if (isCurrentBrowserSession()) message.error('Could not confirm sign-out. Please try again.');
+      return;
+    }
+    onLoggedOut?.();
+    window.location.replace('/');
   };
 
   const handleToggleTheme = () => {
@@ -285,7 +280,9 @@ export default function BasicLayout({
 
   const renderDenied = () => (
     <Card title="Access denied">
-      <div>This view does not have permission to access this feature.</div>
+      <div>{impersonation && (selectedKey === 'permissions' || selectedKey === 'ai-assistant')
+        ? 'Exit the permission preview to open administration settings with your own account.'
+        : 'This view does not have permission to access this feature.'}</div>
     </Card>
   );
 
@@ -327,7 +324,7 @@ export default function BasicLayout({
 
   return (
     <ConfigProvider theme={antdThemeConfig}>
-      <AssistantPageContextProvider key={impersonation?.userId ?? 'current-user'} pathname={pathname}>
+      <AssistantPageContextProvider key={impersonation?.userId ?? 'current-user'} pathname={pathname} permissionPreview={!!impersonation}>
       <Layout
         className={uiTheme === 'dark' ? 'theme-dark' : 'theme-light'}
         style={{

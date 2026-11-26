@@ -1,10 +1,9 @@
 import re
 
-from django.contrib.auth.models import Group
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 from ai_assistant.models import ExternalMCPServer, SkillConfig
-from ai_assistant.tool_access import validate_use_groups
+from ai_assistant.tool_access import UseGroupSerializer
 
 
 class ModelSelectionSerializer(serializers.Serializer):
@@ -79,14 +78,11 @@ class AIChatRequestSerializer(ModelSelectionSerializer):
         return cleaned
 
 
-class ExternalMCPServerSerializer(serializers.ModelSerializer):
+class ExternalMCPServerSerializer(UseGroupSerializer):
     approval_policy_version = serializers.CharField(write_only=True, required=False, max_length=64)
     token = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=8192)
     clear_token = serializers.BooleanField(write_only=True, required=False, default=False)
     has_token = serializers.SerializerMethodField()
-    use_group_ids = serializers.PrimaryKeyRelatedField(
-        source="use_groups", queryset=Group.objects.all(), many=True, required=False,
-    )
 
     class Meta:
         model = ExternalMCPServer
@@ -101,7 +97,7 @@ class ExternalMCPServerSerializer(serializers.ModelSerializer):
             "enabled",
             "extra",
             "tool_approvals",
-            "use_group_ids",
+            "use_group_ids", "use_roles",
             "approval_policy_version",
             "created_at",
             "updated_at",
@@ -121,7 +117,7 @@ class ExternalMCPServerSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        user = validate_use_groups(self, attrs)
+        user = getattr(self.context.get("request"), "user", None)
         version = attrs.pop("approval_policy_version", None)
         clear = attrs.pop("clear_token", False)
         if clear and attrs.get("token"):
@@ -185,7 +181,7 @@ class ExternalMCPServerSerializer(serializers.ModelSerializer):
         return cleaned
 
 
-class SkillConfigSerializer(serializers.ModelSerializer):
+class SkillConfigSerializer(UseGroupSerializer):
     class Meta:
         model = SkillConfig
         fields = [
@@ -193,6 +189,7 @@ class SkillConfigSerializer(serializers.ModelSerializer):
             "name",
             "version",
             "route",
+            "use_group_ids", "use_roles",
             "enabled",
             "description",
             "created_at",

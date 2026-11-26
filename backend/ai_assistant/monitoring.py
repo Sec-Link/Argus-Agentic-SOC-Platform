@@ -14,6 +14,7 @@ def _detail_permissions(tool_name, context, arguments=None):
     required = event_permissions({
         "tool": tool_name, "arguments": arguments, "source": context.get("tool_source") or None,
     })
+    required.update(context.get("skill_permissions", ()))
     if context.get("source") in {"ticket_chat", "ticket_analysis", "ticket_mention"}:
         required.add("tickets.view_eventticket")
     if context.get("conversation_id"):
@@ -49,7 +50,8 @@ def start_mcp_execution(
     return str(exec_row.id)
 
 
-def finish_mcp_execution(exec_id: str, success: bool, error: str = "", *, response_payload: Any = None) -> None:
+def finish_mcp_execution(exec_id: str, success: bool, error: str = "", *, response_payload: Any = None,
+                         skill_permissions=()) -> None:
     if not exec_id:
         return
     now = timezone.now()
@@ -72,7 +74,7 @@ def finish_mcp_execution(exec_id: str, success: bool, error: str = "", *, respon
     else:
         row.response_detail = unavailable("unavailable")
     update_fields.append("response_detail")
-    row.detail_permissions = sorted(set(row.detail_permissions or []) | set(_detail_permissions(
+    row.detail_permissions = sorted(set(row.detail_permissions or []) | set(skill_permissions) | set(_detail_permissions(
         row.tool_name, {"conversation_id": row.conversation_id, "source": row.source,
                         "tool_source": row.tool_source}, row.arguments,
     )))

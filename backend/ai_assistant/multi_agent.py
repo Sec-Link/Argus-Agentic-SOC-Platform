@@ -8,28 +8,39 @@ from rest_framework.exceptions import ValidationError
 
 from .chat_agent import ChatCancelled, run_chat_agent
 from .chat_errors import event_progress, safe_chat_error
+from .conversation_history import current_actor
 from .model_client import ModelCallError
 from .models import AgentConfig
+from .tool_access import allowed_tools
 
 
 MAX_DELEGATIONS = 100
 MAX_RESULT_LENGTH = 12000
 
 
-def enabled_agents(names):
-    rows = list(AgentConfig.objects.filter(enabled=True).order_by("name")[:50])
+def enabled_agents(names, user):
+    rows = list(allowed_tools(AgentConfig.objects.all(), user).order_by("name")[:50])
     by_name = {row.name: row for row in rows}
     if names and any(name not in by_name for name in names):
         raise ValidationError({"agent_names": "A selected agent is unavailable. Refresh the agent list."})
     return [by_name[name] for name in names] if names else rows
 
 
-def check_agent(context):
-    if not AgentConfig.objects.filter(
-        pk=context["agent_config_id"], enabled=True,
+def check_agent(context, user):
+    actor = current_actor(user, write=True)
+    if not allowed_tools(AgentConfig.objects.all(), actor).filter(
+        pk=context["agent_config_id"],
         updated_at=context["agent_config_version"],
     ).exists():
         raise PermissionError("The agent configuration changed. Start a new message.")
+
+
+def check_result_agents(user, versions):
+    if versions:
+        rows = AgentConfig.objects.filter(pk__in=versions)
+        current = allowed_tools(rows, current_actor(user, write=True)).values_list("pk", "updated_at")
+        if dict(current) != versions:
+            raise PermissionError("Access to a specialist result changed. Start a new message.")
 
 
 def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, check_actor,
@@ -52,6 +63,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
     attempted = set()
     calls = 0
     calls_by_agent = {}
+    result_agents = {}
 
     def live():
         if cancel.is_set():
@@ -90,7 +102,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
 
         def guard():
             live()
-            check_agent(context)
+            check_agent(context, worker_kwargs["user"])
 
         def worker_event(event):
             nonlocal progress
@@ -122,6 +134,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
             )
             guard()
             response = clean(str(result.get("response") or ""))
+            result_agents[row.pk] = row.updated_at
             truncated = len(response) > MAX_RESULT_LENGTH
             response = response[:MAX_RESULT_LENGTH] + ("\n[Agent result truncated]" if truncated else "")
             exhausted = any(event.get("type") == "max_iterations" for event in result.get("trace", []))
@@ -162,6 +175,7 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
     def coordinator_guard():
         nonlocal coordinator_iteration
         live()
+        check_result_agents(worker_kwargs["user"], result_agents)
         coordinator_iteration += 1
         if coordinator_iteration >= coordinator_budget:
             if set(selected_names) - attempted:
@@ -220,4 +234,5 @@ def run_multi_agent(*, agents, selected_names, worker_kwargs, policy_factory, ch
     )
     if set(selected_names) - attempted:
         raise RuntimeError("Selected agents were not dispatched within the model budget.")
+    check_result_agents(worker_kwargs["user"], result_agents)
     return result

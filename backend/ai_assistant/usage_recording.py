@@ -76,7 +76,7 @@ def model_usage_context(user, *, source, overrides=None, request_id=None, conver
     context.update(
         actor_id=user.pk, actor_label=user.get_username()[:150], source=source,
         request_id=request_id or str(uuid4()), conversation_id=conversation_id,
-        agent_name=agent_name,
+        agent_name=agent_name, skill_permissions=set(),
     )
     return context
 
@@ -202,6 +202,7 @@ class ModelUsageRecorder(BaseCallbackHandler):
 
     def __init__(self, context, *, require_reported=False, secrets=()):
         self.context = {key: value for key, value in context.items() if key in CONTEXT_FIELDS}
+        self.skill_permissions = context.get("skill_permissions", set())
         self.started = {}
         self.response_usage = {}
         self.permissions = {}
@@ -209,18 +210,20 @@ class ModelUsageRecorder(BaseCallbackHandler):
         self.secrets = tuple(secret for secret in secrets if isinstance(secret, str) and secret)
         self.active = local()
 
-    def _conversation_permissions(self):
+    def _evidence_permissions(self):
+        permissions = self.skill_permissions.copy()
         conversation_id = self.context.get("conversation_id")
-        if not conversation_id:
-            return set()
-        required = PageChatConversation.objects.filter(pk=conversation_id).values_list("required_permissions", flat=True).first()
-        return {permission for permission in required if isinstance(permission, str)} if isinstance(required, list) else set()
+        if conversation_id:
+            required = PageChatConversation.objects.filter(pk=conversation_id).values_list("required_permissions", flat=True).first()
+            if isinstance(required, list):
+                permissions.update(value for value in required if isinstance(value, str))
+        return permissions
 
     def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs):
         from .call_details import unavailable
 
         # This runs after authorization guards and before the actual model request.
-        permissions = self._conversation_permissions() | set(request_permissions({}, source=self.context.get("source", "")))
+        permissions = self._evidence_permissions() | set(request_permissions({}, source=self.context.get("source", "")))
         ModelUsage.objects.create(
             id=run_id, **self.context, request_detail=unavailable("not_executed"), response_detail=unavailable("pending"),
             detail_permissions=sorted(permissions),
@@ -235,7 +238,7 @@ class ModelUsageRecorder(BaseCallbackHandler):
         run_id = getattr(self.active, "run_id", None)
         if run_id not in self.started or not isinstance(payload, dict):
             return
-        permissions = self.permissions[run_id] | self._conversation_permissions() | set(
+        permissions = self.permissions[run_id] | self._evidence_permissions() | set(
             request_permissions(payload, source=self.context.get("source", ""))
         )
         ModelUsage.objects.filter(pk=run_id, status="running").update(
@@ -258,7 +261,7 @@ class ModelUsageRecorder(BaseCallbackHandler):
         started = self.started.pop(run_id, None)
         if started is None:
             return
-        permissions = self.permissions.pop(run_id, set()) | self._conversation_permissions()
+        permissions = self.permissions.pop(run_id, set()) | self._evidence_permissions()
         counts = self.response_usage.pop(run_id, None) or token_counts(response, require_reported=self.require_reported)
         generations = getattr(response, "generations", None) or []
         message = getattr(generations[0][0], "message", None) if generations and generations[0] else None

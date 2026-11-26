@@ -29,7 +29,7 @@ export const permissionByKey: Record<RouteKey, string | undefined> = {
   interfaces: 'workflow_interfaces.view_interfaceendpoint',
   correlation: 'correlation.view_correlationpolicy',
   detection: 'integrations.view_integration',
-  permissions: 'accounts.view_user',
+  permissions: undefined, // Access Management uses the server's staff/superuser flags.
   'registration-approvals': 'accounts.view_user',
   'audit-logs': 'accounts.view_user',
   'system-settings': 'accounts.view_user',

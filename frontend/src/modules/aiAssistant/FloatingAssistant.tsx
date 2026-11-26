@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, App, Button, Checkbox, Input, Mentions, Select, Spin, Tag, Typography, theme } from 'antd';
+import { Alert, Button, Checkbox, Input, Mentions, Modal, Select, Spin, Tag, Typography, theme } from 'antd';
 import type { MentionsRef } from 'antd/es/mentions';
 import { ArrowLeft, Bot, History, Maximize2, Minimize2, Pencil, Plus, RefreshCw, Send, Square, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -23,7 +23,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
   onDockChange: (docked: boolean) => void;
 }) {
   const { token } = theme.useToken();
-  const { modal } = App.useApp();
+  const [modal, modalHolder] = Modal.useModal();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<HistoryMessage[]>([]);
   const [conversation, setConversation] = useState<ConversationSummary | null>(null);
@@ -391,6 +391,7 @@ export default function FloatingAssistant({ pathname, readonly = false, docked, 
 
   return (
     <div data-ai-context-exclude className={docked ? styles.dockedRoot : undefined}>
+      {modalHolder}
       {open && (
         <section
           id="argus-ai-chat"

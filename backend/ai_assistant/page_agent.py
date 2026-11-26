@@ -33,6 +33,7 @@ from ai_assistant.models import ExternalMCPServer, HttpToolConfig, MCPToolExecut
 from ai_assistant.http_tool_crypto import decrypt_http_tool_secret
 from ai_assistant.http_tools import HttpToolError, build_tool_request, execute_http_tool, tool_input_schema
 from ai_assistant.skill_config import get_enabled_skill_names
+from ai_assistant.skill_tools import require_loaded_skills
 from ai_assistant.multi_agent import check_agent, enabled_agents, run_multi_agent
 from ai_assistant.conversation_history import ConversationConflict, ConversationLimit, start_conversation_turn
 from ai_assistant.execution_settings import get_execution_limits
@@ -198,9 +199,9 @@ class PageToolPolicy:
         self.deadline = deadline
         self.execution_guard = execution_guard
 
-    def _check_agent(self):
+    def _check_agent(self, user):
         if self.agent_context:
-            check_agent(self.agent_context)
+            check_agent(self.agent_context, user)
 
     def _server_enabled(self, meta):
         server = self.servers.get(meta.get("server_id"))
@@ -223,7 +224,7 @@ class PageToolPolicy:
             source="page_chat", response_payload={"_page_chat": audit},
         )
         user = _actor(self.user_id)
-        self._check_agent()
+        self._check_agent(user)
         if self.execution_guard:
             self.execution_guard()
         if not endpoint:
@@ -297,7 +298,7 @@ class PageToolPolicy:
                 raise PermissionError("Tool approval expired; the tool was not executed.")
             if row.status == "approved":
                 user = _actor(self.user_id)
-                self._check_agent()
+                self._check_agent(user)
                 if self.execution_guard:
                     self.execution_guard()
                 if meta.get("source") == "http":
@@ -357,7 +358,7 @@ def stream_page_chat(user, data):
     # Snapshot server policy once. Settings changes apply to the next message.
     limits = get_execution_limits()
     selected_names = data.get("agent_names", [])
-    agents = enabled_agents(selected_names)
+    agents = enabled_agents(selected_names, user)
     if len(selected_names) > limits.max_delegations:
         raise serializers.ValidationError({
             "agent_names": "Selected agents exceed the total delegation limit in Execution limits settings.",
@@ -368,7 +369,8 @@ def stream_page_chat(user, data):
         })
     mcp = saved_mcp_config(user, approval_supported=True)
     servers_by_id = {server["id"]: server for server in mcp["servers"]}
-    skills = get_enabled_skill_names()
+    skills = get_enabled_skill_names(user)
+    loaded_skills = []
     overrides, model_snapshot, model_guard = resolve_model_profile(user, data["model_profile_id"])
     overrides["max_iterations"] = limits.max_iterations
     overrides["mcp"] = mcp
@@ -469,6 +471,7 @@ def stream_page_chat(user, data):
         return {"type": "error", **context, **safe_chat_error(exc)}
 
     def check_actor():
+        require_loaded_skills(user, loaded_skills)
         if model_guard:
             model_guard()
         if recorder:
@@ -483,6 +486,7 @@ def stream_page_chat(user, data):
         try:
             tools = [*_builtin_tools(), *_http_tools(cancelled, _actor(user.pk))]
             worker_kwargs = dict(
+                user=user, loaded_skills=loaded_skills,
                 user_input=data["message"], history_messages=history, overrides=overrides,
                 recommended_skills=skills, allowed_skills=skills,
                 extra_tools=tools,
@@ -510,6 +514,7 @@ def stream_page_chat(user, data):
                 )
             else:
                 result = run_chat_agent(**worker_kwargs)
+            require_loaded_skills(user, loaded_skills)
             if any(event.get("type") == "max_iterations" for event in result.get("trace", [])):
                 raise ModelCallError("The model round budget was exhausted", code="iteration_limit")
             emit({"type": "done", "response": result.get("response", "")})

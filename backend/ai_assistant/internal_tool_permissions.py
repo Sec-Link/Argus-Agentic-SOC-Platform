@@ -1,6 +1,7 @@
 """Resource permissions shared by internal tool entry points."""
 
 from ai_assistant.models import SkillConfig
+from ai_assistant.tool_access import allowed_tools
 
 
 def _check_internal(user, name, arguments):
@@ -13,5 +14,7 @@ def _check_internal(user, name, arguments):
         required.append("ai_assistant.view_knowledgebaseitem")
     if not all(user.has_perm(perm) for perm in required):
         raise PermissionError("Your account does not have permission to read this resource.")
-    if name == "read_skill" and not SkillConfig.objects.filter(name=arguments.get("skill_name"), enabled=True).exists():
-        raise PermissionError("This skill is no longer enabled.")
+    if name == "read_skill" and not allowed_tools(SkillConfig.objects.all(), user).filter(
+        name=arguments.get("skill_name"),
+    ).exists():
+        raise PermissionError("This skill is unavailable to your account.")

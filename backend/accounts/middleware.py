@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.http import JsonResponse
 
-from .audit import AuditService
+from .audit import AuditService, omit_audit_params
 from .models import AuditLog
 from .services import is_user_readonly, should_deny_write_for_readonly_user
 
@@ -33,18 +33,12 @@ def _is_guest(user) -> bool:
 
 def _summarize(request) -> dict:
     # Audit actions without storing page snapshots, agent prompts or credentials.
-    path = (request.path or "").rstrip("/")
-    if path == "/api/v1/ai-assistant/page-chat" or any(
-        path == prefix or path.startswith(prefix + "/")
-        for prefix in (
-            "/api/v1/ai-assistant/http-tools", "/api/v1/ai-assistant/agents", "/api/v1/ai-assistant/conversations",
-            "/api/v1/ai-assistant/models", "/api/v1/ai-assistant/external-mcp",
-            "/api/v1/ai-assistant/skills",
-        )
-    ):
+    path = request.path or ""
+    if omit_audit_params(path):
         return {}
     if request.method == "GET":
-        return {k: v[:200] for k, v in request.GET.items()}
+        params = {k: v[:200] for k, v in request.GET.items()}
+        return {} if omit_audit_params(path, params) else params
     try:
         body = getattr(request, "_audit_body", None)
         if body is None and request.body:
@@ -52,6 +46,8 @@ def _summarize(request) -> dict:
             try: body = json.loads(request.body.decode("utf-8"))
             except Exception: body = None
         data = body if isinstance(body, dict) else dict(getattr(request, "POST", {}) or {})
+        if omit_audit_params(path, data):
+            return {}
         def sanitize(value, key=""):
             if any(secret in key.lower() for secret in ("password", "otp", "token", "secret", "authorization")):
                 return "[REDACTED]"

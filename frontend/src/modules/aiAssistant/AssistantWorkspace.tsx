@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import FloatingAssistant from './FloatingAssistant';
+import { useAssistantPermissionPreview } from './AssistantPageContext';
 import { clampChatWidth, MIN_CHAT_WIDTH, MIN_PAGE_WIDTH, SPLIT_HANDLE_WIDTH } from './assistantSplit';
 import styles from './AssistantWorkspace.module.css';
 
@@ -11,13 +12,14 @@ export default function AssistantWorkspace({ children, pathname, readonly }: {
   readonly?: boolean;
 }) {
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const permissionPreview = useAssistantPermissionPreview();
   const dragRef = useRef<{ pointerId: number; startX: number; width: number } | null>(null);
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [chatRatio, setChatRatio] = useState(0.4);
   const [expanded, setExpanded] = useState(false);
   const [resizing, setResizing] = useState(false);
   const chatWidth = clampChatWidth(workspaceWidth, (workspaceWidth - SPLIT_HANDLE_WIDTH) * chatRatio);
-  const docked = expanded && chatWidth !== null;
+  const docked = !permissionPreview && expanded && chatWidth !== null;
 
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -93,9 +95,9 @@ export default function AssistantWorkspace({ children, pathname, readonly }: {
           }}
         />
       )}
-      <div className={docked ? styles.dock : undefined} style={docked ? { width: chatWidth } : undefined}>
+      {!permissionPreview && <div className={docked ? styles.dock : undefined} style={docked ? { width: chatWidth } : undefined}>
         <FloatingAssistant pathname={pathname} readonly={readonly} docked={docked} canDock={chatWidth !== null} onDockChange={setExpanded} />
-      </div>
+      </div>}
     </div>
   );
 }

@@ -21,7 +21,8 @@ from ai_assistant.mcp_gateway import (
 from ai_assistant.mcp_tools import load_mcp_tools
 from ai_assistant.monitoring import start_mcp_execution, finish_mcp_execution
 from ai_assistant.skills import apply_local_skills
-from ai_assistant.skill_config import normalize_skill_names
+from ai_assistant.conversation_history import current_actor
+from ai_assistant.skill_config import get_enabled_skill_configs, normalize_skill_names
 from ai_assistant.skill_tools import SkillsMiddleware
 from tickets.models import EventTicket, TicketWorkLog
 
@@ -604,6 +605,7 @@ def generate_ai_assistant_output(
     overrides: Dict[str, Any] | None = None,
     *,
     model_call_guard=None,
+    user=None,
 ) -> Dict[str, Any]:
     if model_call_guard:
         model_call_guard()
@@ -704,7 +706,7 @@ def generate_ai_assistant_output(
             "and do not claim results from unavailable tools."
         )
     enabled_skills = (overrides or {}).get("skills") if isinstance((overrides or {}).get("skills"), list) else []
-    skill_middleware = SkillsMiddleware(allowed_skills=normalize_skill_names(enabled_skills)) if enabled_skills else None
+    skill_middleware = SkillsMiddleware(allowed_skills=normalize_skill_names(enabled_skills), user=user) if enabled_skills else None
     skill_options = {"skill_middleware": skill_middleware} if skill_middleware else {}
     if model_call_guard:
         skill_options["model_call_guard"] = model_call_guard
@@ -722,7 +724,7 @@ def generate_ai_assistant_output(
         assistant=parsed,
         ticket=ticket,
         timeline=timeline,
-        skills=(overrides or {}).get("skills"),
+        skills=get_enabled_skill_configs(current_actor(user, write=True), enabled_skills) if user and enabled_skills else [],
     )
     normalized_assistant, field_sources = _normalize_ai_assistant(parsed, ticket=ticket, raw_text=text)
 

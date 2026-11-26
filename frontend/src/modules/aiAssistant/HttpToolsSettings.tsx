@@ -4,6 +4,8 @@ import { createAiAssistantHttpTool, deleteAiAssistantHttpTool, listAiAssistantHt
 import { buildHttpToolPayload, parseToolTemplate, type HttpToolFormValues } from './httpToolForm';
 import type { ToolAccessRole } from '../../api';
 
+import { allowedRoleNames, changedRoleFields, type ConfigActions } from './UseRolesField';
+
 const emptyForm: HttpToolFormValues = {
   name: '', description: '', enabled: false, requires_approval: true, method: 'GET', url: '', parameters: [],
   query_json: '{}', body_json: '', auth_type: 'none', auth_header: '', auth_prefix: '',
@@ -26,8 +28,9 @@ function errorMessage(error: any, fallback: string): string {
   return fallback;
 }
 
-export default function HttpToolsSettings({ readonly = false, roles, canManageAccess, canDisableApproval }: {
+export default function HttpToolsSettings({ readonly = false, actions, roles, canManageAccess, canDisableApproval }: {
   readonly?: boolean;
+  actions: ConfigActions;
   roles: ToolAccessRole[];
   canManageAccess: boolean;
   canDisableApproval: boolean;
@@ -72,7 +75,7 @@ export default function HttpToolsSettings({ readonly = false, roles, canManageAc
   }, [loadTools]);
 
   const editTool = (row?: HttpToolConfig) => {
-    if (readonly) return;
+    if (readonly || !(row ? actions.change : actions.add)) return;
     setEditing(row || null);
     setSaveError('');
     form.resetFields();
@@ -89,9 +92,12 @@ export default function HttpToolsSettings({ readonly = false, roles, canManageAc
   const closeModal = () => { setOpen(false); form.resetFields(); setSaveError(''); };
 
   const saveTool = async (values: HttpToolFormValues) => {
-    if (readonly || saving) return;
+    if (readonly || saving || !(editing ? actions.change : actions.add)) return;
     let payload;
-    try { payload = buildHttpToolPayload(values, { canManageAccess, canDisableApproval }); }
+    try {
+      const fields = changedRoleFields(canManageAccess, values.use_group_ids, editing?.use_group_ids);
+      payload = buildHttpToolPayload(values, { canManageAccess: 'use_group_ids' in fields, canDisableApproval });
+    }
     catch (error) { setSaveError(error instanceof Error ? error.message : 'Check the request templates.'); return; }
     setSaving(true);
     setSaveError('');
@@ -106,6 +112,7 @@ export default function HttpToolsSettings({ readonly = false, roles, canManageAc
   };
 
   const toggleTool = async (row: HttpToolConfig, enabled: boolean) => {
+    if (readonly || !actions.change || busyName) return;
     setBusyName(row.name);
     try { await updateAiAssistantHttpTool(row.name, { enabled }); await loadTools(); }
     catch (error) { message.error(errorMessage(error, 'Failed to update the tool.')); }
@@ -113,6 +120,7 @@ export default function HttpToolsSettings({ readonly = false, roles, canManageAc
   };
 
   const deleteTool = async (row: HttpToolConfig) => {
+    if (readonly || !actions.remove || busyName) return;
     setBusyName(row.name);
     try {
       await deleteAiAssistantHttpTool(row.name);
@@ -128,7 +136,7 @@ export default function HttpToolsSettings({ readonly = false, roles, canManageAc
       {contextHolder}
       <Card title="HTTP Tools" extra={<Space wrap>
         <Button onClick={() => void loadTools()} loading={loading}>Refresh</Button>
-        {!readonly && <Button type="primary" onClick={() => editTool()}>Add tool</Button>}
+        {!readonly && actions.add && <Button type="primary" onClick={() => editTool()}>Add tool</Button>}
       </Space>}>
         <Typography.Paragraph type="secondary">
           Configure external APIs for the page assistant. Only users in the allowed roles can provide these tools to AI and approve their own calls. Superusers can use all tools and turn approval off. Changes by other users restore required approval.
@@ -144,9 +152,9 @@ export default function HttpToolsSettings({ readonly = false, roles, canManageAc
             { title: 'Request', width: 260, render: (_, row) => <><Tag>{row.method}</Tag><Typography.Text style={{ wordBreak: 'break-all' }}>{row.url}</Typography.Text></> },
             { title: 'Authentication', width: 130, render: (_, row) => row.auth_type === 'none' ? 'None' : <><div>{row.auth_type === 'bearer' ? 'Bearer' : row.auth_header}</div><Typography.Text type={row.has_auth_secret ? 'secondary' : 'warning'}>{row.has_auth_secret ? 'Secret saved' : 'No secret'}</Typography.Text></> },
             { title: 'Approval', width: 120, render: (_, row) => <Tag color={row.requires_approval === false ? 'orange' : 'blue'}>{row.requires_approval === false ? 'Automatic' : 'Required'}</Tag> },
-            { title: 'Allowed roles', width: 180, render: (_, row) => row.use_group_ids?.length ? row.use_group_ids.map((id) => <Tag key={id}>{roles.find((role) => role.id === id)?.name || `Role #${id}`}</Tag>) : 'Superusers only' },
-            { title: 'Enabled', width: 80, render: (_, row) => <Switch size="small" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={readonly || !!busyName} loading={busyName === row.name} onChange={(enabled) => void toggleTool(row, enabled)} /> },
-            { title: 'Actions', width: 130, render: (_, row) => <Space><Button size="small" disabled={readonly || !!busyName} onClick={() => editTool(row)}>Edit</Button><Popconfirm title={`Delete ${row.name}?`} description="The assistant will no longer be able to use this tool." onConfirm={() => deleteTool(row)} okText="Delete" okButtonProps={{ danger: true }}><Button size="small" danger disabled={readonly || !!busyName}>Delete</Button></Popconfirm></Space> },
+            { title: 'Allowed roles', width: 180, render: (_, row) => allowedRoleNames(row, roles) },
+            { title: 'Enabled', width: 80, render: (_, row) => <Switch size="small" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={readonly || !actions.change || !!busyName} loading={busyName === row.name} onChange={(enabled) => void toggleTool(row, enabled)} /> },
+            { title: 'Actions', width: 130, render: (_, row) => <Space><Button size="small" disabled={readonly || !actions.change || !!busyName} onClick={() => editTool(row)}>Edit</Button><Popconfirm title={`Delete ${row.name}?`} description="The assistant will no longer be able to use this tool." onConfirm={() => deleteTool(row)} okText="Delete" okButtonProps={{ danger: true }}><Button size="small" danger disabled={readonly || !actions.remove || !!busyName}>Delete</Button></Popconfirm></Space> },
           ]}
         />
       </Card>

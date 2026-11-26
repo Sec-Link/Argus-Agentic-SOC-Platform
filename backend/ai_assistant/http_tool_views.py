@@ -2,37 +2,31 @@
 
 import re
 
-from django.contrib.auth.models import Group
 from django.db import transaction
-from rest_framework import serializers, viewsets
+from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAuthenticated
 
 from accounts.audit import AuditService, request_ip, request_user_agent
 from accounts.models import AuditLog
-from accounts.permissions import DenyReadonlyUser, RbacModelPermissions
 from .http_tool_crypto import encrypt_http_tool_secret
 from .http_tools import validate_tool_config
 from .models import HttpToolConfig
-from .tool_access import validate_use_groups
+from .tool_access import AIConfigViewSet, UseGroupSerializer
 
 
-class HttpToolSerializer(serializers.ModelSerializer):
+class HttpToolSerializer(UseGroupSerializer):
     auth_secret = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=8192, trim_whitespace=False)
     clear_auth_secret = serializers.BooleanField(write_only=True, required=False, default=False)
     has_auth_secret = serializers.SerializerMethodField()
     auth_prefix = serializers.CharField(required=False, allow_blank=True, max_length=40, trim_whitespace=False)
-    use_group_ids = serializers.PrimaryKeyRelatedField(
-        source="use_groups", queryset=Group.objects.all(), many=True, required=False,
-    )
 
     class Meta:
         model = HttpToolConfig
         fields = (
             "id", "name", "description", "enabled", "method", "url", "parameters", "query_params",
             "body_template", "auth_type", "auth_header", "auth_prefix", "auth_secret", "clear_auth_secret",
-            "has_auth_secret", "timeout_seconds", "requires_approval", "use_group_ids", "created_at", "updated_at",
+            "has_auth_secret", "timeout_seconds", "requires_approval", "use_group_ids", "use_roles", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
 
@@ -45,7 +39,7 @@ class HttpToolSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        user = validate_use_groups(self, attrs)
+        user = getattr(self.context.get("request"), "user", None)
         if not user or not user.is_superuser:
             if attrs.get("requires_approval") is False:
                 raise PermissionDenied("Only a superuser can disable tool approval.")
@@ -104,10 +98,9 @@ class HttpToolPagination(PageNumberPagination):
     max_page_size = 200
 
 
-class HttpToolViewSet(viewsets.ModelViewSet):
+class HttpToolViewSet(AIConfigViewSet):
     queryset = HttpToolConfig.objects.prefetch_related("use_groups").order_by("name")
     serializer_class = HttpToolSerializer
-    permission_classes = (IsAuthenticated, DenyReadonlyUser, RbacModelPermissions)
     lookup_field = "name"
     pagination_class = HttpToolPagination
 
@@ -128,11 +121,9 @@ class HttpToolViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         self._audit(serializer.save(), "create")
 
-    @transaction.atomic
     def perform_update(self, serializer):
         self._audit(serializer.save(), "update")
 
-    @transaction.atomic
     def perform_destroy(self, instance):
         self._audit(instance, "delete")
         instance.delete()
