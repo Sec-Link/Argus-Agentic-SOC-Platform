@@ -75,9 +75,9 @@ class ModelProfileSerializer(serializers.ModelSerializer):
         for field in ("send_temperature", "streaming_enabled"):
             if field in data and type(data[field]) is not bool:
                 raise serializers.ValidationError({field: "Use true or false."})
-        if "temperature" in data and (type(data["temperature"]) not in (int, float)
+        if "temperature" in data and data["temperature"] is not None and (type(data["temperature"]) not in (int, float)
                                       or not 0 <= data["temperature"] <= 2):
-            raise serializers.ValidationError({"temperature": "Enter a number from 0 to 2."})
+            raise serializers.ValidationError({"temperature": "Enter a number from 0 to 2, or leave it blank."})
         return super().to_internal_value(data)
 
     def validate_base_url(self, value):

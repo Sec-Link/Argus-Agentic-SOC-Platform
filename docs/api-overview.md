@@ -83,6 +83,42 @@ Invalid Token headers return 401 before the view runs, except for DRF views expl
 | Status update | `/api/v1/tickets/{ticket_number}/update_status/` | POST | Update ticket status | `backend/tickets/views.py` |
 | Resolve | `/api/v1/tickets/{ticket_number}/resolve/` | POST | Resolve a ticket | `backend/tickets/views.py` |
 
+### Ticket investigation result contracts
+
+Ticket investigation sessions expose structured `runs[].result`, `runs[].synthesis`,
+and session-level `findings` in addition to the existing transcript. Apply
+`ai_assistant.0023_investigation_result_contracts` before deploying this code.
+Ticket API creation prepares the owner's Main/Planner/Reviewer/Reporter/Explainer
+runs without invoking a model. Starting investigation remains explicit.
+
+Workers settle as `completed` (answered with saved evidence receipts), `blocked`
+(unavailable evidence/execution error), or `exhausted` (budget). Planner must
+consume each exact result version before dispatching further work or deciding
+`continue_investigation`, `wait_for_input`, or `final_report`. Repeated normalized
+question/source/method assignments are rejected. Session records are read
+directly from PostgreSQL; knowledge-base/embedding availability is unrelated.
+
+Final reporting requires current independent Reviewer approval, followed by
+Finding Explainer and Reporter. These stages have session-record readers only.
+Approval/report fingerprints become stale when the saved evidence, goals, Worker
+results or synthesis changes. `findings` contains only Planner-accepted claims
+with successful evidence-receipt references; dialogue and blocked work are not
+Findings. A limited report may remain indeterminate and does not close the ticket.
+Planner task creation can also save a `synthesis.plan` row: priority, capability,
+reason, start condition, intended Artifacts, expected output and round number.
+These are planning declarations, not execution evidence. Worker settlement and
+Planner result consumption preserve these fields. Historical tasks without this
+metadata are displayed as unrecorded rather than assigned invented values.
+Exploration Graph keeps the full graph visible while a node selection highlights
+its transitive upstream and downstream paths independently. Shared ancestors do
+not cause sibling branches to be highlighted. Type selections highlight only
+matching nodes; selecting again or using Show all clears the highlight. Details
+open separately, and Finding support edges use exact saved receipt references.
+Historical sessions are retained without fabricated structured outcomes; resume
+or create a new session to obtain the new contracts. The existing in-process
+executor is unchanged: process restarts require an explicit resume from saved
+state; this change does not provide a distributed durable job queue.
+
 ### CMDB
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |

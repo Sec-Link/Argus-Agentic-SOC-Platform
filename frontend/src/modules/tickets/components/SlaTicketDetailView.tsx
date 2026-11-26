@@ -1,12 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
-import { Alert, Button, Card, Checkbox, Descriptions, Divider, Empty, Form, Input, List, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Descriptions, Divider, Empty, Form, Input, List, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Bot, Clock3, ListChecks, MessageCircleQuestion, Plus, ShieldCheck, Wrench } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import type { SlaTicketAttachment, SlaTicketDetail, SlaTicketHandleLog, SlaTicketLabel, SlaTicketWorkLog } from 'types';
-import { aiAssistantChat, clearSlaTicketAiChatHistory, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, toggleSlaTicketPending, updateSlaTicket } from 'services/tickets';
+import { aiAssistantChat, askTicketInvestigationSideQuestion, cancelTicketInvestigationSideQuestion, clearSlaTicketAiChatHistory, clearTicketInvestigationSideQuestions, controlTicketInvestigationRun, createTicketInvestigation, fetchSlaTicketAiChatHistory, fetchSlaTicketHandleLogs, fetchSlaTicketFieldChoices, fetchTicketCallablePlaybooks, fetchTicketInvestigation, fetchTicketInvestigationSideQuestions, fetchTicketInvestigations, fetchTicketPlaybookWorkplan, generateSlaTicketAiAssistant, generateSlaTicketAiMention, invokeTicketCallablePlaybook, resolveSlaTicket, sendTicketInvestigationMessage, sendTicketInvestigationWorkerFeedback, toggleSlaTicketPending, type TicketInvestigationRun, type TicketInvestigationSession, type TicketInvestigationSideConversation, updateSlaTicket } from 'services/tickets';
+import TicketInvestigationGraph from './TicketInvestigationGraph';
+import TicketPlannerOutline from './TicketPlannerOutline';
+import { TicketSessionMessage, TicketSessionNavigation, TicketSessionSender } from './TicketSessionChat';
+import { TicketInvestigationEvents, TicketInvestigationTools } from './TicketInvestigationTools';
 import { useRegisterAssistantContext } from '../../aiAssistant/AssistantPageContext';
 import { chatModelRequest, initialModelChoice, MODEL_PREFERENCE_KEY } from '../../aiAssistant/chatModel';
 import { warningsFromTrace } from '../../aiAssistant/chatState';
+import { fetchAlerts } from 'services/alerts';
 import { fetchModelCatalog, type ModelCatalogEntry } from 'services/aiAssistant/models';
 import { buildTicketDetailContext } from '../aiContext';
 import { canContinueTicketChat, ticketChatHistoryForApi, type TicketChatCapabilities, type TicketChatScope } from '../ticketChatHistory';
@@ -25,6 +31,7 @@ type Props = {
   onUploadWorkLogImage?: (file: File) => Promise<SlaTicketAttachment>;
   onRefresh: () => void;
   onRefreshWorkLogs?: () => void | Promise<void>;
+  onBackToList: () => void;
   loading?: boolean;
 };
 
@@ -413,9 +420,14 @@ function WarRoomView({
 }
 
 export default function SlaTicketDetailView(props: Props) {
-  const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, onRefreshWorkLogs, loading } = props;
+  const { ticket, attachments, workLogs, statusValue, notesValue, onStatusChange, onNotesChange, onSubmitStatus, onRefresh, onRefreshWorkLogs, onBackToList, loading } = props;
   const [showEmpty, setShowEmpty] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('incident');
+  const [assistantInnerTab, setAssistantInnerTab] = useState<string>('sessions');
+  const [relatedAlerts, setRelatedAlerts] = useState<any[]>([]);
+  const [relatedAlertsLoading, setRelatedAlertsLoading] = useState(false);
+  const [relatedAlertsLoaded, setRelatedAlertsLoaded] = useState(false);
+  const [relatedAlertsError, setRelatedAlertsError] = useState('');
   const [incidentTab, setIncidentTab] = useState<string>('timeline');
   const [isPending, setIsPending] = useState(false);
   const [pendingLoading, setPendingLoading] = useState(false);
@@ -434,8 +446,22 @@ export default function SlaTicketDetailView(props: Props) {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSize, setChatSize] = useState({ width: 320, height: 440, right: 12, top: 88 });
   const [chatWidthTouched, setChatWidthTouched] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; trace?: any[]; owner?: string }>>([]);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string; hidden?: boolean; trace?: any[]; owner?: string; created_at?: string }>>([]);
   const [chatInput, setChatInput] = useState('');
+  const [investigationSessions, setInvestigationSessions] = useState<TicketInvestigationSession[]>([]);
+  const [activeInvestigation, setActiveInvestigation] = useState<TicketInvestigationSession | null>(null);
+  const [activeInvestigationRunId, setActiveInvestigationRunId] = useState('');
+  const [investigationPane, setInvestigationPane] = useState<'run' | 'organization' | 'goals' | 'runtime'>('run');
+  const [plannerView, setPlannerView] = useState<'plan' | 'history'>('plan');
+  const [investigationLoading, setInvestigationLoading] = useState(false);
+  const [investigationSending, setInvestigationSending] = useState(false);
+  const [investigationError, setInvestigationError] = useState('');
+  const [investigationDraft, setInvestigationDraft] = useState('');
+  const [sideQuestionOpen, setSideQuestionOpen] = useState(false);
+  const [sideConversation, setSideConversation] = useState<TicketInvestigationSideConversation | null>(null);
+  const [sideQuestionDraft, setSideQuestionDraft] = useState('');
+  const [sideQuestionLoading, setSideQuestionLoading] = useState(false);
+  const [sideQuestionError, setSideQuestionError] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [chatMoreLoading, setChatMoreLoading] = useState(false);
@@ -446,8 +472,6 @@ export default function SlaTicketDetailView(props: Props) {
   const chatHistorySequence = useRef(0);
   const chatCanContinue = canContinueTicketChat(chatScope, chatCapabilities) && !chatHistoryLoading && !chatMoreLoading;
   const [collapsedTraces, setCollapsedTraces] = useState<Record<number, boolean>>({});
-  const [expandedTaskIndex, setExpandedTaskIndex] = useState<number | null>(null);
-  const [expandedNextTaskIndex, setExpandedNextTaskIndex] = useState<number | null>(null);
   const [expandedTimelineIndex, setExpandedTimelineIndex] = useState<number | null>(null);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveLoading, setResolveLoading] = useState(false);
@@ -576,9 +600,26 @@ export default function SlaTicketDetailView(props: Props) {
     setAiRawResponse('');
     setAiWarnings([]);
     setAiError(null);
+    setAssistantInnerTab('sessions');
+    setRelatedAlerts([]);
+    setRelatedAlertsLoaded(false);
+    setRelatedAlertsError('');
     setChatOpen(false);
     setChatMessages([]);
     setChatInput('');
+    setInvestigationSessions([]);
+    setActiveInvestigation(null);
+    setActiveInvestigationRunId('');
+    setInvestigationPane('run');
+    setInvestigationLoading(false);
+    setInvestigationSending(false);
+    setInvestigationError('');
+    setSideQuestionOpen(false);
+    setSideConversation(null);
+    setSideQuestionDraft('');
+    setSideQuestionLoading(false);
+    setSideQuestionError('');
+    setInvestigationDraft('');
     setCollapsedTraces({});
     setChatNextBefore(null);
     chatHistorySequence.current++;
@@ -688,6 +729,7 @@ export default function SlaTicketDetailView(props: Props) {
           content: fixMojibake(String(row.content)),
           trace: Array.isArray(row.trace) ? row.trace : [],
           owner: typeof row.created_by === 'string' ? row.created_by : 'Unknown legacy owner',
+          created_at: typeof row.created_at === 'string' ? row.created_at : undefined,
         }));
       setChatCapabilities(res);
       setChatNextBefore(res?.next_before || null);
@@ -718,6 +760,7 @@ export default function SlaTicketDetailView(props: Props) {
           content: fixMojibake(String(row.content)),
           trace: Array.isArray(row.trace) ? row.trace : [],
           owner: typeof row.created_by === 'string' ? row.created_by : 'Unknown legacy owner',
+          created_at: typeof row.created_at === 'string' ? row.created_at : undefined,
         }));
       setChatNextBefore(res?.next_before || null);
       setChatMessages((prev) => [...normalized, ...prev]);
@@ -792,7 +835,7 @@ export default function SlaTicketDetailView(props: Props) {
     const sequence = chatHistorySequence.current;
     if (!requireAiModel()) return;
     const historyForApi = ticketChatHistoryForApi(chatMessages);
-    setChatMessages((prev) => [...prev, { role: 'user', content: text }]);
+    setChatMessages((prev) => [...prev, { role: 'user', content: text, created_at: new Date().toISOString() }]);
     setChatInput('');
     setChatLoading(true);
     try {
@@ -807,7 +850,7 @@ export default function SlaTicketDetailView(props: Props) {
       const reply = fixMojibake(String(res?.response || ''));
       const trace = Array.isArray(res?.trace) ? res.trace : [];
       setChatMessages((prev) => {
-        const next = [...prev, { role: 'assistant', content: reply || 'No response', trace }];
+        const next = [...prev, { role: 'assistant', content: reply || 'No response', trace, created_at: new Date().toISOString() }];
         const index = next.length - 1;
         setCollapsedTraces((state) => ({ ...state, [index]: true }));
         return next;
@@ -816,7 +859,7 @@ export default function SlaTicketDetailView(props: Props) {
       if (sequence !== chatHistorySequence.current) return;
       const apiError = err?.response?.data?.error || err?.response?.data?.detail || 'Chat failed';
       setChatMessages((prev) => {
-        const next = [...prev, { role: 'assistant', content: fixMojibake(String(apiError)), trace: [] }];
+        const next = [...prev, { role: 'assistant', content: fixMojibake(String(apiError)), trace: [], created_at: new Date().toISOString() }];
         const index = next.length - 1;
         setCollapsedTraces((state) => ({ ...state, [index]: true }));
         return next;
@@ -1160,6 +1203,59 @@ export default function SlaTicketDetailView(props: Props) {
     }
     return null;
   }, [aiResult, workLogs]);
+  const assistantAsset = useMemo(() => {
+    const direct = [aiHeader?.host_name, aiHeader?.hostname, aiHeader?.host, aiHeader?.asset_name, aiHeader?.asset]
+      .find((value) => typeof value === 'string' && value.trim());
+    if (direct) return String(direct).trim();
+    const observable = observableEvidenceItems.find((item) => /^(host|hostname|host_name|asset|asset_name)$/i.test(item.type));
+    if (observable?.value) return observable.value;
+
+    let payload: any = ticket.alert_message;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch { return ''; }
+    }
+    const findHost = (value: any, depth = 0): string => {
+      if (!value || typeof value !== 'object' || depth > 5) return '';
+      for (const [key, item] of Object.entries(value)) {
+        if (/^(host_name|hostname|asset_name)$/i.test(key) && typeof item === 'string' && item.trim()) return item.trim();
+        if (key === 'host' && typeof item === 'string' && item.trim()) return item.trim();
+        if (key === 'host' && item && typeof item === 'object' && typeof (item as any).name === 'string') return (item as any).name.trim();
+      }
+      for (const item of Object.values(value)) {
+        const nested = findHost(item, depth + 1);
+        if (nested) return nested;
+      }
+      return '';
+    };
+    return findHost(payload);
+  }, [aiHeader, observableEvidenceItems, ticket.alert_message]);
+
+  const loadRelatedAlerts = async () => {
+    if (!assistantAsset) {
+      setRelatedAlerts([]);
+      setRelatedAlertsLoaded(true);
+      setRelatedAlertsError('No asset identifier is available in this ticket context.');
+      return;
+    }
+    setRelatedAlertsLoading(true);
+    setRelatedAlertsError('');
+    try {
+      const response = await fetchAlerts(1, 50, undefined, { q: assistantAsset, ordering: '-timestamp' });
+      const rows = Array.isArray(response?.alerts) ? response.alerts : [];
+      const normalize = (value: any) => String(value ?? '').trim().toLowerCase();
+      const hostOf = (row: any) => row?.host_name ?? row?.body?.host_name ?? row?.host?.name ?? row?.hostname ?? row?.agent?.name ?? (typeof row?.host === 'string' ? row.host : '');
+      const currentId = normalize(ticket.event_siem_id);
+      setRelatedAlerts(rows.filter((row: any) => normalize(hostOf(row)) === normalize(assistantAsset)
+        && (!currentId || normalize(row?.alert_id ?? row?._id) !== currentId)));
+      setRelatedAlertsLoaded(true);
+    } catch {
+      setRelatedAlertsError('Could not load alerts for this asset.');
+      setRelatedAlertsLoaded(true);
+    } finally {
+      setRelatedAlertsLoading(false);
+    }
+  };
+
   const aiTasks = useMemo(() => {
     if (Array.isArray(aiResult?.completed_tasks)) {
       return aiResult.completed_tasks;
@@ -1232,6 +1328,127 @@ export default function SlaTicketDetailView(props: Props) {
   }), [ticket, workLogs, handleLogs, attachments, workplanItems, observableEvidenceItems,
     aiResult, rawSummaryText, aiHeader, aiTasks, nextTasks, activeTab, incidentTab, isPending, editableLabels, handleLogsState, workplanState]);
   useRegisterAssistantContext(assistantContext);
+
+  const applyInvestigation = (next: TicketInvestigationSession, preferredRunId = '') => {
+    setActiveInvestigation(next);
+    setInvestigationSessions((previous) => {
+      const summary = { ...next, runs: undefined };
+      const remaining = previous.filter((item) => item.id !== next.id);
+      return [summary, ...remaining];
+    });
+    const nextRun = preferredRunId && next.runs?.some((run) => run.id === preferredRunId)
+      ? preferredRunId
+      : activeInvestigationRunId && next.runs?.some((run) => run.id === activeInvestigationRunId)
+        ? activeInvestigationRunId
+        : next.runs?.find((run) => run.role === 'main')?.id || next.runs?.[0]?.id || '';
+    setActiveInvestigationRunId(nextRun);
+  };
+
+  const loadInvestigations = async (selectFirst = false) => {
+    setInvestigationLoading(true);
+    setInvestigationError('');
+    try {
+      const response = await fetchTicketInvestigations(ticket.ticket_number);
+      const rows = Array.isArray(response?.results) ? response.results : [];
+      setInvestigationSessions(rows);
+      if ((selectFirst || !activeInvestigation) && rows.length) {
+        const detail = await fetchTicketInvestigation(ticket.ticket_number, rows[0].id);
+        applyInvestigation(detail);
+      }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not load investigation sessions.');
+    } finally {
+      setInvestigationLoading(false);
+    }
+  };
+
+  const openInvestigation = async (sessionId: string) => {
+    if (investigationSending) return;
+    setInvestigationLoading(true);
+    setInvestigationError('');
+    try {
+      const detail = await fetchTicketInvestigation(ticket.ticket_number, sessionId);
+      applyInvestigation(detail, detail.runs?.find((run) => run.role === 'main')?.id);
+      setInvestigationPane('run');
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not open this investigation session.');
+    } finally {
+      setInvestigationLoading(false);
+    }
+  };
+
+  const createInvestigation = async () => {
+    if (investigationSending || !requireAiModel()) return;
+    setInvestigationLoading(true);
+    setInvestigationError('');
+    try {
+      const detail = await createTicketInvestigation(ticket.ticket_number, { model_profile_id: aiModelId });
+      applyInvestigation(detail);
+      setInvestigationPane('run');
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not create an investigation session.');
+    } finally {
+      setInvestigationLoading(false);
+    }
+  };
+
+  const sendInvestigationMessage = async () => {
+    const messageText = investigationDraft.trim();
+    if (!activeInvestigation || !activeInvestigationRunId || !messageText || investigationSending || !requireAiModel()) return;
+    setInvestigationSending(true);
+    setInvestigationError('');
+    try {
+      const detail = await sendTicketInvestigationMessage(ticket.ticket_number, activeInvestigation.id, {
+        run_id: activeInvestigationRunId, message: messageText, model_profile_id: aiModelId,
+      });
+      applyInvestigation(detail, activeInvestigationRunId);
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      const failedSession = err?.response?.data?.session;
+      if (failedSession?.id) applyInvestigation(failedSession, activeInvestigationRunId);
+      setInvestigationError(detail ? String(detail) : 'The role could not complete this message.');
+    } finally {
+      setInvestigationSending(false);
+    }
+  };
+
+  const sendWorkerFeedback = async () => {
+    const feedback = investigationDraft.trim();
+    if (!activeInvestigation || !activeInvestigationRun || activeInvestigationRun.role !== 'worker' || !feedback || investigationSending || !requireAiModel()) return;
+    setInvestigationSending(true);
+    setInvestigationError('');
+    try {
+      const detail = await sendTicketInvestigationWorkerFeedback(ticket.ticket_number, activeInvestigation.id, activeInvestigationRun.id, feedback);
+      applyInvestigation(detail, activeInvestigationRun.id);
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not send feedback to the Worker.');
+    } finally {
+      setInvestigationSending(false);
+    }
+  };
+
+  const controlInvestigationRun = async (run: TicketInvestigationRun, action: 'pause' | 'resume' | 'cancel') => {
+    if (!activeInvestigation || investigationSending) return;
+    setInvestigationSending(true);
+    setInvestigationError('');
+    try {
+      const detail = await controlTicketInvestigationRun(ticket.ticket_number, activeInvestigation.id, run.id, action);
+      applyInvestigation(detail, run.id);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setInvestigationError(detail ? String(detail) : 'Could not update the Worker state.');
+    } finally {
+      setInvestigationSending(false);
+    }
+  };
 
   const caseDetailsItems = useMemo(() => {
     const rows: Array<{ label: string; value: any }> = [
@@ -1333,6 +1550,470 @@ export default function SlaTicketDetailView(props: Props) {
     await saveLabels(next, 'Label deleted');
   };
 
+  const selectedInvestigationRun = activeInvestigation?.runs?.find((run) => run.id === activeInvestigationRunId) || null;
+  useEffect(() => { setPlannerView('plan'); }, [activeInvestigation?.id, activeInvestigationRunId]);
+  const activeInvestigationRun = investigationPane === 'run' ? selectedInvestigationRun : null;
+  const investigationRunsByRole = (role: TicketInvestigationRun['role']) => activeInvestigation?.runs?.filter((run) => run.role === role) || [];
+  const mainInvestigationStarted = Boolean(investigationRunsByRole('main').some((run) => run.messages.some((message) => message.role === 'user')));
+  const plannerAwaitingMain = activeInvestigationRun?.role === 'planner' && !mainInvestigationStarted;
+  const runStatusBadge = (run: TicketInvestigationRun) => {
+    const label = {
+      open: 'Waiting', running: 'Running', paused: 'Paused', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', blocked: 'Missing evidence / blocked', exhausted: 'Budget exhausted / unfinished',
+    }[run.status];
+    const symbol = {
+      open: '○', running: '◷', paused: 'Ⅱ', completed: '✓', failed: '!', cancelled: '–', blocked: '!', exhausted: '◷',
+    }[run.status];
+    const stateClass = `${run.status[0].toUpperCase()}${run.status.slice(1)}`;
+    return <span className={`${layoutStyles.ticketSessionStatus} ${layoutStyles[`ticketSessionStatus${stateClass}`]}`} title={label} aria-label={label}>{symbol}</span>;
+  };
+  const startInvestigation = async () => {
+    if (investigationSending || mainInvestigationStarted || !requireAiModel()) return;
+    setInvestigationSending(true);
+    setInvestigationError('');
+    try {
+      let detail = activeInvestigation;
+      if (!detail) {
+        detail = await createTicketInvestigation(ticket.ticket_number, { model_profile_id: aiModelId });
+      }
+      const mainRun = (detail.runs || []).find((run) => run.role === 'main');
+      if (!mainRun) {
+        throw new Error('Main Agent is unavailable for this investigation session.');
+      }
+      if (mainRun.messages.some((message) => message.role === 'user')) {
+        applyInvestigation(detail, mainRun.id);
+        setInvestigationPane('run');
+        return;
+      }
+      const started = await sendTicketInvestigationMessage(ticket.ticket_number, detail.id, {
+        run_id: mainRun.id,
+        message: 'Begin the investigation from the ticket context. Define goals, acceptance criteria, confirmed facts, and material gaps, then hand off to Planner.',
+        model_profile_id: aiModelId,
+      });
+      applyInvestigation(started, mainRun.id);
+      setInvestigationPane('run');
+      setInvestigationDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error || err?.message;
+      const failedSession = err?.response?.data?.session;
+      if (failedSession?.id) applyInvestigation(failedSession);
+      setInvestigationError(detail ? String(detail) : 'Could not start this investigation.');
+    } finally {
+      setInvestigationSending(false);
+    }
+  };
+  const selectInvestigationRun = (runId: string) => {
+    setActiveInvestigationRunId(runId);
+    setInvestigationPane('run');
+    setInvestigationDraft('');
+  };
+  const selectInvestigationPane = (pane: 'organization' | 'goals' | 'runtime') => {
+    setInvestigationPane(pane);
+    setSideQuestionOpen(false);
+  };
+  const investigationPaneTitle = investigationPane === 'organization'
+    ? 'Organization'
+    : investigationPane === 'goals'
+      ? 'Goals · Deliverables and Acceptance'
+      : investigationPane === 'runtime'
+        ? 'System Events · Runtime'
+        : activeInvestigationRun?.role === 'main'
+          ? `Main Agent · Session #${activeInvestigation?.sequence || ''}`
+          : activeInvestigationRun?.title || 'Select or create a session';
+  const sideQuestionParent = activeInvestigationRun && ['main', 'planner', 'worker'].includes(activeInvestigationRun.role) ? activeInvestigationRun : null;
+  const sideQuestionRunning = Boolean(sideConversation?.messages.some((item) => item.role === 'user' && ['queued', 'running'].includes(item.status)));
+
+  const loadSideQuestions = async (run = sideQuestionParent) => {
+    if (!activeInvestigation || !run) return;
+    setSideQuestionLoading(true);
+    setSideQuestionError('');
+    try {
+      const detail = await fetchTicketInvestigationSideQuestions(ticket.ticket_number, activeInvestigation.id, run.id);
+      setSideConversation(detail);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setSideQuestionError(detail ? String(detail) : 'Could not load Side Question history.');
+    } finally {
+      setSideQuestionLoading(false);
+    }
+  };
+
+  const openSideQuestions = () => {
+    if (!sideQuestionParent) {
+      setInvestigationError('Select Main Agent, Planner, or a Worker before opening Side Question.');
+      return;
+    }
+    setSideQuestionOpen(true);
+    setSideQuestionDraft('');
+    void loadSideQuestions(sideQuestionParent);
+  };
+
+  const askSideQuestion = async () => {
+    const question = sideQuestionDraft.trim();
+    if (!activeInvestigation || !sideQuestionParent || !question || sideQuestionLoading || sideQuestionRunning || !requireAiModel()) return;
+    setSideQuestionLoading(true);
+    setSideQuestionError('');
+    try {
+      const detail = await askTicketInvestigationSideQuestion(ticket.ticket_number, activeInvestigation.id, sideQuestionParent.id, {
+        question, model_profile_id: aiModelId,
+      });
+      setSideConversation(detail);
+      setSideQuestionDraft('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setSideQuestionError(detail ? String(detail) : 'Could not start Side Question.');
+    } finally {
+      setSideQuestionLoading(false);
+    }
+  };
+
+  const cancelSideQuestion = async () => {
+    if (!activeInvestigation || !sideQuestionParent) return;
+    const current = sideConversation?.messages.find((item) => item.role === 'user' && ['queued', 'running'].includes(item.status));
+    if (!current) return;
+    setSideQuestionLoading(true);
+    try {
+      const detail = await cancelTicketInvestigationSideQuestion(ticket.ticket_number, activeInvestigation.id, sideQuestionParent.id, current.id);
+      setSideConversation(detail);
+      setSideQuestionError('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setSideQuestionError(detail ? String(detail) : 'Could not stop Side Question.');
+    } finally {
+      setSideQuestionLoading(false);
+    }
+  };
+
+  const clearSideQuestions = () => {
+    if (!activeInvestigation || !sideQuestionParent) return;
+    Modal.confirm({
+      title: 'Clear Side Question history?',
+      content: "Only this Agent's independent Side Question history will be deleted. The main session and investigation context will be preserved.",
+      okText: 'Clear history', cancelText: 'Cancel', okButtonProps: { danger: true },
+      onOk: async () => {
+        await clearTicketInvestigationSideQuestions(ticket.ticket_number, activeInvestigation.id, sideQuestionParent.id);
+        setSideConversation({ id: null, parent_run_id: sideQuestionParent.id, model_profile_id: null, snapshot_available: true, messages: [] });
+        setSideQuestionError('');
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (!sideQuestionOpen || !sideQuestionRunning || !activeInvestigation || !sideQuestionParent) return undefined;
+    const timer = window.setInterval(() => { void loadSideQuestions(sideQuestionParent); }, 1000);
+    return () => window.clearInterval(timer);
+  }, [sideQuestionOpen, sideQuestionRunning, activeInvestigation?.id, sideQuestionParent?.id]);
+
+  const investigationGraphRunning = Boolean(activeInvestigation?.runs?.some((run) => run.status === 'running'));
+  useEffect(() => {
+    if (!activeInvestigation || !investigationGraphRunning) return undefined;
+    const timer = window.setInterval(async () => {
+      try {
+        const detail = await fetchTicketInvestigation(ticket.ticket_number, activeInvestigation.id);
+        applyInvestigation(detail, activeInvestigationRunId);
+      } catch {
+        // Preserve the current transcript while a background graph refresh is temporarily unavailable.
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [activeInvestigation?.id, activeInvestigationRunId, investigationGraphRunning, ticket.ticket_number]);
+
+  const roleNavigationItems = (runs: TicketInvestigationRun[]) => runs.map((run) => ({
+    key: run.id, icon: runStatusBadge(run), label: run.role === 'worker' ? `#${run.title.replace(/^Worker · /, '')}` : run.title,
+  }));
+  const selectedRoleKey = investigationPane === 'run' ? activeInvestigationRunId || '' : '';
+
+  const assistantTabs = [
+    {
+      key: 'sessions', label: 'Sessions', children: (
+        <section className={`${layoutStyles.ticketSessions} ${sideQuestionOpen ? layoutStyles.ticketSessionsWithSide : ''}`}>
+          <aside className={layoutStyles.ticketSessionSidebar}>
+            <header className={layoutStyles.ticketSessionSidebarHead}>
+              <div className={layoutStyles.ticketSessionSidebarTitle}>
+                <Typography.Text type="secondary">Sessions</Typography.Text>
+                <Typography.Text type="secondary" className={layoutStyles.ticketSessionRunState}>
+                  {investigationSending ? '● Running' : investigationLoading ? '◌ Loading' : '○ Interactive'}
+                </Typography.Text>
+              </div>
+              <div className={layoutStyles.ticketSessionMetrics}>
+                <span>Ticket</span><b>{ticket.ticket_number}</b>
+                <span>Sessions</span><b>{investigationSessions.length}</b>
+              </div>
+            </header>
+            <div className={layoutStyles.ticketSessionSidebarBody}>
+              <section className={layoutStyles.ticketSessionBlock}>
+                <div className={layoutStyles.ticketSessionGroup}>
+                  <Bot size={16} /><span>Main Agent</span><span className={layoutStyles.ticketSessionGrow} />
+                  <Button type="primary" size="small" onClick={() => void startInvestigation()} loading={investigationSending && !mainInvestigationStarted} disabled={investigationLoading || investigationSending || mainInvestigationStarted || !aiModelReady}>{mainInvestigationStarted ? 'Started' : 'Start investigation'}</Button>
+                  <Button type="text" size="small" icon={<Plus size={13} />} onClick={() => void createInvestigation()} loading={investigationLoading} disabled={investigationSending || !aiModelReady}>New</Button>
+                </div>
+                <TicketSessionNavigation items={investigationSessions.map((session) => ({
+                  key: session.id, label: <span className={layoutStyles.ticketSessionNavigationLabel}>
+                    <span>Main Agent · Session #{session.sequence}</span>{session.id !== activeInvestigation?.id ? <small>Archived</small> : null}
+                  </span>,
+                }))} activeKey={investigationPane === 'run' && selectedInvestigationRun?.role === 'main' ? activeInvestigation?.id || '' : ''}
+                  onActiveChange={(id) => void openInvestigation(id)} />
+                {!investigationSessions.length && !investigationLoading ? <div className={layoutStyles.ticketSessionEmpty}>No sessions found.</div> : null}
+              </section>
+
+              {activeInvestigation ? <>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><ShieldCheck size={16} /><span>Organization</span></div>
+                  <TicketSessionNavigation items={[{ key: 'organization', label: 'Ticket organization and evidence scope' }]}
+                    activeKey={investigationPane === 'organization' ? 'organization' : ''} onActiveChange={() => selectInvestigationPane('organization')} />
+                </section>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <TicketSessionNavigation items={[{ key: 'goals', label: 'Goals · Deliverables and Acceptance', icon: <ListChecks size={16} /> }]}
+                    activeKey={investigationPane === 'goals' ? 'goals' : ''} onActiveChange={() => selectInvestigationPane('goals')} />
+                </section>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><ListChecks size={16} /><span>Planner</span></div>
+                  <TicketSessionNavigation items={roleNavigationItems(investigationRunsByRole('planner'))}
+                    activeKey={selectedRoleKey} onActiveChange={selectInvestigationRun} />
+                </section>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><ShieldCheck size={16} /><span>Review and Reporting</span></div>
+                  <TicketSessionNavigation items={roleNavigationItems((['reviewer', 'reporter', 'explainer'] as const).flatMap(investigationRunsByRole))}
+                    activeKey={selectedRoleKey} onActiveChange={selectInvestigationRun} />
+                </section>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><Clock3 size={16} /><span>System Audit</span></div>
+                  <TicketSessionNavigation items={[{ key: 'runtime', label: <span className={layoutStyles.ticketSessionNavigationLabel}>
+                    <span>System Events · Runtime</span><small>{activeInvestigation.runtime_events?.length || 0} events</small>
+                  </span> }]} activeKey={investigationPane === 'runtime' ? 'runtime' : ''} onActiveChange={() => selectInvestigationPane('runtime')} />
+                  <div className={layoutStyles.ticketSessionReadonly}>{activeInvestigation.tool_receipts?.length || 0} tool receipts</div>
+                </section>
+                <section className={layoutStyles.ticketSessionBlock}>
+                  <div className={layoutStyles.ticketSessionGroup}><Wrench size={16} /><span>Execution Agents</span><Typography.Text type="secondary">· {investigationRunsByRole('worker').length}</Typography.Text></div>
+                  <TicketSessionNavigation items={roleNavigationItems(investigationRunsByRole('worker'))}
+                    activeKey={selectedRoleKey} onActiveChange={selectInvestigationRun} />
+                  {!investigationRunsByRole('worker').length ? <div className={layoutStyles.ticketSessionReadonly}>Planner defines investigation directions and dispatches Workers.</div> : null}
+                </section>
+              </> : null}
+            </div>
+          </aside>
+
+          <section className={layoutStyles.ticketSessionMain}>
+            <header className={layoutStyles.ticketSessionMainHead}>
+              <div className={layoutStyles.ticketSessionHeading}>
+                <Typography.Text strong>{investigationPaneTitle}</Typography.Text>
+                {activeInvestigationRun ? <Button size="small" icon={<MessageCircleQuestion size={15} />} onClick={openSideQuestions}>Side Question</Button> : null}
+                <Tag>Platform default model</Tag>
+              </div>
+              <div className={layoutStyles.ticketSessionHeaderActions}>
+                <div className={layoutStyles.ticketSessionModel}>{aiModelSelector}</div>
+                <span>{investigationSending ? 'Running · Please wait' : activeInvestigationRun?.status === 'paused' ? 'Read-only' : investigationPane === 'run' ? 'Interactive' : 'Read-only view'}</span>
+                <details className={layoutStyles.ticketSessionOptions}>
+                  <summary>Session details</summary>
+                  <div className={layoutStyles.ticketSessionOptionsBody}>
+                  <Button size="small" onClick={() => void loadInvestigations()} loading={investigationLoading}>Reload sessions</Button>
+                  {activeInvestigationRun && ['planner', 'worker'].includes(activeInvestigationRun.role) && activeInvestigationRun.status !== 'cancelled' ? (
+                    <>
+                      {activeInvestigationRun.status === 'paused'
+                        ? <Button size="small" onClick={() => void controlInvestigationRun(activeInvestigationRun, 'resume')}>Resume {activeInvestigationRun.role === 'planner' ? 'Planner' : 'Worker'}</Button>
+                        : <Button size="small" onClick={() => void controlInvestigationRun(activeInvestigationRun, 'pause')}>Pause {activeInvestigationRun.role === 'planner' ? 'Planner' : 'Worker'}</Button>}
+                      <Button size="small" danger onClick={() => void controlInvestigationRun(activeInvestigationRun, 'cancel')}>Cancel {activeInvestigationRun.role === 'planner' ? 'Planner' : 'Worker'}</Button>
+                    </>
+                  ) : null}
+                  </div>
+                </details>
+              </div>
+            </header>
+            {investigationError ? <Alert type="error" showIcon message={investigationError} /> : null}
+            {activeInvestigationRun?.role === 'planner' ? <nav className={layoutStyles.ticketPlannerNavigation} aria-label="Planner navigation">
+              <Button size="small" type={plannerView === 'plan' ? 'primary' : 'default'} onClick={() => setPlannerView('plan')}>Investigation plan</Button>
+              <Button size="small" type={plannerView === 'history' ? 'primary' : 'default'} onClick={() => setPlannerView('history')}>Conversation</Button>
+              <Button size="small" onClick={() => setActiveTab('exploration_graph')}>Exploration Graph ↗</Button>
+            </nav> : null}
+            <div className={layoutStyles.ticketSessionTranscript} aria-live="polite">
+              {investigationPane === 'organization' ? (
+                <Card size="small" title="Ticket organization and evidence scope">
+                  <Descriptions size="small" column={1}>
+                    <Descriptions.Item label="Ticket">{ticket.ticket_number}</Descriptions.Item>
+                    <Descriptions.Item label="Incident">{ticket.title || 'Untitled incident'}</Descriptions.Item>
+                    <Descriptions.Item label="Status">{renderStatusTag(ticket.status)}</Descriptions.Item>
+                    <Descriptions.Item label="Priority">{renderSeverityTag(ticket.priority)}</Descriptions.Item>
+                    <Descriptions.Item label="SIEM Event ID">{ticket.event_siem_id || '-'}</Descriptions.Item>
+                  </Descriptions>
+                  <Typography.Text strong>Alert evidence</Typography.Text>
+                  <pre className={layoutStyles.ticketRuntimePanePre}>{ticket.alert_message ? String(ticket.alert_message) : 'No raw alert message is available.'}</pre>
+                </Card>
+              ) : investigationPane === 'goals' ? (
+                <Card size="small" title="Goals · Deliverables and Acceptance">
+                  {activeInvestigation?.goals?.length ? <List dataSource={activeInvestigation.goals} renderItem={(goal) => <List.Item><List.Item.Meta title={<Space><Tag color={goal.status === 'met' ? 'green' : goal.status === 'blocked' ? 'red' : 'blue'}>{goal.status}</Tag><Typography.Text strong>{goal.title}</Typography.Text></Space>} description={goal.acceptance_criteria || 'Acceptance criteria pending'} /></List.Item>} /> : <Empty description="Planner has not defined goals yet." />}
+                </Card>
+              ) : investigationPane === 'runtime' ? (
+                <div className={layoutStyles.ticketRuntimeBoard}>
+                  <Card size="small" title="System Events · Runtime">
+                    <TicketInvestigationEvents events={activeInvestigation?.runtime_events} />
+                  </Card>
+                  <Card size="small" title="Tool receipts">
+                    <TicketInvestigationTools receipts={activeInvestigation?.tool_receipts} />
+                  </Card>
+                </div>
+              ) : investigationLoading ? <Typography.Text type="secondary">Loading investigation session...</Typography.Text> : activeInvestigationRun?.role === 'planner' && plannerView === 'plan' && activeInvestigation ? (
+                <TicketPlannerOutline key={activeInvestigation.id} session={activeInvestigation} planner={activeInvestigationRun} onSelectRun={selectInvestigationRun} />
+              ) : activeInvestigationRun?.messages.length ? (
+                activeInvestigationRun.messages.map((msg, index) => (
+                  <TicketSessionMessage key={msg.id || `${msg.role}_${index}`} role={msg.role} content={msg.content}
+                    footer={<time dateTime={msg.created_at}>{formatTimestamp(msg.created_at)}</time>}>
+                    <TicketInvestigationTools trace={msg.trace} receipts={activeInvestigation?.tool_receipts?.filter((receipt) => receipt.message_id === msg.id)} />
+                  </TicketSessionMessage>
+                ))
+              ) : null}
+              {activeInvestigationRun?.role === 'worker' && activeInvestigationRun.objective ? <Alert type="info" showIcon message={`Worker objective: ${activeInvestigationRun.objective}`} /> : null}
+            </div>
+            {investigationPane === 'run' ? <div className={layoutStyles.ticketSessionComposer}>
+              <TicketSessionSender key={activeInvestigationRun?.id || 'no-run'} value={investigationDraft} onChange={setInvestigationDraft}
+                role={activeInvestigationRun?.role} onSideQuestion={sideQuestionParent ? openSideQuestions : undefined}
+                onSubmit={() => { if (activeInvestigationRun?.role === 'worker') void sendWorkerFeedback(); else void sendInvestigationMessage(); }}
+                placeholder={plannerAwaitingMain ? 'Describe the investigation goal to Main Agent first. It will hand off to Planner automatically.' : activeInvestigationRun?.role === 'worker' ? 'Message this Worker. /rerun explicitly retries this Intent…' : activeInvestigationRun?.role === 'main' ? 'Describe the scope, question or response objective to investigate…' : 'Continue this investigation…'}
+                hint={plannerAwaitingMain ? 'Planner starts automatically after the Main Agent handoff.' : activeInvestigationRun?.role === 'main' ? 'Main Agent defines the goal and hands it off to Planner.' : activeInvestigationRun?.role === 'worker' ? 'Feedback belongs to this Intent; its evidence and tool receipts are preserved.' : 'Enter to send · Shift + Enter for a new line'}
+                disabled={!activeInvestigationRun || plannerAwaitingMain || investigationSending || activeInvestigationRun.status === 'paused' || activeInvestigationRun.status === 'cancelled'}
+                loading={investigationSending} submitDisabled={!aiModelReady} />
+            </div> : null}
+          </section>
+          {sideQuestionOpen ? <aside className={layoutStyles.ticketSideQuestionPanel} aria-label="Side Question">
+            <header className={layoutStyles.ticketSideQuestionHead}>
+              <div>
+                <strong>Side Question</strong>
+                <code>/btw</code>
+                <small>{sideQuestionParent?.title || ''}</small>
+              </div>
+              <Space size={2}>
+                <Button type="text" size="small" onClick={() => void loadSideQuestions()} loading={sideQuestionLoading} aria-label="Refresh Side Question">↻</Button>
+                <Button type="text" size="small" onClick={clearSideQuestions} disabled={!sideConversation?.messages.length || sideQuestionLoading} aria-label="Clear Side Question history">⌫</Button>
+                <Button type="text" size="small" onClick={() => setSideQuestionOpen(false)} aria-label="Close Side Question">×</Button>
+              </Space>
+            </header>
+            <div className={layoutStyles.ticketSideQuestionMeta}>
+              <span>{aiModels.find((model) => model.id === aiModelId)?.model || 'Agent model'}</span>
+              <span>Independent discussion · No tool execution</span>
+            </div>
+            <div className={layoutStyles.ticketSideQuestionHistory} aria-live="polite">
+              {sideQuestionError ? <Alert type="error" showIcon message={sideQuestionError} /> : null}
+              {!sideConversation?.messages.length && !sideQuestionLoading ? <div className={layoutStyles.ticketSideQuestionEmpty}>Ask a question using this Agent's saved context. The main investigation continues independently.</div> : null}
+              {sideConversation?.messages.map((item) => (
+                <TicketSessionMessage key={item.id} role={item.role} content={item.content}
+                  footer={<div className={layoutStyles.ticketSideQuestionStatus}>
+                    <Tag>{item.status === 'queued' || item.status === 'running' ? 'Answering' : item.status === 'completed' ? 'Completed' : item.status === 'cancelled' ? 'Stopped' : 'Failed'}</Tag>
+                    <time dateTime={item.created_at}>{formatTimestamp(item.created_at)}</time>
+                  </div>} />
+              ))}
+            </div>
+            <div className={layoutStyles.ticketSideQuestionComposer}>
+              <TicketSessionSender value={sideQuestionDraft} onChange={setSideQuestionDraft} onSubmit={() => void askSideQuestion()}
+                placeholder="Ask about this Agent's context…" hint="Independent discussion · No tool execution" compact
+                disabled={sideQuestionLoading || sideQuestionRunning || !sideQuestionParent}
+                loading={sideQuestionRunning || sideQuestionLoading} submitDisabled={!aiModelReady}
+                onCancel={sideQuestionRunning ? () => void cancelSideQuestion() : undefined} cancelDisabled={sideQuestionLoading} />
+            </div>
+          </aside> : null}
+        </section>
+      ),
+    },
+    {
+      key: 'overview', label: 'Overview', children: <div className={layoutStyles.ticketRuntimeBoard}>
+        <Card size="small" title="Goals · Deliverables and Acceptance">
+          {activeInvestigation?.goals?.length ? <List dataSource={activeInvestigation.goals} renderItem={(goal) => <List.Item><List.Item.Meta title={<Space><Tag color={goal.status === 'met' ? 'green' : goal.status === 'blocked' ? 'red' : 'blue'}>{goal.status}</Tag><Typography.Text strong>{goal.title}</Typography.Text></Space>} description={goal.acceptance_criteria || 'Acceptance criteria pending'} /></List.Item>} /> : <Empty description="Planner has not defined goals yet." />}
+        </Card>
+        <Card size="small" title="Execution Agents">
+          {investigationRunsByRole('worker').length ? <List dataSource={investigationRunsByRole('worker')} renderItem={(run, index) => <List.Item><List.Item.Meta title={`#${index + 1} ${run.title}`} description={`${run.status} · ${run.objective || 'No objective recorded'}`} /></List.Item>} /> : <Empty description="Planner has not dispatched Worker Intents yet." />}
+        </Card>
+      </div>,
+    },
+    {
+      key: 'broadcast', label: 'Broadcast Board', children: <Card size="small" title="System Events · Runtime">
+        {activeInvestigation?.runtime_events?.length ? <List dataSource={[...(activeInvestigation.runtime_events || [])].reverse()} renderItem={(item) => <List.Item><List.Item.Meta title={<Space><Tag>{item.event_type}</Tag><Typography.Text strong>{item.title}</Typography.Text></Space>} description={<><div>{item.content || 'No additional detail'}</div><Typography.Text type="secondary">{formatTimestamp(item.created_at)}</Typography.Text></>} /></List.Item>} /> : <Empty description="No runtime events have been recorded." />}
+      </Card>,
+    },
+    {
+      key: 'alerts', label: `Other alerts on this asset${relatedAlertsLoaded ? ` (${relatedAlerts.length})` : ''}`, children: (
+        <Card size="small" title="Other alerts on this asset" extra={<Button size="small" onClick={() => void loadRelatedAlerts()} loading={relatedAlertsLoading}>Refresh</Button>}>
+          <Alert type="info" showIcon message={`Current asset: ${assistantAsset || 'No asset identifier available in this ticket'}`} style={{ marginBottom: 12 }} />
+          {relatedAlertsError ? <Alert type="warning" showIcon message={relatedAlertsError} style={{ marginBottom: 12 }} /> : null}
+          {relatedAlertsLoading ? <Typography.Text type="secondary">Loading related alerts...</Typography.Text> : relatedAlerts.length ? (
+            <List dataSource={relatedAlerts} renderItem={(row: any) => (
+              <List.Item>
+                <List.Item.Meta title={<Space wrap><Typography.Text strong>{row.alert_id || row._id || 'Alert'}</Typography.Text>{row.severity ? <Tag>{row.severity}</Tag> : null}</Space>}
+                  description={<><div>{row.description || row.message || row.title || '-'}</div><Typography.Text type="secondary">{formatTimestamp(row.timestamp || row['@timestamp'])}</Typography.Text></>} />
+              </List.Item>
+            )} />
+          ) : <Empty description={relatedAlertsLoaded ? 'No other alerts found for this asset' : 'Open this tab to query alerts for this asset'} />}
+        </Card>
+      ),
+    },
+    {
+      key: 'reasoning', label: 'Assessment rationale', children: (
+        <div style={{ display: 'grid', gap: 14 }}>
+          <Card size="small" title="AI assessment summary">
+            {summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="No AI assessment is available for this ticket" />}
+          </Card>
+          {rawSummaryText ? <Card size="small" title="Raw AI response"><div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div></Card> : null}
+        </div>
+      ),
+    },
+    {
+      key: 'timeline', label: 'Asset timeline', children: (
+        <Card size="small" title="Ticket timeline">
+          {timelineItems.length ? <List dataSource={timelineItems} renderItem={(item) => (
+            <List.Item><Space align="start"><Tag color="blue">{formatTimestamp(item.time)}</Tag><Typography.Text style={{ whiteSpace: 'pre-wrap' }}>{item.text}</Typography.Text></Space></List.Item>
+          )} /> : <Empty description="No timeline entries for this ticket" />}
+        </Card>
+      ),
+    },
+    {
+      key: 'tasks', label: 'Investigation plan', children: (
+        <div style={{ display: 'grid', gap: 14 }}>
+          <Card size="small" title="Completed AI tasks">
+            {aiTasks.length ? <List dataSource={aiTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || item?.task || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="No AI tasks recorded" />}
+          </Card>
+          <Card size="small" title="Recommended next steps">
+            {nextTasks.length ? <List dataSource={nextTasks} renderItem={(item: any) => <List.Item><List.Item.Meta title={item?.title || String(item)} description={item?.detail} /></List.Item>} /> : <Empty description="No next steps recommended" />}
+          </Card>
+          <Card size="small" title="Existing Work Plan" loading={workplanLoading}>
+            {workplanItems.length ? <List dataSource={workplanItems} renderItem={(item) => <List.Item><List.Item.Meta title={item.workflow_name} description={`${item.status} · ${formatTimestamp(item.created_at)}`} /></List.Item>} /> : <Empty description="No Work Plan executions for this ticket" />}
+          </Card>
+        </div>
+      ),
+    },
+    {
+      key: 'evidence', label: 'Evidence and queries', children: (
+        <div style={{ display: 'grid', gap: 14 }}>
+          <Card size="small" title={`Observable Evidence (${observableEvidenceItems.length})`}>
+            {observableEvidenceItems.length ? <Table rowKey="key" size="small" pagination={false} columns={observableColumns} dataSource={observableEvidenceItems} scroll={{ x: 'max-content' }} /> : <Empty description="No observable evidence for this ticket" />}
+          </Card>
+          <Card size="small" title={`Attachments (${attachments.length})`}>
+            {attachments.length ? <Table rowKey="id" size="small" pagination={false} columns={attachmentColumns} dataSource={attachments} scroll={{ x: 'max-content' }} /> : <Empty description="No attachments for this ticket" />}
+          </Card>
+        </div>
+      ),
+    },
+    {
+      key: 'approval', label: 'Response approval', children: (
+        <Card size="small" title="Ticket response actions">
+          <Alert type="info" showIcon message="These actions use the existing ticket status interface. AI does not automatically execute containment." style={{ marginBottom: 14 }} />
+          <Space wrap>
+            <Button onClick={() => updateDecisionStatus('acknowledged')} disabled={!canAcknowledge}>Acknowledge</Button>
+            <Button type="primary" onClick={() => updateDecisionStatus('triaged')} disabled={!canTriaged}>Triaged</Button>
+            <Button onClick={() => updateDecisionStatus('contained')} disabled={!canContained}>Contained</Button>
+            <Button onClick={() => setResolveOpen(true)} disabled={!canResolved}>Resolved</Button>
+          </Space>
+          <Descriptions size="small" column={1} style={{ marginTop: 16 }}>
+            <Descriptions.Item label="Current status">{renderStatusTag(ticket.status)}</Descriptions.Item>
+            <Descriptions.Item label="Ticket Verdict">{ticket.event_result || '-'}</Descriptions.Item>
+          </Descriptions>
+        </Card>
+      ),
+    },
+    {
+      key: 'report', label: 'Investigation report', children: (
+        <Card size="small" title="AI investigation report">
+          {rawSummaryText ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{rawSummaryText}</div> : summaryText !== 'No summary available yet.' ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{summaryText}</div> : <Empty description="No AI investigation report is available for this ticket" />}
+        </Card>
+      ),
+    },
+  ];
+
   return (
     <div className={layoutStyles.detail} style={{ padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -1350,15 +2031,26 @@ export default function SlaTicketDetailView(props: Props) {
           <Button onClick={onRefresh} loading={loading}>Refresh</Button>
           <Button>Search</Button>
           <Button>Settings</Button>
+          <Button onClick={onBackToList}>Back to List</Button>
         </Space>
       </div>
 
       <div style={{ marginTop: 10 }}>
         <Tabs
           activeKey={activeTab}
-          onChange={setActiveTab}
+          onChange={(key) => {
+            setActiveTab(key);
+            if (key === 'ai_assistant') {
+              setAssistantInnerTab('sessions');
+              if (!investigationSessions.length) void loadInvestigations(true);
+            }
+            if ((key === 'exploration_graph' || key === 'findings') && !investigationSessions.length) void loadInvestigations(true);
+          }}
           items={[
             { key: 'incident', label: 'Incident Info' },
+            { key: 'ai_assistant', label: 'AI Assistant' },
+            { key: 'exploration_graph', label: 'Exploration Graph' },
+            { key: 'findings', label: 'Findings' },
             { key: 'war_room', label: 'War Room' },
             { key: 'work_plan', label: 'Work Plan (1)' },
             { key: 'evidence', label: `Evidence (${evidenceCount})` },
@@ -1368,7 +2060,24 @@ export default function SlaTicketDetailView(props: Props) {
       </div>
 
       <div>
-        {activeTab === 'war_room' ? (
+        {activeTab === 'ai_assistant' ? (
+          <div className={layoutStyles.ticketAssistantWorkbench}>
+            {assistantTabs[0]?.children}
+          </div>
+        ) : activeTab === 'exploration_graph' ? (
+          <div style={{ paddingTop: 8 }}>
+            <TicketInvestigationGraph session={activeInvestigation} />
+          </div>
+        ) : activeTab === 'findings' ? (
+          <div style={{ paddingTop: 8 }}>
+            <Card size="small" title="Evidence-backed Findings">
+              {activeInvestigation?.findings?.length ? <List dataSource={activeInvestigation.findings} renderItem={(finding) => <List.Item><List.Item.Meta title={finding.claim} description={<><div>Worker: {finding.worker_id}</div><div>Evidence receipts: {finding.receipt_ids.join(', ')}</div>{finding.limitations.map((limit, index) => <div key={index}>{limit}</div>)}</>} /></List.Item>} /> : <Empty description="No evidence-backed Findings have been accepted by Planner." />}
+            </Card>
+            <Card size="small" title="Evidence gaps" style={{ marginTop: 12 }}>
+              <List dataSource={investigationRunsByRole('worker').filter((run) => run.result?.outcome && run.result.outcome !== 'answered')} locale={{ emptyText: 'No evidence gaps recorded' }} renderItem={(run) => <List.Item><List.Item.Meta title={run.title} description={<><div>{run.result?.remaining}</div><div>Next: {run.result?.next_operation}</div></>} /></List.Item>} />
+            </Card>
+          </div>
+        ) : activeTab === 'war_room' ? (
           <WarRoomView
             ticket={ticket}
             workLogs={workLogs}
@@ -1742,102 +2451,6 @@ export default function SlaTicketDetailView(props: Props) {
               </Card>
             </div>
 
-            <div ref={aiAssistantCardRef} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Card size="small" title="SOC AI Assistant">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#e6f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>AI</div>
-                <div>
-                  <div style={{ fontWeight: 600 }}>AI Assistant</div>
-                  <div className="soc-ai-assistant-subtitle">Alert interpretation and summary</div>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
-                {aiModelSelector}
-                <Typography.Text type="secondary">Used for ticket analysis, chat and @AI. Changes apply to the next request.</Typography.Text>
-                <Button type="primary" onClick={runAiAssistant} loading={aiLoading} disabled={!aiModelReady}>
-                  Run AI Assistant
-                </Button>
-                <Button onClick={openChat}>
-                  Chat
-                </Button>
-              </div>
-              {aiError ? (
-                <>
-                  <Divider />
-                  <Typography.Text type="danger">{aiError}</Typography.Text>
-                </>
-              ) : null}
-              {aiWarnings.map((warning, index) => (
-                <Alert key={`ai_warning_${index}`} type="warning" showIcon message={warning} style={{ marginTop: 8 }} />
-              ))}
-            </Card>
-
-              <Card size="small" title="AI Tasks">
-              {aiTasks.length ? (
-                <List
-                  dataSource={aiTasks}
-                  renderItem={(item: any, idx: number) => {
-                    const text = item?.detail ? String(item.detail) : String(item || '');
-                    const title = item?.title ? String(item.title) : text;
-                    const short = title.length > 60 ? `${title.slice(0, 60)}...` : title;
-                    const isOpen = expandedTaskIndex === idx;
-                    return (
-                      <List.Item style={{ alignItems: 'flex-start' }}>
-                        <div style={{ width: '100%' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                            <div>
-                              <Tag color="green">OK</Tag> {short || '-'}
-                            </div>
-                            <Button size="small" type="link" onClick={() => setExpandedTaskIndex(isOpen ? null : idx)}>
-                              {isOpen ? 'Hide' : 'Details'}
-                            </Button>
-                          </div>
-                          {isOpen ? (
-                            <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', color: 'rgba(0,0,0,0.65)' }}>
-                              {text || title || '-'}
-                            </div>
-                          ) : null}
-                        </div>
-                      </List.Item>
-                    );
-                  }}
-                />
-              ) : (
-                <Empty description="No AI tasks yet" />
-              )}
-              <Divider />
-              <Typography.Text strong>Add Tasks</Typography.Text>
-              <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-                {nextTasks.length ? (
-                  nextTasks.map((t: any, idx: number) => {
-                    const title = t?.title || String(t);
-                    const detail = t?.detail ? String(t.detail) : '';
-                    const isOpen = expandedNextTaskIndex === idx;
-                    return (
-                      <div key={`${title}_${idx}`} style={{ display: 'grid', gap: 4 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <Checkbox>{title}</Checkbox>
-                          {detail ? (
-                            <Button size="small" type="link" onClick={() => setExpandedNextTaskIndex(isOpen ? null : idx)}>
-                              {isOpen ? 'Hide' : 'Details'}
-                            </Button>
-                          ) : null}
-                        </div>
-                        {detail && isOpen ? (
-                          <Typography.Text type="secondary" style={{ fontSize: 12, paddingLeft: 24, whiteSpace: 'pre-wrap' }}>
-                            {detail}
-                          </Typography.Text>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <Checkbox disabled>No AI-suggested tasks</Checkbox>
-                )}
-              </div>
-            </Card>
-
-            </div>
           </div>
         )}
       </div>

@@ -756,6 +756,114 @@ export async function clearSlaTicketAiChatHistory(ticketNumber: string) {
   return res.data;
 }
 
+export type TicketInvestigationMessage = {
+  id: string;
+  run_id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  trace: any[];
+  created_at: string;
+};
+
+export type TicketInvestigationRun = {
+  id: string;
+  parent_id: string | null;
+  role: 'main' | 'planner' | 'worker' | 'reviewer' | 'reporter' | 'explainer' | 'side_question';
+  title: string;
+  objective: string;
+  status: 'open' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'blocked' | 'exhausted';
+  result?: { outcome?: string; conclusion?: string; remaining?: string; next_operation?: string; limitations?: string[]; content?: string; verdict?: string; action?: string; reason?: string; required_material?: string };
+  synthesis?: {
+    reason?: string;
+    result_hash?: string;
+    assignment?: { question_key?: string; source_key?: string; method_key?: string };
+    plan?: { priority: 'P1' | 'P2' | 'P3'; capability: string; reason: string; start_condition: string; artifacts: string[]; expected_output: string; round_number: number };
+  };
+  created_at: string;
+  updated_at: string;
+  messages: TicketInvestigationMessage[];
+};
+
+export type TicketInvestigationSession = {
+  id: string;
+  ticket_number: string;
+  sequence: number;
+  title: string;
+  model_profile_id: string | null;
+  created_at: string;
+  updated_at: string;
+  runs?: TicketInvestigationRun[];
+  findings?: Array<{ id: string; worker_id: string; claim: string; receipt_ids: string[]; limitations: string[] }>;
+  goals?: Array<{ id: string; title: string; acceptance_criteria: string; status: 'open' | 'met' | 'blocked'; evidence_summary: string; created_at: string; updated_at: string }>;
+  runtime_events?: Array<{ id: string; run_id: string | null; message_id: string | null; event_type: string; title: string; content: string; payload: Record<string, unknown>; created_at: string }>;
+  tool_receipts?: Array<{ id: string; run_id: string; message_id: string | null; call_id: string; execution_id: string; tool_name: string; status: string; arguments: Record<string, unknown>; result_preview: string; created_at: string }>;
+};
+
+export type TicketInvestigationSideMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketInvestigationSideConversation = {
+  id: string | null;
+  parent_run_id: string;
+  model_profile_id: string | null;
+  snapshot_available: boolean;
+  messages: TicketInvestigationSideMessage[];
+};
+
+const ticketInvestigationBase = (ticketNumber: string) => `/ai-assistant/tickets/${encodeURIComponent(ticketNumber)}/investigations`;
+
+export async function fetchTicketInvestigations(ticketNumber: string): Promise<{ results: TicketInvestigationSession[] }> {
+  return (await client.get(`${ticketInvestigationBase(ticketNumber)}/`)).data;
+}
+
+export async function createTicketInvestigation(ticketNumber: string, payload: { model_profile_id?: string; title?: string } = {}): Promise<TicketInvestigationSession> {
+  return (await client.post(`${ticketInvestigationBase(ticketNumber)}/`, payload)).data;
+}
+
+export async function fetchTicketInvestigation(ticketNumber: string, sessionId: string): Promise<TicketInvestigationSession> {
+  return (await client.get(`${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/`)).data;
+}
+
+export async function createTicketInvestigationWorker(ticketNumber: string, sessionId: string, payload: { objective: string; title?: string; parent_id?: string }): Promise<TicketInvestigationSession> {
+  return (await client.post(`${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/workers/`, payload)).data;
+}
+
+export async function controlTicketInvestigationRun(ticketNumber: string, sessionId: string, runId: string, action: 'pause' | 'resume' | 'cancel'): Promise<TicketInvestigationSession> {
+  return (await client.post(`${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/control/`, { action })).data;
+}
+
+export async function sendTicketInvestigationWorkerFeedback(ticketNumber: string, sessionId: string, runId: string, message: string): Promise<TicketInvestigationSession> {
+  return (await client.post(`${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/feedback/`, { message })).data;
+}
+
+export async function sendTicketInvestigationMessage(ticketNumber: string, sessionId: string, payload: { run_id: string; message: string; model_profile_id?: string }): Promise<TicketInvestigationSession> {
+  return (await client.post(`${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/message/`, payload)).data;
+}
+
+const ticketInvestigationSideQuestionBase = (ticketNumber: string, sessionId: string, runId: string) => `${ticketInvestigationBase(ticketNumber)}/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/side-questions`;
+
+export async function fetchTicketInvestigationSideQuestions(ticketNumber: string, sessionId: string, runId: string): Promise<TicketInvestigationSideConversation> {
+  return (await client.get(`${ticketInvestigationSideQuestionBase(ticketNumber, sessionId, runId)}/`)).data;
+}
+
+export async function askTicketInvestigationSideQuestion(ticketNumber: string, sessionId: string, runId: string, payload: { question: string; model_profile_id?: string }): Promise<TicketInvestigationSideConversation> {
+  return (await client.post(`${ticketInvestigationSideQuestionBase(ticketNumber, sessionId, runId)}/`, payload)).data;
+}
+
+export async function cancelTicketInvestigationSideQuestion(ticketNumber: string, sessionId: string, runId: string, messageId: string): Promise<TicketInvestigationSideConversation> {
+  return (await client.post(`${ticketInvestigationSideQuestionBase(ticketNumber, sessionId, runId)}/${encodeURIComponent(messageId)}/cancel/`)).data;
+}
+
+export async function clearTicketInvestigationSideQuestions(ticketNumber: string, sessionId: string, runId: string): Promise<void> {
+  await client.delete(`${ticketInvestigationSideQuestionBase(ticketNumber, sessionId, runId)}/`);
+}
+
 export async function fetchAiAssistantMcpRegistryServers(payload: {
   base_url?: string;
   token?: string;
