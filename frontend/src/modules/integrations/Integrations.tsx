@@ -23,6 +23,9 @@ import {
 } from 'services/integrations';
 import { getIsReadonly } from 'lib/auth';
 import SplunkIntegrations from './SplunkIntegrations';
+import ClickHouseIntegrations from './ClickHouseIntegrations';
+import { Database } from 'lucide-react';
+import type { ClickHouseIntegration } from 'services/integrations';
 
 const { Title, Text } = Typography;
 
@@ -75,6 +78,8 @@ const HOST_PATTERN = /^(localhost|(([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+)|(\d{1,3}(\.\
 const Integrations: React.FC = () => {
   const [items, setItems] = useState<any[]>([]);
   const [splunkOpen, setSplunkOpen] = useState(false);
+  const [clickhouseOpen, setClickhouseOpen] = useState(false);
+  const [clickhouseId, setClickhouseId] = useState('');
   const [publisherOpen, setPublisherOpen] = useState(false);
   const [publisherId, setPublisherId] = useState('');
   const [isReadonly, setIsReadonly] = useState(false);
@@ -402,15 +407,18 @@ const Integrations: React.FC = () => {
   };
 
   const splunkItem = items.find((item: any) => item?.type === 'splunk_search');
+  const clickhouseItems = items.filter((item: any) => item?.type === 'clickhouse') as ClickHouseIntegration[];
+  const clickhouseItem = clickhouseId === 'new' ? undefined : clickhouseItems.find(item => item.id === clickhouseId) || clickhouseItems[0];
   const publisherItems = items.filter((item: any) => item?.type === 'splunk_rule_publisher');
   const publisherItem = publisherId === 'new' ? undefined : publisherItems.find((item: any) => item.id === publisherId) || publisherItems[0];
 
   type IntegrationCardConfig = {
-    key: 'elastic' | 'kibana' | 'splunk' | 'splunk-publisher';
+    key: 'elastic' | 'kibana' | 'splunk' | 'splunk-publisher' | 'clickhouse';
     title: string;
     subtitle: string;
     description: string;
-    logo: string;
+    logo?: string;
+    icon?: React.ReactNode;
     isInstalled: boolean;
     onConfigure: () => void;
     onUninstall?: () => void;
@@ -420,6 +428,12 @@ const Integrations: React.FC = () => {
   const elasticInstalled = Boolean(elkItems[0]?.id && elkItems[0]?.config?.host);
   const kibanaInstalled = Boolean(kibanaItems[0]?.id && kibanaItems[0]?.config?.host);
   const integrationCards: IntegrationCardConfig[] = [
+    {
+      key: 'clickhouse', title: 'ClickHouse', subtitle: 'Alert Data Connector', description: 'ClickHouse HTTP API',
+      icon: <Database size={46} color="#f4d338" />, isInstalled: Boolean(clickhouseItems.length),
+      onConfigure: () => { setClickhouseId(clickhouseItems[0]?.id || 'new'); setClickhouseOpen(true); },
+      onUninstall: clickhouseItem?.id ? () => handleDelete(clickhouseItem) : undefined,
+    },
     {
       key: 'elastic',
       title: 'Elastic Stack',
@@ -546,7 +560,7 @@ const Integrations: React.FC = () => {
               flexShrink: 0,
             }}
           >
-            <img src={card.logo} alt={`${card.title} logo`} style={{ width: 54, height: 54, objectFit: 'contain' }} />
+            {card.icon || <img src={card.logo} alt={`${card.title} logo`} style={{ width: 54, height: 54, objectFit: 'contain' }} />}
           </div>
         </div>
 
@@ -612,6 +626,8 @@ const Integrations: React.FC = () => {
       </Card>
 
       <SplunkIntegrations open={splunkOpen} item={splunkItem} isReadonly={isReadonly} onClose={() => setSplunkOpen(false)} onChanged={fetchList} />
+      <ClickHouseIntegrations open={clickhouseOpen} item={clickhouseItem} items={clickhouseItems} onSelect={setClickhouseId}
+        isReadonly={isReadonly} onClose={() => setClickhouseOpen(false)} onChanged={fetchList} />
       <SplunkIntegrations publisher open={publisherOpen} item={publisherItem} publisherItems={publisherItems}
         onSelectPublisher={setPublisherId} isReadonly={isReadonly} onClose={() => setPublisherOpen(false)} onChanged={fetchList} />
 

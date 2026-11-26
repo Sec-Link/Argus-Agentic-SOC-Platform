@@ -22,6 +22,7 @@ from django.db.models import Q
 from django.utils import timezone as django_timezone
 
 from .models import Alert, ESIntegrationConfig, AlertSyncSchedule
+from .querysets import es_alerts_queryset as _es_alerts_queryset
 from .services import (
     _http_search,
     _detect_timestamp_field,
@@ -37,6 +38,11 @@ logger = logging.getLogger(__name__)
 
 def sync_splunk_alerts_to_db(*, integration_id: str, size: int = 500):
     from .splunk import sync_splunk_alerts_to_db as sync
+    return sync(integration_id=integration_id, size=size)
+
+
+def sync_clickhouse_alerts_to_db(*, integration_id: str, size: int = 500):
+    from .clickhouse import sync_clickhouse_alerts_to_db as sync
     return sync(integration_id=integration_id, size=size)
 
 def _looks_unresolved_template(value: object) -> bool:
@@ -256,7 +262,7 @@ def _create_or_update_index_table(index: str, docs: List[Dict[str, Any]]) -> Dic
             'category': _get_alert_field(doc, 'category', 'body.category'),
             'source_data': doc,
         }
-        Alert.objects.update_or_create(
+        _es_alerts_queryset(index_name).update_or_create(
             alert_id=alert_id,
             source_index=index_name,
             defaults=defaults,
@@ -318,9 +324,7 @@ def _deduplicate_alerts_for_index(index_name: str | None) -> int:
         return 0
     seen: set[str] = set()
     delete_ids: List[int] = []
-    rows = Alert.objects.filter(
-        source_index=index_name,
-    ).exclude(
+    rows = _es_alerts_queryset(index_name).exclude(
         alert_id__isnull=True,
     ).exclude(
         alert_id='',
@@ -342,14 +346,12 @@ def _deduplicate_alerts_for_index(index_name: str | None) -> int:
             seen.add(alert_id)
     if not delete_ids:
         return 0
-    deleted, _ = Alert.objects.filter(id__in=delete_ids).delete()
+    deleted, _ = _es_alerts_queryset(index_name).filter(id__in=delete_ids).delete()
     return int(deleted or 0)
 
 
 def _backfill_missing_alert_ids(index_name: str | None = None, limit: int = 5000) -> int:
-    qs = Alert.objects.filter(Q(alert_id__isnull=True) | Q(alert_id=''))
-    if index_name:
-        qs = qs.filter(source_index=index_name)
+    qs = _es_alerts_queryset(index_name).filter(Q(alert_id__isnull=True) | Q(alert_id=''))
     rows = list(qs.order_by('id')[:limit])
     updated = 0
     for row in rows:
@@ -558,7 +560,7 @@ def sync_es_alerts_to_db(
         if cfg:
             errors.extend(_log_es_diagnostics(cfg, index_name))
         backfilled_missing_ids, dedup_removed = _run_cleanup_for_index()
-        db_total_count = Alert.objects.filter(source_index=index_name).exclude(alert_id__isnull=True).exclude(alert_id='').count()
+        db_total_count = _es_alerts_queryset(index_name).exclude(alert_id__isnull=True).exclude(alert_id='').count()
         return {
             "source": source,
             "index": index_name,
@@ -600,7 +602,7 @@ def sync_es_alerts_to_db(
 
                 with transaction.atomic():
                     if alert_id:
-                        existing = Alert.objects.filter(alert_id=alert_id, source_index=index_name).order_by('-id').first()
+                        existing = _es_alerts_queryset(index_name).filter(alert_id=alert_id).order_by('-id').first()
                         if existing:
                             for k, v in defaults.items():
                                 setattr(existing, k, v)
@@ -660,7 +662,7 @@ def sync_es_alerts_to_db(
             errors.append(msg)
             logger.exception(msg)
     backfilled_missing_ids, dedup_removed = _run_cleanup_for_index()
-    db_total_count = Alert.objects.filter(source_index=index_name).exclude(alert_id__isnull=True).exclude(alert_id='').count()
+    db_total_count = _es_alerts_queryset(index_name).exclude(alert_id__isnull=True).exclude(alert_id='').count()
 
     # One retry pass for full sync if DB still trails ES count.
     if fetch_all and cfg and es_total_count is not None and db_total_count < es_total_count:
@@ -678,7 +680,7 @@ def sync_es_alerts_to_db(
             backfilled_missing_ids_2, dedup_removed_2 = _run_cleanup_for_index()
             backfilled_missing_ids += backfilled_missing_ids_2
             dedup_removed += dedup_removed_2
-            db_total_count = Alert.objects.filter(source_index=index_name).exclude(alert_id__isnull=True).exclude(alert_id='').count()
+            db_total_count = _es_alerts_queryset(index_name).exclude(alert_id__isnull=True).exclude(alert_id='').count()
         if db_total_count < es_total_count:
             errors.append(
                 f'sync_mismatch index={index_name}: es_total={es_total_count} db_total={db_total_count}'

@@ -12,4 +12,11 @@ export {
   fetchSplunkIntegrationData,
   type SplunkConnectionTestResult,
   type SplunkFetchResult,
+  testClickHouseIntegration,
+  fetchClickHouseIntegrationData,
+  type ClickHouseField,
+  type ClickHouseConfig,
+  type ClickHouseIntegration,
+  type ClickHouseConnectionTestResult,
+  type ClickHouseFetchResult,
 } from '../../api';

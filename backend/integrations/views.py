@@ -7,6 +7,8 @@ from rest_framework.response import Response
 from .models import Integration
 from .serializers import IntegrationSerializer, SplunkFetchSerializer, validate_splunk_config
 from .splunk import SplunkError, test_connection as test_splunk
+from .serializers import validate_clickhouse_config
+from .clickhouse import ClickHouseError, ClickHouseFetchInProgress, test_connection as test_clickhouse
 from rest_framework.decorators import api_view
 from requests.auth import HTTPBasicAuth
 from rest_framework.permissions import IsAuthenticated
@@ -112,6 +114,13 @@ class IntegrationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):
         it = self.get_object()
+        if it.type == 'clickhouse':
+            payload = request.data.get('config', {}) if isinstance(request.data, dict) else request.data
+            cfg = validate_clickhouse_config(payload, it.config)
+            try:
+                return Response(test_clickhouse(cfg))
+            except ClickHouseError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         if it.type in {'splunk_search', 'splunk_rule_publisher'}:
             payload = request.data.get('config', {}) if isinstance(request.data, dict) else request.data
             cfg = validate_splunk_config(payload, it.config, publisher=it.type == 'splunk_rule_publisher')
@@ -137,25 +146,31 @@ class IntegrationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='fetch-data')
     def fetch_data(self, request, pk=None):
         integration = self.get_object()
-        if integration.type != 'splunk_search':
-            return Response({'detail': 'This action requires a Splunk data source.'}, status=status.HTTP_400_BAD_REQUEST)
+        if integration.type not in {'splunk_search', 'clickhouse'}:
+            return Response({'detail': 'This action requires a Splunk or ClickHouse data source.'}, status=status.HTTP_400_BAD_REQUEST)
         validator = SplunkFetchSerializer(data=request.data)
         validator.is_valid(raise_exception=True)
-        from alerts.tasks import sync_splunk_alerts_to_db
+        from alerts.tasks import sync_splunk_alerts_to_db, sync_clickhouse_alerts_to_db
         from accounts.audit import AuditService
         from accounts.models import AuditLog
+        failure_status = status.HTTP_502_BAD_GATEWAY
         try:
-            result = sync_splunk_alerts_to_db(integration_id=integration.id, **validator.validated_data)
-        except SplunkError as exc:
+            sync = sync_clickhouse_alerts_to_db if integration.type == 'clickhouse' else sync_splunk_alerts_to_db
+            result = sync(integration_id=integration.id, **validator.validated_data)
+        except ClickHouseFetchInProgress as exc:
+            result = {'ok': False, 'detail': str(exc), 'code': 'fetch_in_progress'}
+            failure_status = status.HTTP_409_CONFLICT
+        except (SplunkError, ClickHouseError) as exc:
             result = {'ok': False, 'detail': str(exc)}
         AuditService.log_from_request(
             request, event_type=AuditLog.EventType.ACTIVITY,
             status=AuditLog.Status.SUCCESS if result['ok'] else AuditLog.Status.FAILURE,
             user_email=request.user.email,
-            metadata={'action': 'splunk_fetch', 'integration_id': str(integration.id),
+            metadata={'action': 'clickhouse_fetch' if integration.type == 'clickhouse' else 'splunk_fetch',
+                      'integration_id': str(integration.id),
                       **{key: result[key] for key in ('fetched', 'inserted', 'updated', 'skipped') if key in result}},
         )
-        return Response(result, status=status.HTTP_200_OK if result['ok'] else status.HTTP_502_BAD_GATEWAY)
+        return Response(result, status=status.HTTP_200_OK if result['ok'] else failure_status)
 
 
 @api_view(['POST'])
@@ -169,6 +184,19 @@ def test_splunk_connection(request):
 
 
 test_splunk_connection.cls.required_permissions = {'POST': 'integrations.change_integration'}
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, DenyReadonlyUser, HasDjangoPermissions])
+def test_clickhouse_connection(request):
+    cfg = validate_clickhouse_config(request.data)
+    try:
+        return Response(test_clickhouse(cfg))
+    except ClickHouseError as exc:
+        return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+test_clickhouse_connection.cls.required_permissions = {'POST': 'integrations.change_integration'}
 
 
 @api_view(['POST'])

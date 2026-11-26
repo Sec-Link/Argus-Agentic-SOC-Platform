@@ -106,11 +106,16 @@ These routes are registered in `backend/siem_project/urls.py` via DRF routers, s
 | --- | --- | --- | --- | --- |
 | Dashboards | `/api/v1/dashboards/` | GET/POST | Dashboard metadata CRUD | `backend/dashboards/views.py` |
 | Integrations | `/api/v1/integrations/` | GET/POST | Integration metadata CRUD | `backend/integrations/views.py` |
+| ClickHouse test | `/api/v1/integrations/test_clickhouse` | POST | Test ClickHouse config without saving | `backend/integrations/views.py` |
+| Integration fetch | `/api/v1/integrations/{id}/fetch-data/` | POST | Bounded Splunk/ClickHouse alert collection | `backend/integrations/views.py` |
 | Tasks | `/api/v1/tasks/` | GET/POST | Task definitions | `backend/orchestrator/views.py` |
 | Task runs | `/api/v1/task_runs/` | GET/POST | Task run records | `backend/orchestrator/views.py` |
 | Task request logs | `/api/v1/task_request_logs/` | GET/POST | Task request logs | `backend/orchestrator/views.py` |
 
 ### Special Integration Utilities
+See [ClickHouse alert collection](clickhouse-integration.md) for its field mappings,
+permissions, limits, credential encryption and deployment notes.
+
 | Area | Endpoint | Method | Purpose | Backend ref |
 | --- | --- | --- | --- | --- |
 | ES test | `/api/v1/integrations/test_es` | GET/POST | Test Elasticsearch connectivity | `backend/siem_project/urls.py` |
